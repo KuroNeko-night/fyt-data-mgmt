@@ -81,6 +81,7 @@ def main():
         app.setWindowIcon(QIcon(_icon))
     app.setFont(QFont(theme.pick_font(), 10))
     theme.set_mode(settings_mod.get_settings().theme_mode)   # 解析跟随系统/浅/深
+    theme.apply_palette(app)                                 # 先染调色板：杜绝原生白底擦除
     app.setStyleSheet(theme.stylesheet())
 
     win = MainWindow()

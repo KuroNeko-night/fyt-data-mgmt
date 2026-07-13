@@ -21,11 +21,11 @@ class LibraryPicker(QDialog):
         super(LibraryPicker, self).__init__(parent)
         self.setWindowTitle(title)
         self.setStyleSheet(theme.stylesheet())
-        self.resize(560, 460)
         self._multi = multi
         self._cats = categories if isinstance(categories, (list, tuple)) else [categories]
         self._build()
         self._load()
+        theme.fit_dialog(self, 560, 460)     # 自适应屏幕并可缩放
 
     def _build(self):
         v = QVBoxLayout(self)

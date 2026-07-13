@@ -12,7 +12,8 @@
 from PySide2.QtCore import Qt
 from PySide2.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
                                QTabWidget, QWidget, QTableWidget, QTableWidgetItem,
-                               QHeaderView, QCheckBox, QAbstractItemView)
+                               QHeaderView, QCheckBox, QAbstractItemView, QScrollArea,
+                               QComboBox, QGridLayout)
 
 from .. import theme
 
@@ -23,11 +24,14 @@ class PivotReviewDialog(QDialog):
         self.plan = plan
         self.setWindowTitle("人工复核 —— 透视表制作")
         self.setModal(True)
-        self.resize(760, 560)
         self.setStyleSheet(theme.stylesheet())
+        self.setSizeGripEnabled(True)          # 右下角可拖拽缩放
         self._sheet_cbs = {}     # id -> QCheckBox
         self._held_cbs = {}      # (sid, ridx) -> QCheckBox
+        self._unit_combos = {}   # gk -> (QComboBox, default)  单位人工改选
+        self._spec_combos = {}   # gk -> (QComboBox, default)  规格人工改选
         self._build()
+        theme.fit_dialog(self, 760, 560)
 
     def _build(self):
         lay = QVBoxLayout(self)
@@ -103,26 +107,93 @@ class PivotReviewDialog(QDialog):
         return w
 
     def _conflict_tab(self):
-        w = QWidget(); v = QVBoxLayout(w)
+        # 外层滚动区：条目再多也只在页内滚动，不会把窗口撑到屏幕外
+        area = QScrollArea(); area.setWidgetResizable(True); area.setFrameShape(QScrollArea.NoFrame)
+        w = QWidget(); v = QVBoxLayout(w); v.setContentsMargins(2, 2, 2, 2)
         uc = self.plan.get("unit_conflicts", [])
         sm = self.plan.get("spec_merges", [])
         if not uc and not sm:
             lbl = QLabel("没有单位冲突或规格合并需要关注。")
-            lbl.setObjectName("Hint"); v.addWidget(lbl); v.addStretch(1); return w
+            lbl.setObjectName("Hint"); v.addWidget(lbl); v.addStretch(1)
+            area.setWidget(w); return area
+        tip = QLabel("下方为程序按多数原则的自动判断。可直接在「采用」下拉框改选其它写法，"
+                     "也可手动输入自定义值；不改动即沿用自动结果。")
+        tip.setObjectName("Hint"); tip.setWordWrap(True); v.addWidget(tip)
         if uc:
-            v.addWidget(self._sec("单位冲突（同物料出现多种单位，已按多数原则统一）",
-                                  [str(x) for x in uc]))
+            v.addWidget(self._sec_editable(
+                "单位冲突（同物料出现多种单位）", uc, "dist", self._unit_combos, self._fmt_unit_title))
         if sm:
-            v.addWidget(self._sec("规格合并（相近规格已归并）", [str(x) for x in sm]))
+            v.addWidget(self._sec_editable(
+                "规格合并（相近规格归并）", sm, "variants", self._spec_combos, self._fmt_spec_title))
         v.addStretch(1)
-        return w
+        area.setWidget(w)
+        return area
 
-    def _sec(self, title, lines):
-        box = QWidget(); bv = QVBoxLayout(box)
-        t = QLabel(title); t.setObjectName("SecTitle"); bv.addWidget(t)
-        for ln in lines[:200]:
-            l = QLabel("· " + ln); l.setObjectName("Hint"); l.setWordWrap(True); bv.addWidget(l)
+    @staticmethod
+    def _fmt_dist(d):
+        """{单位/规格: 次数} -> '件×5 / 个×2'，空值显示为(空)。"""
+        try:
+            items = d.items()
+        except AttributeError:
+            return str(d)
+        return " / ".join("%s×%d" % (k if k else "(空)", n) for k, n in items)
+
+    @staticmethod
+    def _fmt_unit_title(c):
+        title = c.get("name") or c.get("code") or "(未知物料)"
+        code = (" [%s]" % c["code"]) if c.get("code") else ""
+        spec = ("  规格 %s" % c["spec"]) if c.get("spec") else ""
+        return "%s%s%s" % (title, code, spec)
+
+    @staticmethod
+    def _fmt_spec_title(c):
+        title = c.get("name") or c.get("code") or "(未知物料)"
+        code = (" [%s]" % c["code"]) if c.get("code") else ""
+        return "%s%s" % (title, code)
+
+    def _sec_editable(self, title, items, dist_key, store, title_fn):
+        """一个可编辑区块：每个冲突项一行，右侧下拉框可改选/手填最终值。"""
+        box = QWidget(); g = QGridLayout(box)
+        g.setContentsMargins(0, 0, 0, 0); g.setHorizontalSpacing(12); g.setVerticalSpacing(8)
+        t = QLabel(title); t.setObjectName("SecTitle")
+        g.addWidget(t, 0, 0, 1, 3)
+        shown = items[:200]
+        for i, c in enumerate(shown):
+            r = i + 1
+            name = QLabel(title_fn(c)); name.setWordWrap(True)
+            dist = QLabel("出现 " + self._fmt_dist(c.get(dist_key, {})))
+            dist.setObjectName("Hint"); dist.setWordWrap(True)
+            col = QWidget(); cv = QVBoxLayout(col); cv.setContentsMargins(0, 0, 0, 0); cv.setSpacing(1)
+            cv.addWidget(name); cv.addWidget(dist)
+            g.addWidget(col, r, 0)
+            g.addWidget(QLabel("采用"), r, 1, Qt.AlignRight | Qt.AlignVCenter)
+            combo = self._make_combo(c.get(dist_key, {}), c.get("default", ""))
+            store[c["gk"]] = (combo, c.get("default", ""))
+            g.addWidget(combo, r, 2)
+        g.setColumnStretch(0, 1)
+        if len(items) > 200:
+            more = QLabel("… 另有 %d 项未显示（将沿用自动判断）" % (len(items) - 200))
+            more.setObjectName("Hint"); g.addWidget(more, len(shown) + 1, 0, 1, 3)
         return box
+
+    def _make_combo(self, dist, default):
+        """可编辑下拉框：候选=各写法(按出现次数)，当前=系统默认；允许手动输入。"""
+        combo = QComboBox(); combo.setEditable(True); combo.setMinimumWidth(150)
+        combo.setInsertPolicy(QComboBox.NoInsert)
+        vals = []
+        try:
+            vals = list(dist.keys())
+        except AttributeError:
+            pass
+        if default not in vals:
+            vals.insert(0, default)
+        for val in vals:
+            combo.addItem(val if val != "" else "", val)   # 显示文本；空值显示空
+        idx = combo.findData(default)
+        if idx >= 0:
+            combo.setCurrentIndex(idx)
+        combo.setCurrentText(default)   # 确保编辑框显示默认值(含空值情形)
+        return combo
 
     def choices(self):
         from core import pivot_core
@@ -131,4 +202,16 @@ class PivotReviewDialog(QDialog):
             ch["sheets"][sid] = cb.isChecked()
         for key, cb in self._held_cbs.items():
             ch["held"][key] = cb.isChecked()
+        # 单位/规格人工改选：仅当与系统默认不同才记为覆盖(报告据此统计"人工改动 N 处")
+        ch["unit_overrides"] = self._collect_overrides(self._unit_combos)
+        ch["spec_overrides"] = self._collect_overrides(self._spec_combos)
         return ch
+
+    @staticmethod
+    def _collect_overrides(store):
+        ov = {}
+        for gk, (combo, default) in store.items():
+            cur = combo.currentText().strip()
+            if cur != (default or "").strip():
+                ov[gk] = cur
+        return ov

@@ -35,10 +35,10 @@ class OnboardingDialog(QDialog):
         super(OnboardingDialog, self).__init__(parent)
         self.setWindowTitle("欢迎")
         self.setModal(True)
-        self.setFixedSize(520, 400)
         self.setStyleSheet(theme.stylesheet())
         self._idx = 0
         self._build()
+        theme.fit_dialog(self, 520, 400)     # 自适应屏幕并可缩放，避免小屏/高分屏下按钮出界
 
     def _build(self):
         lay = QVBoxLayout(self)

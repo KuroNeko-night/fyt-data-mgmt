@@ -60,24 +60,20 @@ class BasePage(QWidget):
         """子类实现。"""
         raise NotImplementedError
 
-    # ---------- 卡片投影（美化 + 主题联动） ----------
+    # ---------- 卡片描边（美化 + 主题联动） ----------
     def _apply_shadows(self):
-        from PySide2.QtWidgets import QFrame, QGraphicsDropShadowEffect
-        from PySide2.QtGui import QColor
-        from .. import theme
-        c = QColor(0, 0, 0, 40 if not theme.is_dark() else 90)
+        """不再用 QGraphicsDropShadowEffect 做投影。
+
+        图形特效会把卡片(含其中文字)整体渲到离屏缓冲，导致文字改用灰度抗锯齿、
+        在浅色底上明显发虚。改由 QSS 的边框+圆角+表面色区分卡片, 文字保持 ClearType 清晰。
+        这里主动清掉可能残留的旧特效。"""
+        from PySide2.QtWidgets import QFrame
         for card in self.findChildren(QFrame):
-            if card.objectName() != "Card":
-                continue
-            eff = QGraphicsDropShadowEffect(card)
-            eff.setBlurRadius(18)
-            eff.setXOffset(0)
-            eff.setYOffset(3)
-            eff.setColor(c)
-            card.setGraphicsEffect(eff)
+            if card.objectName() == "Card" and card.graphicsEffect() is not None:
+                card.setGraphicsEffect(None)
 
     def on_theme_changed(self):
-        """主题切换后重建投影颜色（主窗口 apply_theme 会调用）。"""
+        """主题切换后的联动钩子（主窗口 apply_theme 会调用）。"""
         self._apply_shadows()
 
     # ---------- 线程运行 ----------

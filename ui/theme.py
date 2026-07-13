@@ -131,6 +131,60 @@ def stylesheet():
     return _QSS.format(font=pick_font(), **COLORS)
 
 
+def apply_palette(app):
+    """把当前配色写进 QPalette。
+
+    关键：QSS 的 background 只管"部件如何绘制"，而 Windows 原生的背景擦除、
+    以及部分部件的 base/window 底色取自 QPalette。若调色板仍是默认浅色，深色
+    主题下换页/新建窗口那一帧会被系统用白刷子擦一下 —— 这正是"白闪"的真凶。
+    这里把窗口/基底/文字/按钮等角色一并染成主题色，从源头杜绝白底。
+    """
+    from PySide2.QtGui import QPalette, QColor
+    C = COLORS
+    def col(k, fallback="#000000"):
+        return QColor(C.get(k, fallback))
+    pal = QPalette()
+    win = col("bg"); base = col("input_bg", "surface"); text = col("text")
+    pal.setColor(QPalette.Window, win)
+    pal.setColor(QPalette.WindowText, text)
+    pal.setColor(QPalette.Base, base)
+    pal.setColor(QPalette.AlternateBase, col("surface2"))
+    pal.setColor(QPalette.Text, text)
+    pal.setColor(QPalette.Button, col("surface"))
+    pal.setColor(QPalette.ButtonText, text)
+    pal.setColor(QPalette.ToolTipBase, col("tip_bg"))
+    pal.setColor(QPalette.ToolTipText, col("tip_fg"))
+    pal.setColor(QPalette.Highlight, col("accent"))
+    pal.setColor(QPalette.HighlightedText, col("sel_fg", "#ffffff"))
+    pal.setColor(QPalette.PlaceholderText, col("hint"))
+    pal.setColor(QPalette.Link, col("accent_l"))
+    dis = col("dis_fg")
+    for role in (QPalette.WindowText, QPalette.Text, QPalette.ButtonText):
+        pal.setColor(QPalette.Disabled, role, dis)
+    app.setPalette(pal)
+
+
+def fit_dialog(dlg, want_w, want_h, resizable=True):
+    """按期望尺寸打开对话框，但绝不超出屏幕可用区域(留边距)，并居中。
+
+    解决小屏 / 高分屏缩放下窗口过大、按钮跑到屏幕外、且无法缩放的问题。
+    resizable=True 时允许用户拖拽缩放(右下角出现缩放柄)。
+    """
+    from PySide2.QtWidgets import QApplication
+    try:
+        scr = QApplication.desktop().availableGeometry(dlg)
+        w = min(want_w, scr.width() - 40)
+        h = min(want_h, scr.height() - 60)
+        dlg.resize(w, h)
+        dlg.setMaximumSize(scr.width(), scr.height())
+        if resizable:
+            dlg.setSizeGripEnabled(True)
+        dlg.move(scr.x() + (scr.width() - w) // 2,
+                 scr.y() + (scr.height() - h) // 2)
+    except Exception:
+        dlg.resize(want_w, want_h)
+
+
 def repolish(widget):
     """动态属性变化后，让 QSS 重新生效（不必重贴整表）。"""
     try:
@@ -151,6 +205,7 @@ def set_prop(widget, name, value):
 _QSS = """
 * {{ font-family: "{font}"; color: {text}; outline: none; }}
 QMainWindow, QWidget#Root {{ background: {bg}; }}
+QStackedWidget#Stack {{ background: {bg}; }}
 QDialog {{ background: {bg}; }}
 
 /* 侧栏 */

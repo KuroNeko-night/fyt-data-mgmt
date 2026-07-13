@@ -12,19 +12,18 @@
 APP_NAME = "峰运通数据管理系统"
 APP_NAME_EN = "FYT Data Management System"      # 英文名（安装目录、注册表键用，避免中文路径问题）
 APP_ID = "FYTDataMgmt"                            # 内部短标识（注册表、互斥量、配置目录）
-PUBLISHER = "峰运通"
-COPYRIGHT = "Copyright (c) 2026 峰运通"
+PUBLISHER = "重庆峰运通供应链管理公司"
+COPYRIGHT = "Copyright (c) 2026 重庆峰运通供应链管理公司"
 
 # ---------------- 版本号（语义化 主.次.修订）----------------
-VERSION = "1.0.0"
-VERSION_TUPLE = (1, 0, 0)
+VERSION = "1.0.1"
+VERSION_TUPLE = (1, 0, 1)
 BUILD_DATE = "2026-07-13"
 
 # ---------------- 更新检查 ----------------
-# 仓库尚未创建。下面留好接口：日后在 GitHub 建好仓库后，把 OWNER/REPO 填上即可。
-# 更新模块优先读取 UPDATE_MANIFEST_URL（可指向 GitHub Releases 的 latest.json 或任意静态托管）。
-GITHUB_OWNER = ""                                # 例如 "your-name"
-GITHUB_REPO = ""                                 # 例如 "fyt-data-mgmt"
+# 更新模块优先读取 UPDATE_MANIFEST_URL；留空则由下面的 OWNER/REPO 自动拼 GitHub latest 地址。
+GITHUB_OWNER = "KuroNeko-night"                  # GitHub 用户名
+GITHUB_REPO = "fyt-data-mgmt"                    # 仓库名
 # 若填了 OWNER/REPO，下面的 URL 会在 updater 中自动拼出；也可直接写死一个清单地址。
 UPDATE_MANIFEST_URL = ""                          # 例如 "https://.../latest.json"，留空=不检查
 
@@ -43,7 +42,7 @@ UPDATE_MANIFEST_URL = ""                          # 例如 "https://.../latest.j
 #   2) 若只想加速"安装包下载"、且不想重新打包：直接把加速后的完整地址
 #      写进 latest.json 的 "url" 字段即可(服务端随时可改，客户端立即生效)。
 #   —— 稳妥做法：打包前就把本前缀填一个当前可用的镜像，双保险。
-DOWNLOAD_ACCEL_PREFIX = ""
+DOWNLOAD_ACCEL_PREFIX = "https://gh-proxy.com/"   # 2026-07 实测可代理 release 下载；失效可换 ghfast.top / ghproxy.net
 
 # 是否在启动时静默检查更新（可被用户设置覆盖）
 CHECK_UPDATE_ON_START = False
