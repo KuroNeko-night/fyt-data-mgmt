@@ -16,6 +16,7 @@
 1. 打开[最新发布页](https://github.com/ayahahruana67-ai/fyt-data-mgmt/releases/latest)
 2. 在 **Assets** 中下载 `FYTDataMgmt_Setup_x.x.x.exe`
 3. 双击运行，按向导完成安装；安装后会在桌面和开始菜单生成快捷方式
+4. 若过程中弹出系统权限（UAC）提示，选择「是」
 
 ## 在线更新
 
@@ -47,5 +48,38 @@ Copyright © 2026 重庆峰运通供应链管理公司. 保留所有权利（All
 本软件为重庆峰运通供应链管理公司内部专有软件，仅供授权范围内使用。未经许可，不得复制、分发、修改或用于其他用途。
 
 ---
+
+## 开发与发布（维护者）
+
+技术栈：Python 3.8 · PySide2(Qt 5.15) · openpyxl。打包用 PyInstaller，安装包用 Inno Setup。
+
+**准备环境**
+
+```bash
+pip install -r requirements.txt
+```
+
+**本地运行**
+
+```bash
+python main.py
+```
+
+**打包**（产物在 `dist/`：绿色版目录 + `dist/installer/` 安装包）
+
+```bash
+python build.py               # 完整流程：绿色版 + 安装包
+python build.py --no-installer  # 只出免安装的绿色版
+```
+
+**发布新版本**
+
+1. 改 [`core/version.py`](core/version.py) 的 `VERSION`、`VERSION_TUPLE`（两者保持一致）、`BUILD_DATE`
+2. `python build.py` 生成安装包
+3. 编辑 `dist/installer/latest.json`：`version` 填新版本号，`url` 指向对应 tag 的安装包直链
+4. 在 GitHub 新建 Release，tag 用 `vX.Y.Z`，把安装包 `.exe` 和 `latest.json` **一并上传**为 Assets
+5. 客户端「检查更新」即会读取 `latest.json` 发现新版本
+
+> 更多打包与更新机制细节见项目内文档与脚本注释。国内下载慢时可在 `core/version.py` 的 `DOWNLOAD_ACCEL_PREFIX` 填镜像前缀。
 
 

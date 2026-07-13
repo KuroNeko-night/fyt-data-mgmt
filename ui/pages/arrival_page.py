@@ -30,7 +30,7 @@ class ArrivalPage(BasePage):
 
         self.zone = FileZone(1, "送货计划表", "含未收料数据的送货计划，可多选/拖拽。",
                              multi=True, library_cats=["arrival_plan"],
-                             detail="程序按列定位：编码列2、名称列3、供应商列5、需求列7、剩余未收列12。")
+                             detail="程序按表头文字自动识别列（物料编码/名称/供应商信息/需求数/剩余未收数），表头顺序不同也能正确处理；识别不到时回退固定列。")
         self.zone.changed.connect(self._on_files)
         layout.addWidget(self.zone)
 
