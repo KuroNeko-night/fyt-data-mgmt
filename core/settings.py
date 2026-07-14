@@ -22,6 +22,8 @@ DEFAULTS = {
     "custom_output_root": "",
     "theme_mode": "auto",              # auto(跟随系统) | light | dark
     "check_update_on_start": version.CHECK_UPDATE_ON_START,
+    "auto_open_output": True,          # 处理完成后自动打开输出文件夹
+    "show_done_dialog": True,          # 处理完成后弹出结果提示框
     "onboarding_seen": False,
     # 到料明细批次记忆（迁移自旧 ~/.arrival_table_config.json）
     "arrival": {"top_label": "截止16点的数据", "last_total": 566, "batches": {}},

@@ -210,16 +210,19 @@ QDialog {{ background: {bg}; }}
 
 /* 侧栏 */
 QWidget#Sidebar {{ background: {sidebar}; }}
+QScrollArea#NavScroll {{ background: transparent; border: none; }}
+QWidget#NavHost {{ background: transparent; }}
 QLabel#Brand {{ color: #ffffff; font-size: 17px; font-weight: bold; padding: 20px 16px 2px 20px; }}
 QLabel#BrandSub {{ color: {sidebar_dim}; font-size: 10px; padding: 0 16px 14px 20px; }}
 QPushButton#NavBtn {{
-    color: {sidebar_fg}; background: transparent; border: none; border-left: 3px solid transparent;
-    text-align: left; padding: 11px 16px 11px 17px; font-size: 13px;
+    background: transparent; border: none; border-left: 3px solid transparent;
+    min-height: 42px; text-align: left;
 }}
-QPushButton#NavBtn:hover {{ background: {sidebar_h}; color: #ffffff; }}
+QPushButton#NavBtn:hover {{ background: {sidebar_h}; }}
 QPushButton#NavBtn:checked {{
-    background: {sidebar_h}; color: #ffffff; font-weight: bold; border-left: 3px solid {accent_l};
+    background: {sidebar_h}; border-left: 3px solid {accent_l};
 }}
+QLabel#NavText {{ background: transparent; }}
 QLabel#NavGroup {{ color: {sidebar_grp}; font-size: 10px; padding: 16px 16px 4px 20px; letter-spacing: 2px; }}
 
 /* 卡片 */
@@ -263,6 +266,10 @@ QLabel#SecTitle {{ font-size: 13px; font-weight: bold; color: {heading}; }}
 QLabel#CardTitle {{ font-size: 13px; font-weight: bold; color: {text}; }}
 QLabel#Hint {{ color: {hint}; font-size: 11px; }}
 QLabel#OkText {{ color: {ok}; font-size: 11px; }}
+QLabel#CapResult {{
+    background: {surface2}; border: 1px solid {line}; border-radius: 9px;
+    color: {heading}; font-size: 20px; font-weight: bold; padding: 14px 16px;
+}}
 
 /* 序号/完成 徽标 —— 动态属性 done 驱动 */
 QLabel#Badge {{

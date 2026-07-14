@@ -6,19 +6,25 @@
 （在 NAV 列表加一项 + 一个页面即可）。
 兼容 Windows 7 + Python 3.8 + PySide2。
 """
-from PySide2.QtCore import Qt, QEasingCurve, QTimer, QVariantAnimation
+from PySide2.QtCore import Qt, QEasingCurve, QTimer, QVariantAnimation, QSize
 from PySide2.QtGui import QPixmap, QPainter, QColor
 from PySide2.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
                                QLabel, QPushButton, QStackedWidget, QApplication,
-                               QButtonGroup)
+                               QButtonGroup, QScrollArea, QFrame)
 
 from . import theme
+from . import icons
 from .pages.home_page import HomePage
 from .pages.attendance_page import AttendancePage
 from .pages.reconcile_page import ReconcilePage
 from .pages.arrival_page import ArrivalPage
 from .pages.pivot_page import PivotPage
 from .pages.library_page import LibraryPage
+from .pages.rename_page import RenamePage
+from .pages.currency_page import CurrencyPage
+from .pages.text_page import TextPage
+from .pages.pdf_page import PdfPage
+from .pages.excel_tools_page import ExcelToolsPage
 from .pages.settings_page import SettingsPage
 from .pages.about_page import AboutPage
 from core import version, settings as settings_mod
@@ -32,6 +38,11 @@ NAV = [
     ("数据处理", "到料明细表", "arrival"),
     ("数据处理", "透视表制作", "pivot"),
     ("数据", "数据库", "library"),
+    ("财务", "金额大写", "currency"),
+    ("工具箱", "批量重命名", "rename"),
+    ("工具箱", "文本工具箱", "text"),
+    ("工具箱", "PDF 工具箱", "pdf"),
+    ("工具箱", "Excel 工具箱", "excel"),
     ("系统", "设置", "settings"),
     ("系统", "关于 / 更新", "about"),
 ]
@@ -108,12 +119,28 @@ class MainWindow(QMainWindow):
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(0)
 
+        # 品牌头固定在顶部
         brand = QLabel("峰运通")
         brand.setObjectName("Brand")
         v.addWidget(brand)
         sub = QLabel("数据管理系统  " + version.version_str())
         sub.setObjectName("BrandSub")
         v.addWidget(sub)
+
+        # 导航项放进可滚动区：功能增多也不会挤爆或撑出窗口
+        scroll = QScrollArea()
+        scroll.setObjectName("NavScroll")
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setAttribute(Qt.WA_StyledBackground, True)
+        scroll.viewport().setAutoFillBackground(False)
+        nav_host = QWidget()
+        nav_host.setObjectName("NavHost")
+        nav_host.setAttribute(Qt.WA_StyledBackground, True)
+        nv = QVBoxLayout(nav_host)
+        nv.setContentsMargins(0, 0, 0, 0)
+        nv.setSpacing(0)
 
         self._grp = QButtonGroup(self)
         self._grp.setExclusive(True)
@@ -123,21 +150,61 @@ class MainWindow(QMainWindow):
                 if group:                      # 空分组名(如首页)不画分组标题
                     gl = QLabel(group)
                     gl.setObjectName("NavGroup")
-                    v.addWidget(gl)
+                    nv.addWidget(gl)
                 last_group = group
-            b = QPushButton(title)
-            b.setObjectName("NavBtn")
-            b.setCheckable(True)
-            b.setCursor(Qt.PointingHandCursor)
-            b.clicked.connect(lambda _=False, k=key: self.switch_to(k))
+            b = self._make_nav_btn(title, key)
             self._grp.addButton(b)
             self._nav_btns[key] = b
-            v.addWidget(b)
-        v.addStretch(1)
+            nv.addWidget(b)
+        self._refresh_nav_icons()
+        nv.addStretch(1)
+        scroll.setWidget(nav_host)
+        v.addWidget(scroll, 1)
+
+        # 底部提示固定在最下方
         tip = QLabel("兼容 Win7 · Python 3.8")
         tip.setObjectName("BrandSub")
         v.addWidget(tip)
         return bar
+
+    def _make_nav_btn(self, title, key):
+        """导航项：可选中的 QPushButton，内部用 QLabel 承载图标+文字。
+
+        不用 QPushButton.setIcon —— 带 padding 的样式化按钮在高 DPI 下会把
+        图标按原生尺寸绘制并裁切。改用内部 QLabel.setPixmap（与首页卡片同路径，
+        实测在真机各 DPI 下都清晰）。选中/常态的配色由 _refresh_nav_icons 统一刷。
+        """
+        b = QPushButton()
+        b.setObjectName("NavBtn")
+        b.setCheckable(True)
+        b.setCursor(Qt.PointingHandCursor)
+        b.clicked.connect(lambda _=False, k=key: self.switch_to(k))
+        h = QHBoxLayout(b)
+        h.setContentsMargins(17, 0, 12, 0)
+        h.setSpacing(11)
+        ic = QLabel(); ic.setFixedSize(18, 18); ic.setScaledContents(True)
+        ic.setAttribute(Qt.WA_TransparentForMouseEvents)
+        lb = QLabel(title); lb.setObjectName("NavText")
+        lb.setAttribute(Qt.WA_TransparentForMouseEvents)
+        h.addWidget(ic, 0); h.addWidget(lb, 1)
+        b._icon_lbl = ic
+        b._text_lbl = lb
+        b._nav_key = key
+        return b
+
+    def _refresh_nav_icons(self):
+        """按当前主题+选中态给侧栏导航图标/文字上色（选中偏白，常态用前景色）。
+
+        图标按 2× 物理分辨率(dpr=1)渲染，交给 setScaledContents 的定尺 QLabel 缩放，
+        高/低 DPI 都清晰且不裁切——避免把 dpr 烘进位图导致定尺标签只画左上角。"""
+        base = theme.COLORS.get("sidebar_fg", "#c7d2e8")
+        for key, btn in self._nav_btns.items():
+            on = btn.isChecked()
+            color = "#ffffff" if on else base
+            btn._icon_lbl.setPixmap(icons.pixmap(key, 36, color, 1.0))
+            btn._text_lbl.setStyleSheet(
+                "color:%s; font-size:13px; background:transparent;%s"
+                % (color, " font-weight:bold;" if on else ""))
 
     def _build_stack(self):
         self.stack = QStackedWidget()
@@ -145,6 +212,8 @@ class MainWindow(QMainWindow):
         ctors = {"home": HomePage, "attendance": AttendancePage,
                  "reconcile": ReconcilePage, "arrival": ArrivalPage,
                  "pivot": PivotPage, "library": LibraryPage,
+                 "rename": RenamePage, "currency": CurrencyPage,
+                 "text": TextPage, "pdf": PdfPage, "excel": ExcelToolsPage,
                  "settings": SettingsPage, "about": AboutPage}
         for _, _, key in NAV:
             page = ctors[key](self)
@@ -158,6 +227,7 @@ class MainWindow(QMainWindow):
             return
         if self._nav_btns.get(key):
             self._nav_btns[key].setChecked(True)
+            self._refresh_nav_icons()            # 选中态变了，重染图标/文字色
         # 进入首页/数据库时刷新其数据库统计与列表
         fn = getattr(page, "refresh_view", None)
         if callable(fn):
@@ -241,10 +311,12 @@ class MainWindow(QMainWindow):
     def apply_theme(self, mode):
         """切换主题模式并即时重贴样式表；动态属性会随之重新生效。"""
         theme.set_mode(mode)
+        icons.clear_cache()                      # 丢弃旧主题色图标缓存
         app = QApplication.instance()
         if app:
             theme.apply_palette(app)             # 同步染调色板，换页/新窗口不闪白
             app.setStyleSheet(theme.stylesheet())
+        self._refresh_nav_icons()                # 用新主题色重染侧栏图标
         # 重贴样式表后，个别缓存了内联样式的部件让其重读配色
         for page in self._pages.values():
             fn = getattr(page, "on_theme_changed", None)

@@ -83,8 +83,7 @@ class PivotPage(BasePage):
                                  level, score))
         self.btn_open.setEnabled(bool(self._out_dir))
         self.btn_report.setEnabled(bool(self._report))
-        self.open_folder(self._out_dir)
-        self.info("生成完成",
+        self.notify_done(self._out_dir, "生成完成",
                   "分组：%d 项\n合计：%s\n可信度：【%s】 %d/100\n输出：%s"
                   % (res.get("groups", 0), pivot_core._fmt_num(res.get("total", 0)),
                      level, score, res.get("out", "")))

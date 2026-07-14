@@ -72,8 +72,7 @@ class AttendancePage(BasePage):
         self.panel.set_status("ok", "完成！生成 %d 个文件" % len(self._out_files))
         self.btn_link.setEnabled(bool(self._out_files))
         self.btn_open.setEnabled(bool(self._out_dir))
-        self.open_folder(self._out_dir)
-        self.info("填报完成",
+        self.notify_done(self._out_dir, "填报完成",
                   "已生成 %d 个已填写考勤表。\n输出：%s" % (len(self._out_files), self._out_dir))
 
     def _send(self):

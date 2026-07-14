@@ -45,6 +45,8 @@ def _conf_color(pct):
 
 
 class LibraryPage(BasePage):
+    CONTENT_MAX = None      # 数据库页含宽表(类别/更新/大小/可信度多列)，铺满整行避免信息被截断
+
     def __init__(self, main):
         super(LibraryPage, self).__init__(
             main, "数据库",
@@ -283,4 +285,6 @@ class LibraryPage(BasePage):
 
     def on_theme_changed(self):
         """主题切换后重建，让分组标题色/可信度色跟随新配色。"""
+        if hasattr(self.drop, "_refresh_icon"):
+            self.drop._refresh_icon()
         self._refresh()

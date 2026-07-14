@@ -282,6 +282,33 @@ def counts():
     return c
 
 
+def storage_stats():
+    """归档存储概况：返回 (条目数, 占用字节数)。
+
+    只统计索引在册的归档表（count 与 size 始终一致）；孤立残留文件不计入，
+    避免出现"0 张表却占用 X MB"这类自相矛盾的展示。"""
+    items = _load_index()["items"]
+    total = 0
+    for it in items:
+        p = it.get("path", "")
+        try:
+            if p and os.path.isfile(p):
+                total += os.path.getsize(p)
+        except OSError:
+            pass
+    return len(items), total
+
+
+def human_size(nbytes):
+    """把字节数格式化成 B/KB/MB/GB 便于展示。"""
+    n = float(nbytes)
+    for unit in ("B", "KB", "MB", "GB"):
+        if n < 1024 or unit == "GB":
+            return ("%.0f %s" % (n, unit)) if unit == "B" else ("%.1f %s" % (n, unit))
+        n /= 1024
+    return "%.1f GB" % n
+
+
 def import_file(path, log=None):
     """分类并复制归档一个文件。同类同名→新版替换旧版(旧的存 .bak)。
     返回条目 dict（含 category/confidence 等）。不删除源文件（由调用方决定）。"""

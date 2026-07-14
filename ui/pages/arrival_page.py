@@ -122,10 +122,10 @@ class ArrivalPage(BasePage):
         results = res.get("results", [])
         self.panel.set_status("ok", "完成！%d 个批次已写入" % len(results))
         self.btn_open.setEnabled(bool(self._out_dir))
-        self.open_folder(self._out_dir)
         lines = "\n".join("· 批次 %s：未收料 %d 类，到货 %d" % (b, d, a)
                           for b, d, a, t in results)
-        self.info("生成完成", "%s\n输出：%s" % (lines, res.get("out_file", "")))
+        self.notify_done(self._out_dir, "生成完成",
+                         "%s\n输出：%s" % (lines, res.get("out_file", "")))
 
     def _open(self):
         self.open_folder(self._out_dir)

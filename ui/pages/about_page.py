@@ -1,12 +1,16 @@
 # -*- coding: utf-8 -*-
 """关于 / 更新页。显示版本信息，检查更新（更新源未配置时给出说明）。"""
+import os
+
 from PySide2.QtCore import Qt, QTimer
+from PySide2.QtGui import QPixmap
 from PySide2.QtWidgets import (QFrame, QVBoxLayout, QHBoxLayout, QLabel,
                                QPushButton, QProgressBar, QApplication, QMessageBox)
 
 from .base_page import BasePage
 from ..worker import Worker
-from core import version, updater
+from .. import icons
+from core import version, updater, paths
 
 
 class AboutPage(BasePage):
@@ -14,34 +18,93 @@ class AboutPage(BasePage):
         super(AboutPage, self).__init__(main, "关于 / 更新", "版本信息与在线更新。")
 
     def build_body(self, layout):
+        # 上排：版本卡 + 更新卡 并排（等宽），充分利用横向空间
+        top = QHBoxLayout(); top.setSpacing(14)
+        top.addWidget(self._version_card(), 1)
+        top.addWidget(self._update_card(), 1)
+        layout.addLayout(top)
+
+        # 中排：集成功能宽卡（四大模块图标 + 名称）
+        layout.addWidget(self._features_card())
+
+        # 底部：品牌页脚，自然收尾，避免大片空白
+        layout.addStretch(1)
+        layout.addWidget(self._footer())
+
+        self._pending = None        # 待安装的新版信息（检查到更新后暂存）
+        self._refresh_update_status()
+
+    def _version_card(self):
         card = QFrame(); card.setObjectName("Card")
         v = QVBoxLayout(card); v.setContentsMargins(20, 18, 20, 18); v.setSpacing(6)
-        name = QLabel(version.APP_NAME); name.setStyleSheet("font-size:18px; font-weight:bold;")
-        v.addWidget(name)
-        v.addWidget(self._kv("版本", version.version_str()))
+        head = QHBoxLayout(); head.setSpacing(12)
+        logo = QLabel()
+        p = os.path.join(paths.assets_dir(), "logo_128.png")
+        if os.path.exists(p):
+            logo.setPixmap(QPixmap(p).scaled(48, 48, Qt.KeepAspectRatio,
+                                             Qt.SmoothTransformation))
+        head.addWidget(logo, 0, Qt.AlignTop)
+        namecol = QVBoxLayout(); namecol.setSpacing(2)
+        name = QLabel(version.APP_NAME); name.setStyleSheet("font-size:17px; font-weight:bold;")
+        namecol.addWidget(name)
+        ver = QLabel("版本 " + version.version_str()); ver.setObjectName("Hint")
+        namecol.addWidget(ver)
+        head.addLayout(namecol, 1)
+        v.addLayout(head)
         v.addWidget(self._kv("构建日期", version.BUILD_DATE))
         v.addWidget(self._kv("发布方", version.PUBLISHER))
         v.addWidget(self._kv("运行环境", "Windows 7+ · Python 3.8 · PySide2"))
-        feats = QLabel("集成功能：考勤填报 · 工时对账 · 到料明细 · 透视表制作")
-        feats.setObjectName("Hint"); feats.setWordWrap(True); v.addWidget(feats)
-        layout.addWidget(card)
+        v.addStretch(1)
+        return card
 
-        card2 = QFrame(); card2.setObjectName("Card")
-        v2 = QVBoxLayout(card2); v2.setContentsMargins(20, 16, 20, 16); v2.setSpacing(8)
-        t = QLabel("在线更新"); t.setObjectName("SecTitle"); v2.addWidget(t)
+    def _update_card(self):
+        card = QFrame(); card.setObjectName("Card")
+        v = QVBoxLayout(card); v.setContentsMargins(20, 18, 20, 18); v.setSpacing(8)
+        t = QLabel("在线更新"); t.setObjectName("SecTitle"); v.addWidget(t)
         self.status = QLabel(); self.status.setObjectName("Hint"); self.status.setWordWrap(True)
-        v2.addWidget(self.status)
+        v.addWidget(self.status)
         self.bar = QProgressBar(); self.bar.setRange(0, 100); self.bar.setVisible(False)
-        v2.addWidget(self.bar)
+        v.addWidget(self.bar)
+        v.addStretch(1)
         row = QHBoxLayout()
         self.btn = QPushButton("检查更新"); self.btn.setObjectName("Primary")
         self.btn.clicked.connect(self._on_button)
         row.addWidget(self.btn); row.addStretch(1)
-        v2.addLayout(row)
-        layout.addWidget(card2)
-        layout.addStretch(1)
-        self._pending = None        # 待安装的新版信息（检查到更新后暂存）
-        self._refresh_update_status()
+        v.addLayout(row)
+        return card
+
+    def _features_card(self):
+        card = QFrame(); card.setObjectName("Card")
+        v = QVBoxLayout(card); v.setContentsMargins(20, 16, 20, 16); v.setSpacing(12)
+        t = QLabel("集成功能"); t.setObjectName("SecTitle"); v.addWidget(t)
+        row = QHBoxLayout(); row.setSpacing(10)
+        feats = [("attendance", "考勤填报"), ("reconcile", "工时对账"),
+                 ("arrival", "到料明细"), ("pivot", "透视表制作")]
+        self._feat_icons = []
+        for key, label in feats:
+            item = QFrame(); item.setObjectName("EntryCard")
+            iv = QVBoxLayout(item); iv.setContentsMargins(14, 14, 14, 14); iv.setSpacing(8)
+            # 2× 物理分辨率 + setScaledContents 定尺，避免高 DPI 下定尺标签裁切
+            ic = QLabel(); ic.setFixedSize(26, 26); ic.setScaledContents(True)
+            ic.setPixmap(icons.pixmap(key, 52, None, 1.0))
+            iv.addWidget(ic)
+            self._feat_icons.append((ic, key))
+            lb = QLabel(label); lb.setObjectName("EntryTitle")
+            iv.addWidget(lb)
+            row.addWidget(item, 1)
+        v.addLayout(row)
+        return card
+
+    def on_theme_changed(self):
+        super(AboutPage, self).on_theme_changed()
+        for ic, key in getattr(self, "_feat_icons", []):
+            ic.setPixmap(icons.pixmap(key, 52, None, 1.0))
+
+    def _footer(self):
+        f = QLabel("%s · © 2026 %s · 保留所有权利"
+                   % (version.APP_NAME, version.PUBLISHER))
+        f.setObjectName("Hint"); f.setAlignment(Qt.AlignCenter)
+        return f
 
     def _kv(self, k, val):
         w = QLabel("%s：%s" % (k, val)); w.setObjectName("PageDesc"); return w

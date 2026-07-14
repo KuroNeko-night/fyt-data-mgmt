@@ -24,6 +24,8 @@ FEATURE_DIRS = {
     "reconcile": "工时对账",
     "arrival": "到料明细",
     "pivot": "透视表",
+    "pdf_tools": "PDF工具",
+    "excel_tools": "Excel工具",
 }
 
 

@@ -17,11 +17,16 @@ from ..widgets.clickable_card import ClickableCard
 from core import version, library, paths
 
 ENTRIES = [
-    ("attendance", "🗓", "考勤数据填报", "打卡系统数据 → 自动填入待填考勤表并算工时"),
-    ("reconcile", "⚖", "工时对账", "来源与对账单核对，出异常汇总 + 可信度评分"),
-    ("arrival", "📦", "到料明细表", "扫描送货计划，统计未收料，生成每日到料明细"),
-    ("pivot", "📊", "透视表制作", "采购数据自动清洗汇总，生成原生数据透视表"),
-    ("library", "🗄", "数据库", "把各处表格拖进来，自动识别归档、随取随用"),
+    ("attendance", "attendance", "考勤数据填报", "打卡系统数据 → 自动填入待填考勤表并算工时"),
+    ("reconcile", "reconcile", "工时对账", "来源与对账单核对，出异常汇总 + 可信度评分"),
+    ("arrival", "arrival", "到料明细表", "扫描送货计划，统计未收料，生成每日到料明细"),
+    ("pivot", "pivot", "透视表制作", "采购数据自动清洗汇总，生成原生数据透视表"),
+    ("library", "library", "数据库", "把各处表格拖进来，自动识别归档、随取随用"),
+    ("currency", "currency", "金额大写", "数字金额一键转中文大写，开票报销可直接用"),
+    ("rename", "rename", "批量重命名", "按规则批量改名，实时预览、可撤销"),
+    ("text", "text", "文本工具箱", "去重、排序、去空行、提取邮箱手机号等"),
+    ("pdf", "pdf", "PDF 工具箱", "合并、拆分、提取或删除 PDF 指定页"),
+    ("excel", "excel", "Excel 工具箱", "多簿合并、按表拆分、格式转换、纵向合并"),
 ]
 
 
@@ -36,10 +41,12 @@ class HomePage(BasePage):
         sec = QLabel("快捷入口"); sec.setObjectName("SecTitle")
         layout.addWidget(sec)
         grid = QGridLayout(); grid.setSpacing(12)
-        for i, (key, icon, title, desc) in enumerate(ENTRIES):
-            card = ClickableCard(key, icon, title, desc)
+        self._cards = []
+        for i, (key, icon_name, title, desc) in enumerate(ENTRIES):
+            card = ClickableCard(key, icon_name, title, desc)
             card.clicked.connect(self.main.switch_to)
             grid.addWidget(card, i // 3, i % 3)
+            self._cards.append(card)
         layout.addLayout(grid)
 
         self.stats = QLabel(""); self.stats.setObjectName("Hint")
@@ -81,18 +88,23 @@ class HomePage(BasePage):
             v.addWidget(Collapsible(t, html, expanded=(i == 0)))
         return box
 
+    def on_theme_changed(self):
+        super(HomePage, self).on_theme_changed()
+        for card in getattr(self, "_cards", []):
+            card.refresh_icon()
+
     def refresh_view(self):
         c = library.counts()
         total = sum(c.get(k, 0) for k in (library.CATEGORIES + [library.UNKNOWN]))
         if not total:
-            self.stats.setText("📁 数据库当前为空 —— 到「数据库」页把常用表拖进来，"
+            self.stats.setText("数据库当前为空 —— 到「数据库」页把常用表拖进来，"
                                "各功能就能自动取用。")
             return
         parts = []
         for cat in library.CATEGORIES:
             if c.get(cat):
                 parts.append("%s %d" % (library.CATEGORY_TITLES[cat], c[cat]))
-        line = "📁 数据库已归档 %d 张表：" % total + "　".join(parts)
+        line = "数据库已归档 %d 张表：" % total + "　".join(parts)
         if c.get(library.UNKNOWN):
             line += "　·　未识别 %d" % c[library.UNKNOWN]
         self.stats.setText(line)

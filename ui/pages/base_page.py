@@ -10,13 +10,16 @@ import os
 import traceback
 
 from PySide2.QtCore import Qt
-from PySide2.QtWidgets import (QWidget, QVBoxLayout, QLabel, QScrollArea,
-                               QFrame, QMessageBox)
+from PySide2.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
+                               QScrollArea, QFrame, QMessageBox)
 
 from ..worker import Worker
+from core import settings as settings_mod
 
 
 class BasePage(QWidget):
+    CONTENT_MAX = 1100          # 内容列最大宽度(px)，宽屏时超出部分留白居中
+
     def __init__(self, main, title, desc):
         super(BasePage, self).__init__()
         self.main = main
@@ -25,7 +28,14 @@ class BasePage(QWidget):
         outer.setContentsMargins(28, 22, 28, 22)
         outer.setSpacing(14)
 
-        head = QVBoxLayout()
+        # 标题头也限同宽居中，与下方内容列左右对齐。
+        # CONTENT_MAX 为 None 时不限宽、铺满整行（数据库页等宽表场景用）。
+        head_row = QHBoxLayout(); head_row.setContentsMargins(0, 0, 0, 0); head_row.setSpacing(0)
+        head_col = QWidget()
+        if self.CONTENT_MAX:
+            head_col.setMaximumWidth(self.CONTENT_MAX)
+        head = QVBoxLayout(head_col)
+        head.setContentsMargins(0, 0, 0, 0)
         head.setSpacing(3)
         t = QLabel(title)
         t.setObjectName("PageTitle")
@@ -34,7 +44,11 @@ class BasePage(QWidget):
         d.setObjectName("PageDesc")
         d.setWordWrap(True)
         head.addWidget(d)
-        outer.addLayout(head)
+        if self.CONTENT_MAX:
+            head_row.addStretch(1); head_row.addWidget(head_col, 0); head_row.addStretch(1)
+        else:
+            head_row.addWidget(head_col, 1)   # 不限宽：标题头铺满整行
+        outer.addLayout(head_row)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -47,9 +61,24 @@ class BasePage(QWidget):
         body_host.setAttribute(Qt.WA_StyledBackground, True)
         body_host.setStyleSheet("background: transparent;")
         scroll.setStyleSheet("QScrollArea{background:transparent;border:none;}")
-        self.body = QVBoxLayout(body_host)
-        self.body.setContentsMargins(0, 0, 6, 0)
+        # 限宽居中：内容列最宽 CONTENT_MAX，宽屏时两侧 stretch 均分留白，
+        # 窄屏时 stretch 收为 0，内容列自适应铺满。避免最大化时卡片被拉成长条。
+        row = QHBoxLayout(body_host)
+        row.setContentsMargins(0, 0, 6, 0)
+        row.setSpacing(0)
+        column = QWidget()
+        column.setAttribute(Qt.WA_StyledBackground, True)
+        column.setStyleSheet("background: transparent;")
+        self.body = QVBoxLayout(column)
+        self.body.setContentsMargins(0, 0, 0, 0)
         self.body.setSpacing(14)
+        if self.CONTENT_MAX:
+            column.setMaximumWidth(self.CONTENT_MAX)
+            row.addStretch(1)
+            row.addWidget(column, 0)
+            row.addStretch(1)
+        else:
+            row.addWidget(column, 1)          # 不限宽：内容列铺满整行
         scroll.setWidget(body_host)
         outer.addWidget(scroll, 1)
 
@@ -136,6 +165,17 @@ class BasePage(QWidget):
                 os.startfile(os.path.dirname(path))
         except Exception:
             pass
+
+    def notify_done(self, out_dir, title, text):
+        """处理完成后的统一收尾：按设置决定是否自动打开输出目录、是否弹提示。
+
+        设置页的“自动打开输出文件夹 / 完成后弹出提示”开关经由此方法生效，
+        四个功能页调用它替代直接 open_folder + info。"""
+        st = settings_mod.get_settings()
+        if st.get("auto_open_output", True):
+            self.open_folder(out_dir)
+        if st.get("show_done_dialog", True):
+            QMessageBox.information(self, title, text)
 
     def info(self, title, text):
         QMessageBox.information(self, title, text)

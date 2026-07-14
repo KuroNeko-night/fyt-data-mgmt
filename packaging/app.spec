@@ -30,7 +30,7 @@ excludes = [
     "PySide2.Qt3DCore", "PySide2.QtCharts", "PySide2.QtDataVisualization",
     "PySide2.QtSql", "PySide2.QtTest", "PySide2.QtBluetooth", "PySide2.QtSensors",
     "PySide2.QtSerialPort", "PySide2.QtPositioning", "PySide2.QtLocation",
-    "PySide2.QtSvg", "PySide2.QtOpenGL", "PySide2.QtXml", "PySide2.QtHelp",
+    "PySide2.QtOpenGL", "PySide2.QtXml", "PySide2.QtHelp",
     "tkinter", "unittest", "pydoc", "pytest", "numpy", "pandas", "PIL",
     "matplotlib", "scipy", "lxml", "setuptools", "pip",
 ]
@@ -40,7 +40,8 @@ a = Analysis(
     pathex=[ROOT],
     binaries=[],
     datas=datas,
-    hiddenimports=["openpyxl.cell._writer"],   # openpyxl 惰性导入，显式带上
+    # openpyxl 惰性导入需显式带上；QtSvg 供 ui/icons.py 栅格化矢量图标(缺则图标全空白)
+    hiddenimports=["openpyxl.cell._writer", "PySide2.QtSvg"],
     hookspath=[],
     runtime_hooks=[],
     excludes=excludes,

@@ -77,11 +77,10 @@ class ReconcilePage(BasePage):
         kind = "ok" if level == "可信" else ("warn" if level == "需复核" else "err")
         self.panel.set_status(kind, "完成 · 可信度【%s】%d/100 · 异常 %d 条" % (level, score, n))
         self.btn_open.setEnabled(bool(self._out_dir))
-        self.open_folder(self._out_dir)
         tone = {"可信": "对账结果可信，可直接使用。",
                 "需复核": "结果基本可用，但建议人工复核异常汇总。",
                 "存疑": "可信度偏低，请务必核对异常汇总与列映射设置。"}.get(level, "")
-        self.info("对账完成",
+        self.notify_done(self._out_dir, "对账完成",
                   "可信度：【%s】 %d/100\n异常：%d 条\n%s\n输出：%s"
                   % (level, score, n, tone, self._out_dir))
 
