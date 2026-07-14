@@ -24,13 +24,19 @@ class FileZone(QFrame):
     changed = Signal(list)     # 文件列表变化时发出当前路径列表
 
     def __init__(self, index, title, hint, multi=True,
-                 only_xlsx=False, detail="", library_cats=None, parent=None):
+                 only_xlsx=False, detail="", library_cats=None, parent=None,
+                 exts=None, file_filter=None):
         super(FileZone, self).__init__(parent)
         self.setObjectName("Card")
         self._index = index
         self._title = title
         self._multi = multi
-        self._exts = (".xlsx", ".xlsm") if only_xlsx else EXCEL_EXT
+        # exts 显式给定时覆盖默认(供 PDF / CSV 等非 Excel 场景复用本组件)
+        if exts:
+            self._exts = tuple(e.lower() for e in exts)
+        else:
+            self._exts = (".xlsx", ".xlsm") if only_xlsx else EXCEL_EXT
+        self._filter = file_filter
         # 可从数据库选表的类别列表（None 表示不接库）
         self._lib_cats = list(library_cats) if library_cats else None
         self._paths = []
@@ -127,7 +133,7 @@ class FileZone(QFrame):
 
     # ---------- 文件操作 ----------
     def _browse(self):
-        filt = "Excel 文件 (*.xlsx *.xlsm *.xls);;所有文件 (*.*)"
+        filt = self._filter or "Excel 文件 (*.xlsx *.xlsm *.xls);;所有文件 (*.*)"
         if self._multi:
             files, _ = QFileDialog.getOpenFileNames(self, "选择文件", "", filt)
         else:

@@ -2,5 +2,7 @@
 # 兼容 Windows 7 + Python 3.8。版本已锁定为在 Win7 上可用的最后系列。
 PySide2==5.15.2.1
 openpyxl==3.1.5
+xlrd==1.2.0          # 读老式 .xls（Excel 工具箱）
+pypdf==4.3.1         # PDF 工具箱（纯 Python，Win7 兼容）
 # 打包工具（仅开发机需要，运行时不依赖）
 pyinstaller==6.21.0

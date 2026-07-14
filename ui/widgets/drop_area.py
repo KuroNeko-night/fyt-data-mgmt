@@ -9,6 +9,7 @@ from PySide2.QtCore import Qt, Signal
 from PySide2.QtWidgets import QFrame, QVBoxLayout, QLabel, QPushButton, QFileDialog
 
 from .. import theme
+from .. import icons
 
 EXCEL_EXT = (".xlsx", ".xlsm", ".xls")
 
@@ -25,10 +26,12 @@ class DropArea(QFrame):
         v.setSpacing(10)
         v.setAlignment(Qt.AlignCenter)
 
-        icon = QLabel("⤓")
-        icon.setObjectName("DropIcon")
-        icon.setAlignment(Qt.AlignCenter)
-        v.addWidget(icon)
+        self._icon = QLabel()
+        self._icon.setObjectName("DropIcon")
+        self._icon.setAlignment(Qt.AlignCenter)
+        self._icon.setFixedSize(44, 44); self._icon.setScaledContents(True)
+        self._refresh_icon()
+        v.addWidget(self._icon, 0, Qt.AlignCenter)
         t = QLabel("把表格拖到这里导入数据库")
         t.setObjectName("DropTitle")
         t.setAlignment(Qt.AlignCenter)
@@ -43,6 +46,10 @@ class DropArea(QFrame):
         btn.setCursor(Qt.PointingHandCursor)
         btn.clicked.connect(self._browse)
         v.addWidget(btn, 0, Qt.AlignCenter)
+
+    def _refresh_icon(self):
+        # 2× 物理分辨率 + setScaledContents 定尺，高 DPI 不裁切
+        self._icon.setPixmap(icons.pixmap("upload", 88, None, 1.0))
 
     def _browse(self):
         filt = "Excel 文件 (*.xlsx *.xlsm *.xls);;所有文件 (*.*)"
