@@ -34,6 +34,7 @@ class ReconcilePage(BasePage):
 
         self.panel = RunPanel("开始对账")
         self.panel.run_btn.clicked.connect(self._run)
+        self.btn_review = self.panel.add_action("人工确认后对账…", self._run_review)
         self.btn_open = self.panel.add_action("打开输出文件夹", self._open)
         layout.addWidget(self.panel)
         self._out_dir = ""
@@ -50,6 +51,7 @@ class ReconcilePage(BasePage):
     def _refresh(self, *_):
         ok = bool(self.z_tgt.get()) and bool(self.z_src.get()) and bool(self.z_labor.get())
         self.panel.run_btn.setEnabled(ok)
+        self.btn_review.setEnabled(ok)
         if ok:
             self.panel.set_status("ready", "准备就绪")
         else:
@@ -66,6 +68,30 @@ class ReconcilePage(BasePage):
         labor = self.z_labor.get()
         opts = self.opts
         self.launch(lambda log: reconcile_core.run(tgt, src, labor, opts=opts, log=log),
+                    self.panel, self._done)
+
+    def _run_review(self):
+        """先只读分析，弹出人工确认对话框收集结构纠正与姓名配对，再对账。"""
+        from ..dialogs.reconcile_review import ReconcileReviewDialog
+        tgt = self.z_tgt.get()[0]
+        src = self.z_src.get()
+        labor = self.z_labor.get()
+        opts = self.opts
+        self.panel.clear_log()
+        self.panel.log_line("正在分析文件以供人工确认…")
+        try:
+            plan = reconcile_core.analyze(tgt, src, labor, opts=opts)
+        except Exception as e:
+            self.warn("分析失败", str(e))
+            self.panel.set_status("err", "分析失败")
+            return
+        dlg = ReconcileReviewDialog(plan, self)
+        if not dlg.exec_():
+            self.panel.log_line("已取消人工确认。")
+            return
+        choices = dlg.choices()
+        self.launch(lambda log: reconcile_core.run(tgt, src, labor, opts=opts,
+                                                    log=log, choices=choices),
                     self.panel, self._done)
 
     def _done(self, res):

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""透视表制作页。采购数据表 -> 分组汇总 + 原生数据透视表 + 可信度报告。"""
+"""销售表透视页。采购数据表 -> 分组汇总 + 原生数据透视表 + 可信度报告。"""
 import os
 
 from .base_page import BasePage
@@ -11,7 +11,7 @@ from core import pivot_core
 class PivotPage(BasePage):
     def __init__(self, main):
         super(PivotPage, self).__init__(
-            main, "透视表制作",
+            main, "销售表透视",
             "自动定位表头、清洗数据、统一单位/规格，按编码/名称/规格/单位分组汇总，"
             "生成 Excel 原生数据透视表并评估可信度。")
 

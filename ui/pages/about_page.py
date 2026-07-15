@@ -24,7 +24,7 @@ class AboutPage(BasePage):
         top.addWidget(self._update_card(), 1)
         layout.addLayout(top)
 
-        # 中排：集成功能宽卡（四大模块图标 + 名称）
+        # 中排：集成功能宽卡（六大核心业务图标 + 名称）
         layout.addWidget(self._features_card())
 
         # 底部：品牌页脚，自然收尾，避免大片空白
@@ -79,7 +79,8 @@ class AboutPage(BasePage):
         t = QLabel("集成功能"); t.setObjectName("SecTitle"); v.addWidget(t)
         row = QHBoxLayout(); row.setSpacing(10)
         feats = [("attendance", "考勤填报"), ("reconcile", "工时对账"),
-                 ("arrival", "到料明细"), ("pivot", "透视表制作")]
+                 ("arrival", "到料明细"), ("pivot", "销售表透视"),
+                 ("purchase", "采购对账"), ("delivery", "送货计划")]
         self._feat_icons = []
         for key, label in feats:
             item = QFrame(); item.setObjectName("EntryCard")

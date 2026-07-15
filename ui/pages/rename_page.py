@@ -16,6 +16,8 @@ from PySide2.QtWidgets import (QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
                                QSpinBox, QComboBox, QFileDialog, QTableWidget,
                                QTableWidgetItem, QHeaderView, QAbstractItemView,
                                QMessageBox)
+from ..animations import (AnimatedCheckBox as QCheckBox,   # 勾选带打勾动画
+                          AnimatedComboBox as QComboBox)   # 下拉抽屉式拉开
 
 from .base_page import BasePage
 from .. import theme

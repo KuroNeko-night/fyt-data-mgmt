@@ -39,10 +39,12 @@ class BasePage(QWidget):
         head.setSpacing(3)
         t = QLabel(title)
         t.setObjectName("PageTitle")
+        t.setAlignment(Qt.AlignHCenter)
         head.addWidget(t)
         d = QLabel(desc)
         d.setObjectName("PageDesc")
         d.setWordWrap(True)
+        d.setAlignment(Qt.AlignHCenter)          # 简介逐行居中,与标题对齐更美观
         head.addWidget(d)
         if self.CONTENT_MAX:
             head_row.addStretch(1); head_row.addWidget(head_col, 0); head_row.addStretch(1)
@@ -81,6 +83,8 @@ class BasePage(QWidget):
             row.addWidget(column, 1)          # 不限宽：内容列铺满整行
         scroll.setWidget(body_host)
         outer.addWidget(scroll, 1)
+        from .. import smooth_scroll
+        self._smooth = smooth_scroll.enable(scroll)   # 平滑滚动(防 GC 存引用)
 
         self.build_body(self.body)
         self._apply_shadows()
@@ -170,7 +174,7 @@ class BasePage(QWidget):
         """处理完成后的统一收尾：按设置决定是否自动打开输出目录、是否弹提示。
 
         设置页的“自动打开输出文件夹 / 完成后弹出提示”开关经由此方法生效，
-        四个功能页调用它替代直接 open_folder + info。"""
+        各功能页调用它替代直接 open_folder + info。"""
         st = settings_mod.get_settings()
         if st.get("auto_open_output", True):
             self.open_folder(out_dir)

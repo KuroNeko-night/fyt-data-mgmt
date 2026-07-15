@@ -6,6 +6,7 @@ from PySide2.QtCore import Qt
 from PySide2.QtWidgets import (QFrame, QVBoxLayout, QHBoxLayout, QLabel,
                                QRadioButton, QButtonGroup, QLineEdit, QPushButton,
                                QFileDialog, QCheckBox)
+from ..animations import AnimatedCheckBox as QCheckBox   # 勾选带打勾动画
 
 from .base_page import BasePage
 from core import settings as settings_mod, paths, version, library
@@ -15,7 +16,7 @@ class SettingsPage(BasePage):
     def __init__(self, main):
         self.settings = settings_mod.get_settings()
         super(SettingsPage, self).__init__(
-            main, "设置", "统一管理四个功能的输出位置与系统选项。改动即时生效。")
+            main, "设置", "统一管理各功能的输出位置与系统选项。改动即时生效。")
 
     def build_body(self, layout):
         # 双列布局：把卡片分到左右两栏，宽屏时充分利用横向空间、消除大片留白。
@@ -48,7 +49,7 @@ class SettingsPage(BasePage):
         card = QFrame(); card.setObjectName("Card")
         v = QVBoxLayout(card); v.setContentsMargins(16, 14, 16, 14); v.setSpacing(8)
         t = QLabel("输出位置"); t.setObjectName("SecTitle"); v.addWidget(t)
-        h = QLabel("四个功能的处理结果统一按此规则存放，按“功能/时间戳”归档。")
+        h = QLabel("各功能的处理结果统一按此规则存放，按“功能/时间戳”归档。")
         h.setObjectName("Hint"); h.setWordWrap(True); v.addWidget(h)
         self.grp = QButtonGroup(self)
         self.rb_unified = QRadioButton("文档下统一文件夹（推荐）")
@@ -90,7 +91,7 @@ class SettingsPage(BasePage):
         card = QFrame(); card.setObjectName("Card")
         v = QVBoxLayout(card); v.setContentsMargins(16, 14, 16, 14); v.setSpacing(8)
         t = QLabel("处理行为"); t.setObjectName("SecTitle"); v.addWidget(t)
-        h = QLabel("控制四个功能处理完成后的收尾动作。")
+        h = QLabel("控制各功能处理完成后的收尾动作。")
         h.setObjectName("Hint"); h.setWordWrap(True); v.addWidget(h)
         self.cb_autoopen = QCheckBox("处理完成后自动打开输出文件夹")
         self.cb_autoopen.setChecked(bool(self.settings.get("auto_open_output", True)))

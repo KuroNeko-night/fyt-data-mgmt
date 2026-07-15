@@ -2,11 +2,12 @@
 """
 主窗口 —— 侧栏导航 + 堆叠页面(带切换动画) + 功能分类
 ====================================================
-功能按"考勤管理 / 数据处理"分组，另有设置、关于。为将来新增功能预留插槽
+功能按"人事 / 销售"等分组，另有设置、关于。为将来新增功能预留插槽
 （在 NAV 列表加一项 + 一个页面即可）。
 兼容 Windows 7 + Python 3.8 + PySide2。
 """
-from PySide2.QtCore import Qt, QEasingCurve, QTimer, QVariantAnimation, QSize
+from PySide2.QtCore import (Qt, QEasingCurve, QTimer, QVariantAnimation, QSize,
+                            QPropertyAnimation, QRect, QEvent)
 from PySide2.QtGui import QPixmap, QPainter, QColor
 from PySide2.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
                                QLabel, QPushButton, QStackedWidget, QApplication,
@@ -18,6 +19,8 @@ from .pages.home_page import HomePage
 from .pages.attendance_page import AttendancePage
 from .pages.reconcile_page import ReconcilePage
 from .pages.arrival_page import ArrivalPage
+from .pages.purchase_page import PurchasePage
+from .pages.delivery_page import DeliveryPage
 from .pages.pivot_page import PivotPage
 from .pages.library_page import LibraryPage
 from .pages.rename_page import RenamePage
@@ -33,10 +36,12 @@ from core import version, settings as settings_mod
 # 导航定义：(分组, 标题, 页面键)；分组为 None 表示单列在底部
 NAV = [
     ("", "首页", "home"),
-    ("考勤管理", "考勤数据填报", "attendance"),
-    ("考勤管理", "工时对账", "reconcile"),
-    ("数据处理", "到料明细表", "arrival"),
-    ("数据处理", "透视表制作", "pivot"),
+    ("人事", "考勤数据填报", "attendance"),
+    ("人事", "工时对账", "reconcile"),
+    ("销售", "到料明细表", "arrival"),
+    ("销售", "销售表透视", "pivot"),
+    ("销售", "采购数对账", "purchase"),
+    ("销售", "送货计划表", "delivery"),
     ("数据", "数据库", "library"),
     ("财务", "金额大写", "currency"),
     ("工具箱", "批量重命名", "rename"),
@@ -138,9 +143,28 @@ class MainWindow(QMainWindow):
         nav_host = QWidget()
         nav_host.setObjectName("NavHost")
         nav_host.setAttribute(Qt.WA_StyledBackground, True)
+        nav_host.installEventFilter(self)        # 监听尺寸变化,重贴指示块宽度
+        self._nav_host = nav_host
         nv = QVBoxLayout(nav_host)
         nv.setContentsMargins(0, 0, 0, 0)
         nv.setSpacing(0)
+
+        # 选中指示:两片一起平滑滑动——
+        #   填充块 fill 压在按钮"背后"(hover 提亮时会盖住它,无妨);
+        #   蓝色竖条 stripe 浮在按钮"之上",所以 hover 也挡不住它。
+        self._nav_fill = QWidget(nav_host)
+        self._nav_fill.setObjectName("NavIndicator")
+        self._nav_fill.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self._nav_fill.hide()
+        self._nav_stripe = QWidget(nav_host)
+        self._nav_stripe.setObjectName("NavStripe")
+        self._nav_stripe.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self._nav_stripe.hide()
+        self._nav_ind_anim = QPropertyAnimation(self._nav_fill, b"geometry", self)
+        self._nav_ind_anim.setDuration(260)
+        self._nav_ind_anim.setEasingCurve(QEasingCurve.OutCubic)
+        # 动画每帧把竖条对齐到填充块左缘(x=0、3px 宽、同高)
+        self._nav_ind_anim.valueChanged.connect(self._sync_nav_stripe)
 
         self._grp = QButtonGroup(self)
         self._grp.setExclusive(True)
@@ -158,8 +182,12 @@ class MainWindow(QMainWindow):
             nv.addWidget(b)
         self._refresh_nav_icons()
         nv.addStretch(1)
+        self._nav_fill.lower()                   # 填充压到按钮之下
+        self._nav_stripe.raise_()                # 竖条抬到按钮之上
         scroll.setWidget(nav_host)
         v.addWidget(scroll, 1)
+        from . import smooth_scroll
+        self._nav_smooth = smooth_scroll.enable(scroll, step=90, duration=260)
 
         # 底部提示固定在最下方
         tip = QLabel("兼容 Win7 · Python 3.8")
@@ -206,12 +234,56 @@ class MainWindow(QMainWindow):
                 "color:%s; font-size:13px; background:transparent;%s"
                 % (color, " font-weight:bold;" if on else ""))
 
+    def _sync_nav_stripe(self, rect):
+        """把蓝色竖条对齐到填充块:左缘、3px 宽、同高。供动画每帧回调。"""
+        st = getattr(self, "_nav_stripe", None)
+        if st is not None:
+            st.setGeometry(rect.x(), rect.y(), 3, rect.height())
+
+    def _move_indicator(self, key, animate=True):
+        """把选中指示(填充块+竖条)移到 key 对应按钮处;animate=True 时平滑滑动。
+
+        两片与按钮同在 nav_host 坐标系,滚动时一起平移,无需跟随滚动条重算。
+        首次布局未完成(高宽为 0)时延后重试,并确认此刻仍选中该键才落位。"""
+        fill = getattr(self, "_nav_fill", None)
+        btn = self._nav_btns.get(key)
+        if fill is None or btn is None:
+            return
+        target = QRect(0, btn.y(), self._nav_host.width(), btn.height())
+        if target.height() <= 1 or target.width() <= 1:     # 布局尚未成形,稍后再落位
+            QTimer.singleShot(16, lambda k=key: self._move_indicator(k, False)
+                              if self._nav_btns.get(k) and self._nav_btns[k].isChecked()
+                              else None)
+            return
+        self._nav_ind_anim.stop()
+        if not fill.isVisible():                             # 首次:直接落位,不滑
+            fill.setGeometry(target); fill.show(); fill.lower()
+            self._sync_nav_stripe(target)
+            self._nav_stripe.show(); self._nav_stripe.raise_()
+            return
+        if not animate:
+            fill.setGeometry(target)
+            self._sync_nav_stripe(target)
+            return
+        fill.lower(); self._nav_stripe.raise_()              # 保持层序
+        self._nav_ind_anim.setStartValue(fill.geometry())
+        self._nav_ind_anim.setEndValue(target)
+        self._nav_ind_anim.start()
+
+    def eventFilter(self, obj, ev):
+        # nav_host 尺寸变化(如滚动条出现使视口变窄)时,即时贴合指示块宽度
+        if obj is getattr(self, "_nav_host", None) and ev.type() == QEvent.Resize:
+            if self._cur_key is not None:
+                self._move_indicator(self._cur_key, animate=False)
+        return super(MainWindow, self).eventFilter(obj, ev)
+
     def _build_stack(self):
         self.stack = QStackedWidget()
         self.stack.setObjectName("Stack")       # 供 QSS 上不透明主题底色，杜绝换页白闪
         ctors = {"home": HomePage, "attendance": AttendancePage,
                  "reconcile": ReconcilePage, "arrival": ArrivalPage,
-                 "pivot": PivotPage, "library": LibraryPage,
+                 "pivot": PivotPage, "purchase": PurchasePage,
+                 "delivery": DeliveryPage, "library": LibraryPage,
                  "rename": RenamePage, "currency": CurrencyPage,
                  "text": TextPage, "pdf": PdfPage, "excel": ExcelToolsPage,
                  "settings": SettingsPage, "about": AboutPage}
@@ -228,6 +300,8 @@ class MainWindow(QMainWindow):
         if self._nav_btns.get(key):
             self._nav_btns[key].setChecked(True)
             self._refresh_nav_icons()            # 选中态变了，重染图标/文字色
+            # 选中指示块滑到新位置(首次进入不滑,直接落位)
+            self._move_indicator(key, animate=(self._cur_key is not None))
         # 进入首页/数据库时刷新其数据库统计与列表
         fn = getattr(page, "refresh_view", None)
         if callable(fn):

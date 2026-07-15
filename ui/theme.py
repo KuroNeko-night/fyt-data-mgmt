@@ -14,11 +14,11 @@ LIGHT = {
     "sidebar": "#1f2b45", "sidebar_h": "#2c3c60", "sidebar_a": "#3f6bb0",
     "sidebar_fg": "#c7d2e8", "sidebar_dim": "#9fb0d0", "sidebar_grp": "#6f7ea3",
     "accent": "#305496", "accent_l": "#3f6bb0", "accent_d": "#24406f",
-    "heading": "#24406f", "text": "#222b3a", "sub": "#5a6675", "hint": "#8a94a6",
-    "line": "#e2e7f0", "ok": "#1f7a4d", "warn": "#b25b00", "err": "#c0392b",
+    "heading": "#24406f", "text": "#1c2431", "sub": "#4b5768", "hint": "#6d7889",
+    "line": "#ccd5e6", "ok": "#1f7a4d", "warn": "#b25b00", "err": "#c0392b",
     "ghost_hover": "#eaf0fb", "mini_bg": "#eef2f8", "mini_hover": "#e2e8f4",
     "input_bg": "#ffffff", "list_bg": "#fbfcfe", "sel_fg": "#ffffff",
-    "scroll": "#c3cde0", "logbg": "#1e222b", "logfg": "#e6e6e6",
+    "scroll": "#c3cde0", "track": "#e4e9f2", "logbg": "#1e222b", "logfg": "#e6e6e6",
     "tip_bg": "#2b3446", "tip_fg": "#ffffff", "tip_bd": "#3f6bb0",
     "dis_bg": "#b8c2d6", "dis_fg": "#eef1f6", "shadow": "#20000000",
 }
@@ -33,7 +33,7 @@ DARK = {
     "line": "#333a48", "ok": "#3fbb7d", "warn": "#e2953f", "err": "#e46a5c",
     "ghost_hover": "#2b3348", "mini_bg": "#2a3040", "mini_hover": "#333b4e",
     "input_bg": "#272c38", "list_bg": "#1c2029", "sel_fg": "#ffffff",
-    "scroll": "#3a4350", "logbg": "#12151c", "logfg": "#c9d1e0",
+    "scroll": "#3a4350", "track": "#20242e", "logbg": "#12151c", "logfg": "#c9d1e0",
     "tip_bg": "#2b3446", "tip_fg": "#ffffff", "tip_bd": "#4f80cf",
     "dis_bg": "#3a4350", "dis_fg": "#6b748a", "shadow": "#40000000",
 }
@@ -218,10 +218,11 @@ QPushButton#NavBtn {{
     background: transparent; border: none; border-left: 3px solid transparent;
     min-height: 42px; text-align: left;
 }}
+/* 常态透明,让背后的选中指示块透出;hover 才轻微提亮。选中态由 NavIndicator 承担 */
 QPushButton#NavBtn:hover {{ background: {sidebar_h}; }}
-QPushButton#NavBtn:checked {{
-    background: {sidebar_h}; border-left: 3px solid {accent_l};
-}}
+/* 选中指示,两片平滑滑动:填充块在按钮之下、蓝色竖条在按钮之上(hover 挡不住) */
+QWidget#NavIndicator {{ background: {sidebar_h}; }}
+QWidget#NavStripe {{ background: {accent_l}; border-radius: 1px; }}
 QLabel#NavText {{ background: transparent; }}
 QLabel#NavGroup {{ color: {sidebar_grp}; font-size: 10px; padding: 16px 16px 4px 20px; letter-spacing: 2px; }}
 
@@ -405,13 +406,24 @@ QTabBar::tab:selected {{ color: {accent}; border-bottom: 2px solid {accent}; fon
 QProgressBar {{ background: {mini_bg}; border: none; border-radius: 4px; height: 6px; }}
 QProgressBar::chunk {{ background: {accent}; border-radius: 4px; }}
 
-/* 滚动条 */
-QScrollBar:vertical {{ background: transparent; width: 10px; margin: 2px; }}
-QScrollBar::handle:vertical {{ background: {scroll}; border-radius: 5px; min-height: 30px; }}
+/* 滚动条 —— 显式给轨道底色 + 透明的翻页区,杜绝未上色时的黑白方块回退样式 */
+QScrollBar:vertical {{
+    background: {track}; width: 11px; margin: 0; border: none; border-radius: 5px;
+}}
+QScrollBar::handle:vertical {{
+    background: {scroll}; border-radius: 4px; min-height: 32px; margin: 2px;
+}}
 QScrollBar::handle:vertical:hover {{ background: {accent_l}; }}
-QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; width: 0; }}
-QScrollBar:horizontal {{ background: transparent; height: 10px; margin: 2px; }}
-QScrollBar::handle:horizontal {{ background: {scroll}; border-radius: 5px; min-width: 30px; }}
+QScrollBar:horizontal {{
+    background: {track}; height: 11px; margin: 0; border: none; border-radius: 5px;
+}}
+QScrollBar::handle:horizontal {{
+    background: {scroll}; border-radius: 4px; min-width: 32px; margin: 2px;
+}}
+QScrollBar::handle:horizontal:hover {{ background: {accent_l}; }}
+/* 箭头行 & 翻页区都清零/透明:否则 Qt 会绘制默认贴图(即黑白格) */
+QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; width: 0; background: none; border: none; }}
+QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
 
 /* 提示气泡 —— 显式 border-color/background-color，修复不显示 */
 QToolTip {{

@@ -2,6 +2,7 @@
 """PDF 工具箱页 —— 合并 / 拆分 / 提取页 / 删除页。基于 pypdf,后台线程执行。"""
 from PySide2.QtWidgets import (QVBoxLayout, QHBoxLayout, QLabel, QFrame,
                                QRadioButton, QButtonGroup, QLineEdit, QComboBox)
+from ..animations import AnimatedComboBox as QComboBox   # 下拉抽屉式拉开
 
 from .base_page import BasePage
 from ..widgets.file_zone import FileZone

@@ -22,7 +22,7 @@ class PivotReviewDialog(QDialog):
     def __init__(self, plan, parent=None):
         super(PivotReviewDialog, self).__init__(parent)
         self.plan = plan
-        self.setWindowTitle("人工复核 —— 透视表制作")
+        self.setWindowTitle("人工复核 —— 销售表透视")
         self.setModal(True)
         self.setStyleSheet(theme.stylesheet())
         self.setSizeGripEnabled(True)          # 右下角可拖拽缩放

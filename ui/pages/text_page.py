@@ -4,6 +4,7 @@ from PySide2.QtCore import Qt
 from PySide2.QtWidgets import (QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
                                QFrame, QPushButton, QPlainTextEdit, QCheckBox,
                                QApplication)
+from ..animations import AnimatedCheckBox as QCheckBox   # 勾选带打勾动画
 
 from .base_page import BasePage
 from core import text_core as tc

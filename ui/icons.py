@@ -42,6 +42,15 @@ _SVG = {
         '<rect x="7" y="12" width="3" height="5" rx="0.6" {p}/>'
         '<rect x="12" y="8" width="3" height="9" rx="0.6" {p}/>'
         '<rect x="17" y="5" width="3" height="12" rx="0.6" {p}/>',
+    "purchase":                         # 采购对账：清单 + 对勾
+        '<rect x="4" y="3" width="16" height="18" rx="2" {p}/>'
+        '<path d="M8 8h5M8 12h5M8 16h3" {p}/>'
+        '<path d="M15.5 16l1.7 1.7 3-3.4" {p}/>',
+    "delivery":                         # 送货计划：厢式货车
+        '<path d="M2 6h11v9H2z" {p}/>'
+        '<path d="M13 9h4l3 3v3h-7z" {p}/>'
+        '<circle cx="6.5" cy="17" r="1.8" {p}/>'
+        '<circle cx="16.5" cy="17" r="1.8" {p}/>',
     "library":                          # 数据库：三层堆叠
         '<ellipse cx="12" cy="5" rx="8" ry="3" {p}/>'
         '<path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5" {p}/>'

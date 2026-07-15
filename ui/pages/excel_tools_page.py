@@ -2,6 +2,8 @@
 """Excel 工具箱页 —— 多簿合并 / 按 Sheet 拆分 / 格式转换 / 多表纵向合并。"""
 from PySide2.QtWidgets import (QVBoxLayout, QHBoxLayout, QLabel, QFrame,
                                QRadioButton, QButtonGroup, QComboBox, QCheckBox)
+from ..animations import (AnimatedCheckBox as QCheckBox,   # 勾选带打勾动画
+                          AnimatedComboBox as QComboBox)   # 下拉抽屉式拉开
 
 from .base_page import BasePage
 from ..widgets.file_zone import FileZone
