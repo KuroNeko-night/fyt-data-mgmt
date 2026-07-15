@@ -794,14 +794,91 @@ def _write_credibility_sheet(wb, cred, log_text=None):
 
 
 # ---------------------------------------------------------------------------
+# 人工确认：只读预分析(不写文件),供复核对话框展示识别结果与姓名匹配
+# ---------------------------------------------------------------------------
+def analyze(target_path, source_paths, labor_paths, opts=None):
+    """只读地跑一遍识别,返回供人工确认的 plan(不落盘、不改动任何文件)。
+
+    plan = {
+      "target": {file, sheet, sheets:[可选工作表], name_col, comp_col, work_col,
+                 check_col, day_cols, header/ data_start, names:[总表姓名]},
+      "sources": [{file, sheet, people}],           # 各数据来源识别概况
+      "labor":   [{file, sheet, people, names:[]}],  # 各对账单识别概况
+      "labor_names": [...],                          # 对账单合并后的全部姓名
+      "only_labor": [...],   # 仅对账单有(待配对到我司)
+      "only_zong":  [...],   # 仅我司总表有(可作为配对目标)
+    }
+    """
+    opts = opts or cc.DEFAULTS
+    if isinstance(source_paths, str):
+        source_paths = [source_paths]
+
+    # —— 待对表结构 ——
+    want_zong = opts.resolve_sheet(target_path)
+    wb = openpyxl.load_workbook(target_path, read_only=True, data_only=True)
+    try:
+        sheetnames = list(wb.sheetnames)
+        if want_zong and want_zong in sheetnames:
+            ws = wb[want_zong]; used_sheet = want_zong
+        elif "总表" in sheetnames:
+            ws = wb["总表"]; used_sheet = "总表"
+        else:
+            ws = wb.worksheets[0]; used_sheet = ws.title
+        lay = _locate_zong(ws, opts=opts, path=target_path)
+        zong_names = sorted(_zong_names(ws, lay))
+    finally:
+        wb.close()
+    target_info = {
+        "file": os.path.basename(target_path), "sheet": used_sheet,
+        "sheets": sheetnames,
+        "name_col": lay["name_col"], "comp_col": lay["comp_col"],
+        "work_col": lay["work_col"], "check_col": lay["check_col"],
+        "day_cols": sorted(lay["day_cols"].keys()),
+        "data_start": lay["data_start"], "names": zong_names,
+    }
+
+    # —— 数据来源概况(仅统计,不参与匹配) ——
+    sources_info = []
+    for p in source_paths:
+        one, _ = load_source([p], log=None, opts=opts)
+        sources_info.append({"file": os.path.basename(p), "people": len(one)})
+
+    # —— 对账单结构 + 姓名 ——
+    labor_info = []
+    labor_names = set()
+    for p in labor_paths:
+        meta = []
+        one = load_labor(p, log=None, meta=meta, opts=opts)
+        m = meta[0] if meta else {}
+        labor_names |= set(one.keys())
+        labor_info.append({"file": os.path.basename(p),
+                           "sheet": m.get("sheet"), "people": len(one),
+                           "names": sorted(one.keys())})
+
+    zset = set(zong_names)
+    return {
+        "target": target_info,
+        "sources": sources_info,
+        "labor": labor_info,
+        "labor_names": sorted(labor_names),
+        "only_labor": sorted(labor_names - zset),
+        "only_zong": sorted(zset - labor_names),
+    }
+
+
+# ---------------------------------------------------------------------------
 # 主流程
 # ---------------------------------------------------------------------------
-def run(target_path, source_paths, labor_paths, out_dir=None, log=None, opts=None):
+def run(target_path, source_paths, labor_paths, out_dir=None, log=None, opts=None,
+        choices=None):
     """
     target_path  : 待对表(我司)
     source_paths : 数据来源，单个路径或路径列表（多文件、多子表自动识别）
     labor_paths  : 待对数据(劳务公司) 文件列表
     opts         : common_core.Options（高级选项：容差、重复策略、指定工作表等）
+    choices      : 人工确认结果 dict 或 None。
+                   {"target_sheet":名, "target_roles":{"name/comp/work":列1based},
+                    "aliases":{劳务姓名: 我司姓名}}。None=全自动,行为与旧版一致。
     返回 dict: {filled_path, summary_path, stats, anomalies, credibility}
     """
     opts = opts or cc.DEFAULTS
@@ -811,6 +888,32 @@ def run(target_path, source_paths, labor_paths, out_dir=None, log=None, opts=Non
         log_lines.append(str(m))
         if log:
             log(m)
+
+    # —— 应用人工确认:待对表结构覆盖写入 opts.columns(核心已认这套 per-file 映射) ——
+    aliases = {}
+    if choices:
+        aliases = dict(choices.get("aliases") or {})
+        tsheet = choices.get("target_sheet")
+        troles = choices.get("target_roles") or {}
+        if tsheet or troles:
+            import copy
+            opts = copy.deepcopy(opts)          # 不改动调用方传入的 opts
+            base = os.path.basename(target_path)
+            fm = dict(opts.columns.get(base) or {})
+            if tsheet:
+                fm["sheet"] = tsheet
+            if troles:
+                roles0 = dict(fm.get("roles") or {})
+                for k, col1 in troles.items():   # 对话框给 1-based,存 0-based
+                    if col1:
+                        roles0[k] = int(col1) - 1
+                fm["roles"] = roles0
+            opts.columns[base] = fm
+            _lg("采用人工确认的待对表结构：" +
+                ("工作表=%s " % tsheet if tsheet else "") +
+                ("列映射 %d 项" % len(troles) if troles else ""))
+        if aliases:
+            _lg("采用人工姓名配对 %d 组(比对时视为同一人)" % len(aliases))
 
     if out_dir is None:
         out_dir = _unified_out_dir("reconcile", src=target_path) or cc.make_out_dir(target_path)
@@ -879,6 +982,20 @@ def run(target_path, source_paths, labor_paths, out_dir=None, log=None, opts=Non
                 _lg("   ⚠ 姓名重复：%s 同时出现在多个劳务公司文件，后者覆盖" % nm)
             labor[nm] = info
     _lg("   劳务公司合计 %d 人" % len(labor))
+
+    # —— 人工姓名配对:把劳务姓名改写成我司姓名,使两侧对上(仅本次运行) ——
+    if aliases:
+        applied = 0
+        for lab_nm, our_nm in aliases.items():
+            lab_nm = _norm_name(lab_nm); our_nm = _norm_name(our_nm)
+            if not lab_nm or not our_nm or lab_nm == our_nm:
+                continue
+            if lab_nm in labor and our_nm not in labor:
+                labor[our_nm] = labor.pop(lab_nm)
+                applied += 1
+                _lg("   ↔ 姓名配对：劳务「%s」= 我司「%s」" % (lab_nm, our_nm))
+        if applied:
+            _lg("   已应用 %d 组姓名配对" % applied)
 
     _lg("④ 对账比较 ...")
     anomalies = reconcile(ws, stats["layout"], labor, comp_map=comp_map,

@@ -6,15 +6,18 @@
 复制归档到 <文档>/峰运通数据管理系统/数据库/<类别>/，记录最后更新日期等元信息；
 未能识别的表统一进"未识别"文件夹。各功能页可据类别自动取到所需的表。
 
-类别（7 类 + 未识别）：
-  att_source  填报·系统数据表（打卡来源）
-  att_target  填报·待填考勤表
-  rec_source  对账·数据来源（工时明细）
-  rec_zong    对账·待对总表
-  rec_labor   对账·劳务对账单
-  pivot_src   透视·采购数据表
+类别（10 类 + 未识别）：
+  att_source   填报·系统数据表（打卡来源）
+  att_target   填报·待填考勤表
+  rec_source   对账·数据来源（工时明细）
+  rec_zong     对账·待对总表
+  rec_labor    对账·劳务对账单
+  pivot_src    透视·采购数据表
   arrival_plan 到料·送货计划表
-  unknown     未识别
+  purchase_stmt 采购·采购对账单（我方/供方通用）
+  deliv_bom    送货·物料清单（KD/SUB 物料清单）
+  deliv_supp   送货·供应商明细（含供应商代码/名称）
+  unknown      未识别
 
 兼容 Windows 7 + Python 3.8。
 """
@@ -28,7 +31,8 @@ from . import paths
 
 # 类别顺序（也用于页面展示顺序）
 CATEGORIES = ["att_source", "att_target", "rec_source", "rec_zong",
-              "rec_labor", "pivot_src", "arrival_plan"]
+              "rec_labor", "pivot_src", "arrival_plan",
+              "purchase_stmt", "deliv_bom", "deliv_supp"]
 UNKNOWN = "unknown"
 
 CATEGORY_TITLES = {
@@ -39,6 +43,9 @@ CATEGORY_TITLES = {
     "rec_labor": "对账 · 劳务对账单",
     "pivot_src": "透视 · 采购数据表",
     "arrival_plan": "到料 · 送货计划表",
+    "purchase_stmt": "采购 · 采购对账单",
+    "deliv_bom": "送货 · 物料清单",
+    "deliv_supp": "送货 · 供应商明细",
     "unknown": "未识别",
 }
 # 类别 → 归档子文件夹名（中文，便于用户直接翻看）
@@ -205,6 +212,41 @@ def _score_sheet(fname, tokens, ext):
     if has("编码", "物料编码", "物料编号"):
         s += 10
     res["arrival_plan"] = (s, sig)
+
+    # purchase_stmt —— 采购对账单(我方/供方通用)。
+    # 强特征:批次号+采购数量+材料编号三件套;排除透视表(有"最终采购数量")与
+    # 含姓名/工时的劳务账单,避免抢 pivot_src / rec_labor。
+    s, sig = 0, []
+    if (has("批次号") and has("采购数量") and not has("最终采购数量")
+            and not has("姓名") and not has("实际工时", "出勤工时")):
+        s += 55; sig.append("含批次号+采购数量")
+        if has("材料编号", "物料编号", "材料号", "物料号"):
+            s += 25; sig.append("含材料编号")
+        if has("材料名称", "物料名称"):
+            s += 10; sig.append("含材料名称")
+        if fnhas("对账单", "对单", "结算单"):
+            s += 12; sig.append("文件名含对账/对单")
+    res["purchase_stmt"] = (s, sig)
+
+    # deliv_bom —— 送货·物料清单。以"物料中文/英文描述"为唯一强特征(透视表只有物料号)。
+    s, sig = 0, []
+    if has("物料中文描述", "物料英文描述", "中文描述", "英文描述"):
+        s += 55; sig.append("含物料中/英文描述")
+        if (has("物料号", "物料编码") and has("数量")):
+            s += 25; sig.append("含物料号+数量")
+        if fnhas("物料清单", "bom", "kd", "sub"):
+            s += 12; sig.append("文件名含物料清单/KD")
+    res["deliv_bom"] = (s, sig)
+
+    # deliv_supp —— 送货·供应商明细。唯一强特征"零部件代码"(其余表都用物料号/材料编号)。
+    s, sig = 0, []
+    if has("零部件代码"):
+        s += 50; sig.append("含零部件代码")
+        if has("供应商代码", "供应商名称", "供应商"):
+            s += 25; sig.append("含供应商代码/名称")
+        if has("库区", "结算方式", "属性", "订单情况"):
+            s += 12; sig.append("含库区/结算/属性列")
+    res["deliv_supp"] = (s, sig)
 
     return res
 

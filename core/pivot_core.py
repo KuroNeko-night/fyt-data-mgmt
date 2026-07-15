@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-透视表制作核心逻辑（从 arrival_table_app.pyw 抽出，与 GUI 解耦）
+销售表透视核心逻辑（从 arrival_table_app.pyw 抽出，与 GUI 解耦）
 ================================================================
 复刻 PurchaseProc.bas：定位表头、清洗数据、统一单位/规格、按
 材料编号/名称/规格/单位 分组汇总最终采购数量，并生成 Excel 原生
@@ -1168,7 +1168,7 @@ def write_confidence_report(out_path, in_paths, res):
     L = []
     bar = "=" * 66
     L.append(bar)
-    L.append("           透视表制作 · 可信度分析报告")
+    L.append("           销售表透视 · 可信度分析报告")
     L.append(bar)
     L.append("生成时间   : %s" % (datetime.datetime.utcnow() +
              datetime.timedelta(hours=8)).strftime("%Y-%m-%d %H:%M:%S"))
@@ -1517,7 +1517,7 @@ def _fmt_num(v):
 
 # ---------------- 统一入口（与其它三功能同构：接受统一 out_dir）----------------
 def run(in_paths, choices=None, out_dir=None, log=None):
-    """透视表制作统一入口。
+    """销售表透视统一入口。
     in_paths : 采购数据表路径列表。
     choices  : 人工复核选择；None=全自动默认。
     out_dir  : 输出目录；不传则用统一 paths 系统。

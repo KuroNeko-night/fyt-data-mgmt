@@ -16,9 +16,9 @@ PUBLISHER = "重庆峰运通供应链管理公司"
 COPYRIGHT = "Copyright (c) 2026 重庆峰运通供应链管理公司"
 
 # ---------------- 版本号（语义化 主.次.修订）----------------
-VERSION = "1.0.2"
-VERSION_TUPLE = (1, 0, 2)
-BUILD_DATE = "2026-07-14"
+VERSION = "1.0.4"
+VERSION_TUPLE = (1, 0, 4)
+BUILD_DATE = "2026-07-15"
 
 # ---------------- 更新检查 ----------------
 # 更新模块优先读取 UPDATE_MANIFEST_URL；留空则由下面的 OWNER/REPO 自动拼 GitHub latest 地址。
