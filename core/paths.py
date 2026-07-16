@@ -28,6 +28,7 @@ FEATURE_DIRS = {
     "excel_tools": "Excel工具",
     "purchase": "采购数对账",
     "delivery": "送货计划",
+    "invoice": "增值税发票统计",
 }
 
 

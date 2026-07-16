@@ -447,6 +447,7 @@ imported by:
  &#8226;   <a href="#main.py">main.py</a>
  &#8226;   <a href="#ui.animations">ui.animations</a>
  &#8226;   <a href="#ui.dialogs.attendance_review">ui.dialogs.attendance_review</a>
+ &#8226;   <a href="#ui.dialogs.invoice_review">ui.dialogs.invoice_review</a>
  &#8226;   <a href="#ui.dialogs.library_picker">ui.dialogs.library_picker</a>
  &#8226;   <a href="#ui.dialogs.onboarding">ui.dialogs.onboarding</a>
  &#8226;   <a href="#ui.dialogs.pivot_review">ui.dialogs.pivot_review</a>
@@ -457,7 +458,9 @@ imported by:
  &#8226;   <a href="#ui.pages.arrival_page">ui.pages.arrival_page</a>
  &#8226;   <a href="#ui.pages.base_page">ui.pages.base_page</a>
  &#8226;   <a href="#ui.pages.currency_page">ui.pages.currency_page</a>
+ &#8226;   <a href="#ui.pages.delivery_page">ui.pages.delivery_page</a>
  &#8226;   <a href="#ui.pages.home_page">ui.pages.home_page</a>
+ &#8226;   <a href="#ui.pages.invoice_page">ui.pages.invoice_page</a>
  &#8226;   <a href="#ui.pages.library_page">ui.pages.library_page</a>
  &#8226;   <a href="#ui.pages.rename_page">ui.pages.rename_page</a>
  &#8226;   <a href="#ui.pages.settings_page">ui.pages.settings_page</a>
@@ -560,6 +563,7 @@ imported by:
  &#8226;   <a href="#main.py">main.py</a>
  &#8226;   <a href="#ui.animations">ui.animations</a>
  &#8226;   <a href="#ui.dialogs.attendance_review">ui.dialogs.attendance_review</a>
+ &#8226;   <a href="#ui.dialogs.invoice_review">ui.dialogs.invoice_review</a>
  &#8226;   <a href="#ui.dialogs.library_picker">ui.dialogs.library_picker</a>
  &#8226;   <a href="#ui.dialogs.onboarding">ui.dialogs.onboarding</a>
  &#8226;   <a href="#ui.dialogs.pivot_review">ui.dialogs.pivot_review</a>
@@ -570,8 +574,10 @@ imported by:
  &#8226;   <a href="#ui.pages.attendance_page">ui.pages.attendance_page</a>
  &#8226;   <a href="#ui.pages.base_page">ui.pages.base_page</a>
  &#8226;   <a href="#ui.pages.currency_page">ui.pages.currency_page</a>
+ &#8226;   <a href="#ui.pages.delivery_page">ui.pages.delivery_page</a>
  &#8226;   <a href="#ui.pages.excel_tools_page">ui.pages.excel_tools_page</a>
  &#8226;   <a href="#ui.pages.home_page">ui.pages.home_page</a>
+ &#8226;   <a href="#ui.pages.invoice_page">ui.pages.invoice_page</a>
  &#8226;   <a href="#ui.pages.library_page">ui.pages.library_page</a>
  &#8226;   <a href="#ui.pages.pdf_page">ui.pages.pdf_page</a>
  &#8226;   <a href="#ui.pages.purchase_page">ui.pages.purchase_page</a>
@@ -2866,6 +2872,7 @@ imported by:
  &#8226;   <a href="#concurrent.futures._base">concurrent.futures._base</a>
  &#8226;   <a href="#configparser">configparser</a>
  &#8226;   <a href="#contextlib">contextlib</a>
+ &#8226;   <a href="#core.invoice_core">core.invoice_core</a>
  &#8226;   <a href="#core.pivot_core">core.pivot_core</a>
  &#8226;   <a href="#dis">dis</a>
  &#8226;   <a href="#email.feedparser">email.feedparser</a>
@@ -3196,6 +3203,7 @@ imports:
  &#8226;   <a href="#core.currency_core">core.currency_core</a>
  &#8226;   <a href="#core.delivery_core">core.delivery_core</a>
  &#8226;   <a href="#core.excel_tools_core">core.excel_tools_core</a>
+ &#8226;   <a href="#core.invoice_core">core.invoice_core</a>
  &#8226;   <a href="#core.library">core.library</a>
  &#8226;   <a href="#core.paths">core.paths</a>
  &#8226;   <a href="#core.pdf_core">core.pdf_core</a>
@@ -3218,6 +3226,7 @@ imported by:
  &#8226;   <a href="#core.currency_core">core.currency_core</a>
  &#8226;   <a href="#core.delivery_core">core.delivery_core</a>
  &#8226;   <a href="#core.excel_tools_core">core.excel_tools_core</a>
+ &#8226;   <a href="#core.invoice_core">core.invoice_core</a>
  &#8226;   <a href="#core.library">core.library</a>
  &#8226;   <a href="#core.paths">core.paths</a>
  &#8226;   <a href="#core.pdf_core">core.pdf_core</a>
@@ -3242,6 +3251,7 @@ imported by:
  &#8226;   <a href="#ui.pages.delivery_page">ui.pages.delivery_page</a>
  &#8226;   <a href="#ui.pages.excel_tools_page">ui.pages.excel_tools_page</a>
  &#8226;   <a href="#ui.pages.home_page">ui.pages.home_page</a>
+ &#8226;   <a href="#ui.pages.invoice_page">ui.pages.invoice_page</a>
  &#8226;   <a href="#ui.pages.library_page">ui.pages.library_page</a>
  &#8226;   <a href="#ui.pages.pdf_page">ui.pages.pdf_page</a>
  &#8226;   <a href="#ui.pages.pivot_page">ui.pages.pivot_page</a>
@@ -3398,6 +3408,34 @@ imported by:
 </div>
 
 <div class="node">
+  <a name="core.invoice_core"></a>
+  <a target="code" href="///C:/Users/mai/Desktop/%E7%A8%8B%E5%BA%8F%E9%87%8D%E6%9E%84/%E5%B3%B0%E8%BF%90%E9%80%9A%E6%95%B0%E6%8D%AE%E7%AE%A1%E7%90%86%E7%B3%BB%E7%BB%9F/core/invoice_core.py" type="text/plain"><tt>core.invoice_core</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#collections">collections</a>
+ &#8226;   <a href="#core">core</a>
+ &#8226;   <a href="#core.paths">core.paths</a>
+ &#8226;   <a href="#core.settings">core.settings</a>
+ &#8226;   <a href="#datetime">datetime</a>
+ &#8226;   <a href="#glob">glob</a>
+ &#8226;   <a href="#openpyxl">openpyxl</a>
+ &#8226;   <a href="#openpyxl.styles">openpyxl.styles</a>
+ &#8226;   <a href="#os">os</a>
+ &#8226;   <a href="#pypdf">pypdf</a>
+ &#8226;   <a href="#re">re</a>
+ &#8226;   <a href="#shutil">shutil</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#core">core</a>
+ &#8226;   <a href="#ui.pages.invoice_page">ui.pages.invoice_page</a>
+
+  </div>
+
+</div>
+
+<div class="node">
   <a name="core.library"></a>
   <a target="code" href="///C:/Users/mai/Desktop/%E7%A8%8B%E5%BA%8F%E9%87%8D%E6%9E%84/%E5%B3%B0%E8%BF%90%E9%80%9A%E6%95%B0%E6%8D%AE%E7%AE%A1%E7%90%86%E7%B3%BB%E7%BB%9F/core/library.py" type="text/plain"><tt>core.library</tt></a>
 <span class="moduletype">SourceModule</span>  <div class="import">
@@ -3446,6 +3484,7 @@ imported by:
  &#8226;   <a href="#core.attendance_core">core.attendance_core</a>
  &#8226;   <a href="#core.delivery_core">core.delivery_core</a>
  &#8226;   <a href="#core.excel_tools_core">core.excel_tools_core</a>
+ &#8226;   <a href="#core.invoice_core">core.invoice_core</a>
  &#8226;   <a href="#core.library">core.library</a>
  &#8226;   <a href="#core.pdf_core">core.pdf_core</a>
  &#8226;   <a href="#core.pivot_core">core.pivot_core</a>
@@ -3603,6 +3642,7 @@ imported by:
  &#8226;   <a href="#core.arrival_core">core.arrival_core</a>
  &#8226;   <a href="#core.attendance_core">core.attendance_core</a>
  &#8226;   <a href="#core.delivery_core">core.delivery_core</a>
+ &#8226;   <a href="#core.invoice_core">core.invoice_core</a>
  &#8226;   <a href="#core.pivot_core">core.pivot_core</a>
  &#8226;   <a href="#core.purchase_core">core.purchase_core</a>
  &#8226;   <a href="#core.reconcile_core">core.reconcile_core</a>
@@ -3939,6 +3979,7 @@ imported by:
  &#8226;   <a href="#calendar">calendar</a>
  &#8226;   <a href="#core.arrival_core">core.arrival_core</a>
  &#8226;   <a href="#core.common_core">core.common_core</a>
+ &#8226;   <a href="#core.invoice_core">core.invoice_core</a>
  &#8226;   <a href="#core.library">core.library</a>
  &#8226;   <a href="#core.paths">core.paths</a>
  &#8226;   <a href="#core.pivot_core">core.pivot_core</a>
@@ -7362,6 +7403,7 @@ imports:
   <div class="import">
 imported by:
     <a href="#core.arrival_core">core.arrival_core</a>
+ &#8226;   <a href="#core.invoice_core">core.invoice_core</a>
  &#8226;   <a href="#core.pivot_core">core.pivot_core</a>
 
   </div>
@@ -9170,6 +9212,7 @@ imported by:
  &#8226;   <a href="#core.common_core">core.common_core</a>
  &#8226;   <a href="#core.delivery_core">core.delivery_core</a>
  &#8226;   <a href="#core.excel_tools_core">core.excel_tools_core</a>
+ &#8226;   <a href="#core.invoice_core">core.invoice_core</a>
  &#8226;   <a href="#core.library">core.library</a>
  &#8226;   <a href="#core.pivot_core">core.pivot_core</a>
  &#8226;   <a href="#core.purchase_core">core.purchase_core</a>
@@ -12116,6 +12159,7 @@ imported by:
     <a href="#core.arrival_core">core.arrival_core</a>
  &#8226;   <a href="#core.attendance_core">core.attendance_core</a>
  &#8226;   <a href="#core.delivery_core">core.delivery_core</a>
+ &#8226;   <a href="#core.invoice_core">core.invoice_core</a>
  &#8226;   <a href="#core.pivot_core">core.pivot_core</a>
  &#8226;   <a href="#core.purchase_core">core.purchase_core</a>
  &#8226;   <a href="#core.reconcile_core">core.reconcile_core</a>
@@ -14009,6 +14053,7 @@ imported by:
  &#8226;   <a href="#core.common_core">core.common_core</a>
  &#8226;   <a href="#core.delivery_core">core.delivery_core</a>
  &#8226;   <a href="#core.excel_tools_core">core.excel_tools_core</a>
+ &#8226;   <a href="#core.invoice_core">core.invoice_core</a>
  &#8226;   <a href="#core.library">core.library</a>
  &#8226;   <a href="#core.paths">core.paths</a>
  &#8226;   <a href="#core.pdf_core">core.pdf_core</a>
@@ -14091,6 +14136,7 @@ imported by:
  &#8226;   <a href="#ui.pages.base_page">ui.pages.base_page</a>
  &#8226;   <a href="#ui.pages.delivery_page">ui.pages.delivery_page</a>
  &#8226;   <a href="#ui.pages.home_page">ui.pages.home_page</a>
+ &#8226;   <a href="#ui.pages.invoice_page">ui.pages.invoice_page</a>
  &#8226;   <a href="#ui.pages.library_page">ui.pages.library_page</a>
  &#8226;   <a href="#ui.pages.pdf_page">ui.pages.pdf_page</a>
  &#8226;   <a href="#ui.pages.pivot_page">ui.pages.pivot_page</a>
@@ -14412,7 +14458,8 @@ imports:
   </div>
   <div class="import">
 imported by:
-    <a href="#core.pdf_core">core.pdf_core</a>
+    <a href="#core.invoice_core">core.invoice_core</a>
+ &#8226;   <a href="#core.pdf_core">core.pdf_core</a>
  &#8226;   <a href="#pypdf._cmap">pypdf._cmap</a>
  &#8226;   <a href="#pypdf._codecs">pypdf._codecs</a>
  &#8226;   <a href="#pypdf._crypt_providers">pypdf._crypt_providers</a>
@@ -15807,6 +15854,7 @@ imported by:
  &#8226;   <a href="#configparser">configparser</a>
  &#8226;   <a href="#core.arrival_core">core.arrival_core</a>
  &#8226;   <a href="#core.common_core">core.common_core</a>
+ &#8226;   <a href="#core.invoice_core">core.invoice_core</a>
  &#8226;   <a href="#core.library">core.library</a>
  &#8226;   <a href="#core.pivot_core">core.pivot_core</a>
  &#8226;   <a href="#core.purchase_core">core.purchase_core</a>
@@ -16117,6 +16165,7 @@ imports:
   <div class="import">
 imported by:
     <a href="#argparse">argparse</a>
+ &#8226;   <a href="#core.invoice_core">core.invoice_core</a>
  &#8226;   <a href="#core.library">core.library</a>
  &#8226;   <a href="#ctypes.util">ctypes.util</a>
  &#8226;   <a href="#multiprocessing.util">multiprocessing.util</a>
@@ -17034,6 +17083,7 @@ imported by:
  &#8226;   <a href="#ui.animations">ui.animations</a>
  &#8226;   <a href="#ui.dialogs">ui.dialogs</a>
  &#8226;   <a href="#ui.dialogs.attendance_review">ui.dialogs.attendance_review</a>
+ &#8226;   <a href="#ui.dialogs.invoice_review">ui.dialogs.invoice_review</a>
  &#8226;   <a href="#ui.dialogs.library_picker">ui.dialogs.library_picker</a>
  &#8226;   <a href="#ui.dialogs.onboarding">ui.dialogs.onboarding</a>
  &#8226;   <a href="#ui.dialogs.pivot_review">ui.dialogs.pivot_review</a>
@@ -17095,6 +17145,7 @@ imports:
   <div class="import">
 imported by:
     <a href="#ui.dialogs.attendance_review">ui.dialogs.attendance_review</a>
+ &#8226;   <a href="#ui.dialogs.invoice_review">ui.dialogs.invoice_review</a>
  &#8226;   <a href="#ui.dialogs.library_picker">ui.dialogs.library_picker</a>
  &#8226;   <a href="#ui.dialogs.onboarding">ui.dialogs.onboarding</a>
  &#8226;   <a href="#ui.dialogs.pivot_review">ui.dialogs.pivot_review</a>
@@ -17119,6 +17170,26 @@ imports:
   <div class="import">
 imported by:
     <a href="#ui.pages.attendance_page">ui.pages.attendance_page</a>
+
+  </div>
+
+</div>
+
+<div class="node">
+  <a name="ui.dialogs.invoice_review"></a>
+  <a target="code" href="///C:/Users/mai/Desktop/%E7%A8%8B%E5%BA%8F%E9%87%8D%E6%9E%84/%E5%B3%B0%E8%BF%90%E9%80%9A%E6%95%B0%E6%8D%AE%E7%AE%A1%E7%90%86%E7%B3%BB%E7%BB%9F/ui/dialogs/invoice_review.py" type="text/plain"><tt>ui.dialogs.invoice_review</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#PySide2.QtCore">PySide2.QtCore</a>
+ &#8226;   <a href="#PySide2.QtWidgets">PySide2.QtWidgets</a>
+ &#8226;   <a href="#ui">ui</a>
+ &#8226;   <a href="#ui.dialogs">ui.dialogs</a>
+ &#8226;   <a href="#ui.theme">ui.theme</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#ui.pages.invoice_page">ui.pages.invoice_page</a>
 
   </div>
 
@@ -17257,6 +17328,7 @@ imports:
  &#8226;   <a href="#ui.pages.delivery_page">ui.pages.delivery_page</a>
  &#8226;   <a href="#ui.pages.excel_tools_page">ui.pages.excel_tools_page</a>
  &#8226;   <a href="#ui.pages.home_page">ui.pages.home_page</a>
+ &#8226;   <a href="#ui.pages.invoice_page">ui.pages.invoice_page</a>
  &#8226;   <a href="#ui.pages.library_page">ui.pages.library_page</a>
  &#8226;   <a href="#ui.pages.pdf_page">ui.pages.pdf_page</a>
  &#8226;   <a href="#ui.pages.pivot_page">ui.pages.pivot_page</a>
@@ -17295,6 +17367,7 @@ imported by:
  &#8226;   <a href="#ui.pages.delivery_page">ui.pages.delivery_page</a>
  &#8226;   <a href="#ui.pages.excel_tools_page">ui.pages.excel_tools_page</a>
  &#8226;   <a href="#ui.pages.home_page">ui.pages.home_page</a>
+ &#8226;   <a href="#ui.pages.invoice_page">ui.pages.invoice_page</a>
  &#8226;   <a href="#ui.pages.library_page">ui.pages.library_page</a>
  &#8226;   <a href="#ui.pages.pdf_page">ui.pages.pdf_page</a>
  &#8226;   <a href="#ui.pages.pivot_page">ui.pages.pivot_page</a>
@@ -17414,6 +17487,7 @@ imported by:
  &#8226;   <a href="#ui.pages.delivery_page">ui.pages.delivery_page</a>
  &#8226;   <a href="#ui.pages.excel_tools_page">ui.pages.excel_tools_page</a>
  &#8226;   <a href="#ui.pages.home_page">ui.pages.home_page</a>
+ &#8226;   <a href="#ui.pages.invoice_page">ui.pages.invoice_page</a>
  &#8226;   <a href="#ui.pages.library_page">ui.pages.library_page</a>
  &#8226;   <a href="#ui.pages.pdf_page">ui.pages.pdf_page</a>
  &#8226;   <a href="#ui.pages.pivot_page">ui.pages.pivot_page</a>
@@ -17455,7 +17529,9 @@ imported by:
   <a target="code" href="///C:/Users/mai/Desktop/%E7%A8%8B%E5%BA%8F%E9%87%8D%E6%9E%84/%E5%B3%B0%E8%BF%90%E9%80%9A%E6%95%B0%E6%8D%AE%E7%AE%A1%E7%90%86%E7%B3%BB%E7%BB%9F/ui/pages/delivery_page.py" type="text/plain"><tt>ui.pages.delivery_page</tt></a>
 <span class="moduletype">SourceModule</span>  <div class="import">
 imports:
-    <a href="#core">core</a>
+    <a href="#PySide2.QtCore">PySide2.QtCore</a>
+ &#8226;   <a href="#PySide2.QtWidgets">PySide2.QtWidgets</a>
+ &#8226;   <a href="#core">core</a>
  &#8226;   <a href="#core.delivery_core">core.delivery_core</a>
  &#8226;   <a href="#os">os</a>
  &#8226;   <a href="#ui.pages">ui.pages</a>
@@ -17512,6 +17588,30 @@ imports:
  &#8226;   <a href="#ui.pages.base_page">ui.pages.base_page</a>
  &#8226;   <a href="#ui.widgets.clickable_card">ui.widgets.clickable_card</a>
  &#8226;   <a href="#ui.widgets.collapsible">ui.widgets.collapsible</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#ui.main_window">ui.main_window</a>
+
+  </div>
+
+</div>
+
+<div class="node">
+  <a name="ui.pages.invoice_page"></a>
+  <a target="code" href="///C:/Users/mai/Desktop/%E7%A8%8B%E5%BA%8F%E9%87%8D%E6%9E%84/%E5%B3%B0%E8%BF%90%E9%80%9A%E6%95%B0%E6%8D%AE%E7%AE%A1%E7%90%86%E7%B3%BB%E7%BB%9F/ui/pages/invoice_page.py" type="text/plain"><tt>ui.pages.invoice_page</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#PySide2.QtCore">PySide2.QtCore</a>
+ &#8226;   <a href="#PySide2.QtWidgets">PySide2.QtWidgets</a>
+ &#8226;   <a href="#core">core</a>
+ &#8226;   <a href="#core.invoice_core">core.invoice_core</a>
+ &#8226;   <a href="#os">os</a>
+ &#8226;   <a href="#ui.dialogs.invoice_review">ui.dialogs.invoice_review</a>
+ &#8226;   <a href="#ui.pages">ui.pages</a>
+ &#8226;   <a href="#ui.pages.base_page">ui.pages.base_page</a>
+ &#8226;   <a href="#ui.widgets.run_panel">ui.widgets.run_panel</a>
 
   </div>
   <div class="import">
@@ -17753,6 +17853,7 @@ imported by:
  &#8226;   <a href="#ui">ui</a>
  &#8226;   <a href="#ui.animations">ui.animations</a>
  &#8226;   <a href="#ui.dialogs.attendance_review">ui.dialogs.attendance_review</a>
+ &#8226;   <a href="#ui.dialogs.invoice_review">ui.dialogs.invoice_review</a>
  &#8226;   <a href="#ui.dialogs.library_picker">ui.dialogs.library_picker</a>
  &#8226;   <a href="#ui.dialogs.onboarding">ui.dialogs.onboarding</a>
  &#8226;   <a href="#ui.dialogs.pivot_review">ui.dialogs.pivot_review</a>
@@ -17898,6 +17999,7 @@ imported by:
  &#8226;   <a href="#ui.pages.attendance_page">ui.pages.attendance_page</a>
  &#8226;   <a href="#ui.pages.delivery_page">ui.pages.delivery_page</a>
  &#8226;   <a href="#ui.pages.excel_tools_page">ui.pages.excel_tools_page</a>
+ &#8226;   <a href="#ui.pages.invoice_page">ui.pages.invoice_page</a>
  &#8226;   <a href="#ui.pages.pdf_page">ui.pages.pdf_page</a>
  &#8226;   <a href="#ui.pages.pivot_page">ui.pages.pivot_page</a>
  &#8226;   <a href="#ui.pages.purchase_page">ui.pages.purchase_page</a>
