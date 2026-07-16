@@ -14,7 +14,7 @@
   #define MyAppId "FYTDataMgmt"
 #endif
 #ifndef MyAppPublisher
-  #define MyAppPublisher "重庆峰运通供应链管理公司"
+  #define MyAppPublisher "KuroNeko-night"
 #endif
 #ifndef MyAppExe
   #define MyAppExe "FYTDataMgmt.exe"

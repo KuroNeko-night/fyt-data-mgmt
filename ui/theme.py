@@ -20,7 +20,7 @@ LIGHT = {
     "input_bg": "#ffffff", "list_bg": "#fbfcfe", "sel_fg": "#ffffff",
     "scroll": "#c3cde0", "track": "#e4e9f2", "logbg": "#1e222b", "logfg": "#e6e6e6",
     "tip_bg": "#2b3446", "tip_fg": "#ffffff", "tip_bd": "#3f6bb0",
-    "dis_bg": "#b8c2d6", "dis_fg": "#eef1f6", "shadow": "#20000000",
+    "dis_bg": "#dbe1ec", "dis_fg": "#8a93a3", "shadow": "#20000000",
 }
 
 # ---------------- 深色 ----------------
@@ -311,7 +311,7 @@ QPushButton#Ghost {{
     border-radius: 9px; padding: 8px 16px; font-size: 12px;
 }}
 QPushButton#Ghost:hover {{ background: {ghost_hover}; }}
-QPushButton#Ghost:disabled {{ color: {dis_bg}; border: 1px solid {line}; }}
+QPushButton#Ghost:disabled {{ color: {dis_fg}; border: 1px solid {line}; }}
 QPushButton#Mini {{
     background: {mini_bg}; color: {sub}; border: 1px solid {line};
     border-radius: 7px; padding: 5px 12px; font-size: 11px;

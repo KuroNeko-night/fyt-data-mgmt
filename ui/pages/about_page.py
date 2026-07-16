@@ -102,7 +102,7 @@ class AboutPage(BasePage):
             ic.setPixmap(icons.pixmap(key, 52, None, 1.0))
 
     def _footer(self):
-        f = QLabel("%s · © 2026 %s · 保留所有权利"
+        f = QLabel("%s · © 2026 %s · 基于 MIT 许可证开源"
                    % (version.APP_NAME, version.PUBLISHER))
         f.setObjectName("Hint"); f.setAlignment(Qt.AlignCenter)
         return f
