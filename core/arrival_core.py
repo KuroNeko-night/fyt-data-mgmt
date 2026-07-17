@@ -24,6 +24,7 @@ from openpyxl.utils import get_column_letter
 
 from . import paths as _paths
 from . import settings as _settings
+from .common_core import warn_if_uncached   # 公式未刷新检测(读关键表前告警)
 
 # 兜底固定列(表头识别失败时回退): 编码2/名称3/供应商5/需求7/剩余未收12
 COL_CODE, COL_NAME, COL_SUPPLIER, COL_DEMAND, COL_REMAIN = 2, 3, 5, 7, 12
@@ -65,6 +66,37 @@ def _first_ws(wb):
     except Exception:
         pass
     return wb[wb.sheetnames[0]]
+
+
+def _pick_data_ws(wb, log=None):
+    """挑出真正含到货计划数据的子表, 避免静默选错(如空的 'Sheet2')。
+
+    规则: 优先活动表; 若活动表 locate_columns 失败(无有效表头), 再扫其余子表,
+    取第一个能定位成功的; 都失败则回退到活动/第一张(交由固定列兜底)。
+    单文件时行为与 _first_ws 完全一致。多子表时把选中的子表名 log 出来,不再静默。
+    """
+    active = _first_ws(wb)
+    if len(wb.sheetnames) <= 1:
+        return active
+    # 活动表本身有效 -> 直接用它(尊重用户在 Excel 里停留的表)
+    if locate_columns(active) is not None:
+        if log:
+            log("· 多子表: 读取活动表《%s》" % active.title)
+        return active
+    # 活动表无效: 找第一个能定位到表头的子表
+    for name in wb.sheetnames:
+        ws = wb[name]
+        if ws is active:
+            continue
+        if locate_columns(ws) is not None:
+            if log:
+                log("· 多子表: 活动表《%s》无有效表头, 改读《%s》"
+                    % (active.title, name))
+            return ws
+    if log:
+        log("⚠ 多子表: 各子表均未识别到有效表头, 按活动表《%s》读取(可能选错文件)"
+            % active.title)
+    return active
 
 def _norm(v):
     """去空白/换行后的字符串, 便于表头匹配。"""
@@ -142,7 +174,7 @@ def find_plan_files(folder):
              if not os.path.basename(f).startswith("~$")]
     return sorted(files, key=os.path.getmtime, reverse=True)
 
-def extract_unreceived(path):
+def extract_unreceived(path, log=None):
     """提取未收货物料: [编码, 名称, 供应商, 需求数, 剩余未收数].
        规则:
        1) 列位置按表头文字灵活识别(locate_columns), 失败才回退固定列, 这样
@@ -152,8 +184,12 @@ def extract_unreceived(path):
        4) "剩余未收数"为 #N/A / #REF! 等错误值 / 空 / 0 -> 当作已收, 排除;
           只保留为非零数值的行。"""
     import numbers
+    # 剩余未收数常是公式; 若该表未被 Excel 刷新过, data_only 读出 None,
+    # 会把整列误当"已收"静默排除(全部物料显示已收)。读表前先醒目告警。
+    if log:
+        warn_if_uncached(path, log, what="剩余未收数")
     wb = openpyxl.load_workbook(path, data_only=True)
-    ws = _first_ws(wb)
+    ws = _pick_data_ws(wb, log=log)
     cols = locate_columns(ws)
     if cols is None:                                # 回退: 老的固定列
         cols = {"code": COL_CODE, "name": COL_NAME, "supplier": COL_SUPPLIER,
@@ -162,6 +198,7 @@ def extract_unreceived(path):
     c_supp, c_dem, c_rem = cols["supplier"], cols["demand"], cols["remain"]
     start = cols["header_row"] + 1
     rows = []
+    pending = 0                                     # 剩余未收数读出 None 的行数(疑似公式未刷新)
     for r in range(start, ws.max_row + 1):
         dim = ws.row_dimensions.get(r)
         if dim is not None and dim.hidden:          # 被筛选隐藏 -> 跳过
@@ -172,7 +209,11 @@ def extract_unreceived(path):
         remain = ws.cell(row=r, column=c_rem).value
         if isinstance(remain, bool):
             continue
-        # #N/A 等错误(字符串) / None / 0 -> 当作已收, 排除; 只认非零数值
+        # remain 为 None: 公式未刷新读不到值, 不能当 0/已收静默排除, 单独计数提示
+        if remain is None:
+            pending += 1
+            continue
+        # #N/A 等错误(字符串) / 0 -> 当作已收, 排除; 只认非零数值
         if not isinstance(remain, numbers.Number) or remain == 0:
             continue
         rows.append([str(code),
@@ -180,6 +221,10 @@ def extract_unreceived(path):
                      ws.cell(row=r, column=c_supp).value if c_supp else None,
                      ws.cell(row=r, column=c_dem).value if c_dem else None,
                      remain])
+    # 有剩余未收数读不到值的行 -> 提示人工确认, 而非当已收吞掉
+    if pending and log:
+        log("⚠ 《%s》有 %d 行的剩余未收数读不到值(可能公式未刷新), 未计入未收料, 请核对。"
+            % (os.path.basename(path), pending))
     return rows
 def _style(cell, bold=False, fill=False, align=CENTER):
     cell.border = BORDER
@@ -235,12 +280,16 @@ def build_workbook(batches, top_label, out_path):
                                      b["total"], b.get("remark", ""), top_label)
         results.append((b["batch_no"], diff, arrived, b["total"]))
         col += BATCH_STRIDE
-    wb.save(out_path)
+    # 与 purchase/delivery 一致: 目标被 Excel 占用时给出友好提示
+    try:
+        wb.save(out_path)
+    except PermissionError:
+        raise PermissionError("无法保存 %s —— 请先在 Excel 里关闭该文件后重试" % out_path)
     return results
 
 
 # ---------------- 统一入口（与其它三功能同构：接受统一 out_dir）----------------
-def build_batches(rows_data, top_label):
+def build_batches(rows_data, top_label, log=None):
     """把界面收集的每行数据整理成 build_workbook 需要的批次列表，并顺带
     读取每个送货计划表的未收料明细。纯逻辑，不依赖界面。
     rows_data: [{path, batch_no, total, remark, include(bool)}, ...]
@@ -250,9 +299,11 @@ def build_batches(rows_data, top_label):
     for row in rows_data:
         if not row.get("include", True):
             continue
-        materials = extract_unreceived(row["path"])
+        materials = extract_unreceived(row["path"], log=log)
         bn = row.get("batch_no") or detect_batch(row["path"])
-        total = int(row.get("total", DEFAULT_TOTAL))
+        # 界面留空时 total 可能为 None/""; int(None) 会崩, 取值后判空再回退默认值
+        tv = row.get("total", DEFAULT_TOTAL)
+        total = int(tv) if tv not in (None, "") else DEFAULT_TOTAL
         remark = row.get("remark", "")
         batches.append({"batch_no": bn, "materials": materials,
                         "total": total, "remark": remark})
@@ -274,7 +325,7 @@ def run(rows_data, top_label=None, out_dir=None, log=None):
     if out_dir is None:
         out_dir = _paths.resolve_output_dir("arrival", **st.output_kwargs())
     log("整理批次数据（共 %d 个计划表）..." % len(rows_data))
-    batches, mem = build_batches(rows_data, top_label)
+    batches, mem = build_batches(rows_data, top_label, log=log)
     fname = "%s每日主料到料明细.xlsx" % beijing_date()
     out_file = os.path.join(out_dir, fname)
     results = build_workbook(batches, top_label, out_file)

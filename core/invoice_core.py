@@ -27,8 +27,9 @@ BUYER = "重庆峰运通供应链管理有限公司"
 _COMPANY = re.compile(
     r"[一-龥A-Za-z0-9（）()]{2,45}"
     r"(?:有限责任公司|有限公司|股份公司|分公司|公司|银行|事务所|合作社|个体工商户|中心)")
-_DATE = re.compile(r"(\d{4})年(\d{2})月(\d{2})日")
-_NUM = re.compile(r"\d{20}")
+_DATE = re.compile(r"(\d{4})年(\d{1,2})月(\d{1,2})日")   # 月/日放宽为1-2位,"6月1日"也能取到(取值后补零归一)
+_NUM = re.compile(r"发票号码[:：]?(\d{20}|\d{8})")          # 优先"发票号码"锚点,全电20位/老票8位
+_NUM_LOOSE = re.compile(r"\d{20}|\d{8}")                    # 无锚点时兜底:全电20位或老版8位票号
 _MONEY = re.compile(r"¥\s*([\d\s]+\.\s*\d\s*\d)")
 _RATE = re.compile(r"(\d+)%")
 _SKIP_LINE = ("开户", "账号", "地址", "电话")
@@ -166,11 +167,20 @@ def _note_seed(raw):
     return "；".join(bits)
 
 
-def extract(path):
-    """解析单个 PDF；不是增值税发票则返回 None。"""
-    if PdfReader is None:
-        raise RuntimeError("缺少 pypdf 依赖")
-    raw = PdfReader(path).pages[0].extract_text() or ""
+def _find_num(nn):
+    """发票号码:先按"发票号码"锚点取(全电20位/老票8位),无锚点再全文兜底(优先20位)。"""
+    m = _NUM.search(nn)
+    if m:
+        return m.group(1)
+    m20 = re.search(r"\d{20}", nn)       # 兜底:优先全电20位,保持旧行为
+    if m20:
+        return m20.group(0)
+    m8 = _NUM_LOOSE.search(nn)           # 再退老版8位票号
+    return m8.group(0) if m8 else ""
+
+
+def _extract_one(raw, path):
+    """从单页文本 raw 解析出一张发票;不是增值税发票则返回 None。"""
     nn = _norm(raw)
     # 兼容老版“增值税专用/普通发票”与新版全电“电子发票（专用/普通发票）”
     special = "专用发票" in nn
@@ -178,8 +188,8 @@ def extract(path):
     if not (special or normal):
         return None
     md = _DATE.search(nn)
-    date = "%s-%s-%s" % md.groups() if md else ""
-    num = _NUM.search(nn)
+    # 月/日按1-2位取到后补零归一,保证 filter_month 前缀匹配不被"6月1日"漏掉
+    date = "%s-%02d-%02d" % (md.group(1), int(md.group(2)), int(md.group(3))) if md else ""
     amount, tax, total = _money3(raw)
     rate = _rate(nn)
     if rate == "":                    # 差额征税等未印税率的，反推
@@ -187,10 +197,40 @@ def extract(path):
         if d is not None:
             rate = round(d, 2)
     return Invoice(
-        path=path, num=num.group(0) if num else "", date=date,
+        path=path, num=_find_num(nn), date=date,
         seller=_seller(raw), amount=amount, tax=tax, total=total,
         rate=rate, item_seed=_item_seed(raw),
         note_seed=_note_seed(raw), special=special)
+
+
+def extract(path):
+    """解析单个 PDF 的所有页,返回 (发票列表, 存疑原因列表)。
+
+    多页 PDF(含多张发票)逐页识别,避免只抽第一页而漏计;
+    无文本层的页(扫描件)与"像发票却没认出"的页,以原因文本回传供 scan 列入存疑。
+    """
+    if PdfReader is None:
+        raise RuntimeError("缺少 pypdf 依赖")
+    reader = PdfReader(path)              # 读取失败(损坏/加密)抛异常,由 scan 捕获记录
+    invoices = []
+    notes = []
+    pages = reader.pages
+    multi = len(pages) > 1
+    for pno, page in enumerate(pages, start=1):
+        try:
+            raw = page.extract_text() or ""
+        except Exception as e:            # 单页读取异常也要暴露,不静默吞成空串
+            notes.append("第%d页文本读取异常:%s" % (pno, e))
+            continue
+        if not raw.strip():               # 文本层为空:疑似扫描件/无文本层,列入存疑供人工核对
+            notes.append("第%d页无文本层(疑似扫描件),请人工核对" % pno)
+            continue
+        inv = _extract_one(raw, path)
+        if inv is not None:
+            invoices.append(inv)
+        elif _looks_like_invoice(raw):    # 像发票却没认出类型,存疑兜底
+            notes.append("第%d页疑似发票但未能确认类型" % pno)
+    return invoices, notes
 
 
 class ScanResult(object):
@@ -228,31 +268,32 @@ def scan(root, log=None):
     n_err = n_dup = 0
     for p in pdfs:
         try:
-            inv = extract(p)
+            invs, notes = extract(p)      # 现返回(多页发票列表, 存疑原因列表)
         except Exception as e:
             n_err += 1
             _lg("  跳过（解析失败）：%s —— %s" % (os.path.basename(p), e))
             suspects.append((p, "解析失败：%s" % e))
             continue
-        if inv is None:
-            # 不是发票；但若“很像发票”仍列入存疑，供人工兜底
-            try:
-                raw = PdfReader(p).pages[0].extract_text() or ""
-            except Exception:
-                raw = ""
-            if _looks_like_invoice(raw):
-                suspects.append((p, "疑似发票但未能确认类型"))
-            continue
-        if not inv.num:
-            suspects.append((p, "识别为发票但缺发票号码"))
-            continue
-        if inv.special and (inv.amount is None or inv.total is None):
-            suspects.append((p, "专用发票但金额字段残缺"))
-        if inv.num in by_num:
-            n_dup += 1
-            _lg("  重复发票号 %s，已忽略：%s" % (inv.num, os.path.basename(p)))
-            continue
-        by_num[inv.num] = inv
+        # 无文本层/疑似漏网的页,以及读取异常页,都列入存疑并 log,不再静默丢弃
+        for note in notes:
+            _lg("  存疑：%s —— %s" % (os.path.basename(p), note))
+            suspects.append((p, note))
+        for inv in invs:
+            if not inv.num:
+                suspects.append((p, "识别为发票但缺发票号码"))
+                continue
+            if inv.special and (inv.amount is None or inv.total is None):
+                suspects.append((p, "专用发票但金额字段残缺"))
+            # 校验 金额+税额≈价税合计,不符则列入存疑(仍计数,供人工核对是否取错金额)
+            elif (inv.amount is not None and inv.tax is not None
+                    and inv.total is not None
+                    and abs(inv.amount + inv.tax - inv.total) > 0.01):
+                suspects.append((p, "金额+税额与价税合计不符,请核对是否取错金额"))
+            if inv.num in by_num:
+                n_dup += 1
+                _lg("  重复发票号 %s，已忽略：%s" % (inv.num, os.path.basename(p)))
+                continue
+            by_num[inv.num] = inv
     items = sorted(by_num.values(), key=lambda i: (i.date or "", i.num))
     n_spec = sum(1 for i in items if i.special)
     _lg("识别发票 %d 张（专用 %d ·普通 %d）；去重 %d，失败 %d，存疑 %d。"

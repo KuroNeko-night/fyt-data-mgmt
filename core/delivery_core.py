@@ -23,13 +23,15 @@ from openpyxl.utils import get_column_letter
 
 from . import paths as _paths
 from . import settings as settings_mod
+from . import header_detect
 
 # 表头关键词 -> 角色。识别时先精确匹配，再包含匹配；每列只归一个角色。
 HEADER_KEYS = {
-    "code":  ["物料号", "物料编码", "零部件代码", "物料编号", "零件号", "编码", "料号"],
-    "cname": ["物料中文描述", "物料名称", "零部件名称", "中文描述", "名称", "品名"],
+    # "下阶物料描述" 放前不影响(精确匹配优先);"下阶物料" 是 SAP KD 清单/供应商表的编码列
+    "code":  ["物料号", "物料编码", "零部件代码", "物料编号", "下阶物料", "零件号", "料号", "编码"],
+    "cname": ["物料中文描述", "物料英文描述", "下阶物料描述", "物料名称", "零部件名称", "中文描述", "名称", "品名"],
     "ename": ["物料英文描述", "英文描述", "英文名称"],
-    "qty":   ["需求数", "数量", "需求数量", "计划数量"],
+    "qty":   ["需求数", "需求数量", "计划数量", "数量"],
     "sup_code": ["供应商代码", "供应商编码", "供方代码"],
     "sup_name": ["供应商名称", "供应商信息", "供方名称", "供应商"],
     "attr":  ["属性", "KD/SUB", "KD/SUB属性"],
@@ -62,38 +64,38 @@ def cell_text(v):
 # ---------------------------------------------------------------------------
 # 表头/列自动识别
 # ---------------------------------------------------------------------------
-def detect_layout(ws, scan_rows=12):
+# 包含匹配时,"委外供应商属性"这类标志列含"供应商"子串但实为属性列,
+# 不得当作供应商代码/名称;精确匹配不受影响。守卫随共享引擎走(见 header_detect)。
+_EXCLUDE_CONTAINS = {"sup_code": ["属性"], "sup_name": ["属性"]}
+
+
+def detect_layout(ws, scan_rows=12, log=None):
     """在前若干行里找表头行并映射列。返回 (header_row, {角色:列号})。
 
     选"能命中最多角色"的行为表头行；要求至少含 code 列，否则视为未识别(返回 None,{})。
+    薄封装:算法在 header_detect.detect_layout,此处只传本功能的常量。
     """
-    best_row, best_map = None, {}
-    for r in range(1, min(scan_rows, ws.max_row) + 1):
-        col_map = {}
-        used = set()
-        for pass_exact in (True, False):     # 先精确后包含，避免"编码"抢占"供应商编码"
-            for c in range(1, ws.max_column + 1):
-                if c in used:
-                    continue
-                cell = ws.cell(r, c).value
-                if cell is None:
-                    continue
-                text = str(cell).strip()
-                for role, keys in HEADER_KEYS.items():
-                    if role in col_map:
-                        continue
-                    hit = (text in keys) if pass_exact else any(k in text for k in keys)
-                    if hit:
-                        col_map[role] = c
-                        used.add(c)
-                        break
-        if "code" in col_map and len(col_map) > len(best_map):
-            best_map = col_map
-            best_row = r
-    return best_row, best_map
+    return header_detect.detect_layout(
+        ws, HEADER_KEYS, require=("code",), scan_rows=scan_rows,
+        exclude_contains=_EXCLUDE_CONTAINS, log=log)
 
 
-def load_sheet(path, sheet=None):
+def list_sheets(path):
+    """列出工作簿的子表名(供界面下拉选择)。读失败/非 xlsx 返回 []。"""
+    ext = os.path.splitext(path)[1].lower()
+    if ext not in (".xlsx", ".xlsm"):
+        return []                        # openpyxl 不读 .xls;交由默认(第一表)处理
+    try:
+        wb = openpyxl.load_workbook(path, read_only=True)
+        try:
+            return list(wb.sheetnames)
+        finally:
+            wb.close()
+    except Exception:
+        return []
+
+
+def load_sheet(path, sheet=None, log=None):
     """读取一张表：自动识别表头与列。返回 (rows, layout)。
 
     rows: [{r, code, cname, ename, qty, sup_code, sup_name, attr}]，按角色缺省为 None。
@@ -101,7 +103,7 @@ def load_sheet(path, sheet=None):
     """
     wb = openpyxl.load_workbook(path, data_only=True)
     ws = wb[sheet] if sheet else wb[wb.sheetnames[0]]
-    header_row, col = detect_layout(ws)
+    header_row, col = detect_layout(ws, log=log)
     if not header_row:
         raise ValueError("未能在 %s / %s 中识别表头（需含“物料号/编码”列）"
                          % (os.path.basename(path), ws.title))
@@ -129,18 +131,40 @@ def _has_supplier(layout):
     return "sup_code" in layout["col"] or "sup_name" in layout["col"]
 
 
-def classify(lay_a, lay_b):
+def _has_qty(layout):
+    """该表是否带数量/需求数列(物料清单主表的特征)。"""
+    return "qty" in layout["col"]
+
+
+def classify(lay_a, lay_b, n_a=0, n_b=0, log=None):
     """辨识两份表哪份是物料清单(主表)、哪份是供应商明细。返回 ('a'/'b' 为主表, 供应商来源同理)。
 
-    规则：带供应商列的那份作供应商来源；另一份作主表(物料清单)。
-    两份都带供应商列时，用"含数量列且不含供应商列"优先作主表；仍无法区分则 A 主 B 供。
+    规则(按可靠度依次):
+      1) 仅一份带供应商列 -> 它作供应商来源, 另一份作主表(最可靠);
+      2) 两份都带供应商列 -> 用"含数量列"区分: 有数量的那份作主表;
+      3) 数量列也无法区分 -> 按行数多者作主表, 并 log 明确警告(而非静默择 A);
+      4) 两份都不带供应商列 -> 报错提示"未找到供应商列"。
     """
     a_sup, b_sup = _has_supplier(lay_a), _has_supplier(lay_b)
+    if not a_sup and not b_sup:
+        # 两份都无供应商列: 无法带出供应商, 直接报错让用户确认选错文件
+        raise ValueError("两份表都未找到供应商列(供应商代码/名称)，无法确定供应商来源，"
+                         "请确认是否选错文件。")
     if a_sup and not b_sup:
         return "b", "a"          # B 无供应商 -> 主表；A 供应商来源
     if b_sup and not a_sup:
+        return "a", "b"          # A 无供应商 -> 主表；B 供应商来源
+    # 两份都带供应商列: 用数量列存在性区分(物料清单必有数量)
+    a_qty, b_qty = _has_qty(lay_a), _has_qty(lay_b)
+    if a_qty and not b_qty:
         return "a", "b"
-    return "a", "b"              # 兜底：A 主表、B 供应商来源
+    if b_qty and not a_qty:
+        return "b", "a"
+    # 数量列也无法区分: 按行数多者作主表, 并明确警告
+    if log:
+        log("⚠ 两份表都含供应商列且都含/都不含数量列，无法可靠区分主表与供应商表，"
+            "已按行数多者(%d vs %d)作主表，请核对结果。" % (n_a, n_b))
+    return ("a", "b") if n_a >= n_b else ("b", "a")
 
 
 # ---------------------------------------------------------------------------
@@ -360,9 +384,9 @@ def run(file_a, file_b, sheet_a=None, sheet_b=None, out_dir=None, log=None,
         if log:
             log(msg)
 
-    rows_a, lay_a = load_sheet(file_a, sheet_a)
-    rows_b, lay_b = load_sheet(file_b, sheet_b)
-    master_key, sup_key = classify(lay_a, lay_b)
+    rows_a, lay_a = load_sheet(file_a, sheet_a, log=_lg)
+    rows_b, lay_b = load_sheet(file_b, sheet_b, log=_lg)
+    master_key, sup_key = classify(lay_a, lay_b, len(rows_a), len(rows_b), log=_lg)
     pack = {"a": (rows_a, lay_a, file_a), "b": (rows_b, lay_b, file_b)}
     master_rows, _lm, master_file = pack[master_key]
     sup_rows, _ls, sup_file = pack[sup_key]

@@ -35,6 +35,7 @@ imports:
  &#8226;   <a href="#core.settings">core.settings</a>
  &#8226;   <a href="#core.version">core.version</a>
  &#8226;   <a href="#ctypes">ctypes</a>
+ &#8226;   <a href="#ctypes.wintypes">ctypes.wintypes</a>
  &#8226;   <a href="#datetime">datetime</a>
  &#8226;   <a href="#encodings">encodings</a>
  &#8226;   <a href="#encodings.aliases">encodings.aliases</a>
@@ -367,7 +368,7 @@ imported by:
   <a target="code" href="" type="text/plain"><tt>'org.python'</tt></a>
 <span class="moduletype">MissingModule</span>  <div class="import">
 imported by:
-    <a href="#copy">copy</a>
+    <a href="#pickle">pickle</a>
  &#8226;   <a href="#xml.sax">xml.sax</a>
 
   </div>
@@ -496,6 +497,7 @@ imported by:
  &#8226;   <a href="#PySide2.QtWidgets">PySide2.QtWidgets</a>
  &#8226;   <a href="#main.py">main.py</a>
  &#8226;   <a href="#ui.animations">ui.animations</a>
+ &#8226;   <a href="#ui.dialogs.compare_review">ui.dialogs.compare_review</a>
  &#8226;   <a href="#ui.icons">ui.icons</a>
  &#8226;   <a href="#ui.main_window">ui.main_window</a>
  &#8226;   <a href="#ui.pages.about_page">ui.pages.about_page</a>
@@ -563,6 +565,7 @@ imported by:
  &#8226;   <a href="#main.py">main.py</a>
  &#8226;   <a href="#ui.animations">ui.animations</a>
  &#8226;   <a href="#ui.dialogs.attendance_review">ui.dialogs.attendance_review</a>
+ &#8226;   <a href="#ui.dialogs.compare_review">ui.dialogs.compare_review</a>
  &#8226;   <a href="#ui.dialogs.invoice_review">ui.dialogs.invoice_review</a>
  &#8226;   <a href="#ui.dialogs.library_picker">ui.dialogs.library_picker</a>
  &#8226;   <a href="#ui.dialogs.onboarding">ui.dialogs.onboarding</a>
@@ -573,6 +576,7 @@ imported by:
  &#8226;   <a href="#ui.pages.arrival_page">ui.pages.arrival_page</a>
  &#8226;   <a href="#ui.pages.attendance_page">ui.pages.attendance_page</a>
  &#8226;   <a href="#ui.pages.base_page">ui.pages.base_page</a>
+ &#8226;   <a href="#ui.pages.compare_page">ui.pages.compare_page</a>
  &#8226;   <a href="#ui.pages.currency_page">ui.pages.currency_page</a>
  &#8226;   <a href="#ui.pages.delivery_page">ui.pages.delivery_page</a>
  &#8226;   <a href="#ui.pages.excel_tools_page">ui.pages.excel_tools_page</a>
@@ -3136,8 +3140,8 @@ imported by:
   <a target="code" href="///C:/Users/mai/AppData/Local/Programs/Python/Python38/lib/copy.py" type="text/plain"><tt>copy</tt></a>
 <span class="moduletype">SourceModule</span>  <div class="import">
 imports:
-    <a href="#'org.python'">'org.python'</a>
- &#8226;   <a href="#copyreg">copyreg</a>
+    <a href="#copyreg">copyreg</a>
+ &#8226;   <a href="#org">org</a>
  &#8226;   <a href="#types">types</a>
  &#8226;   <a href="#weakref">weakref</a>
 
@@ -3200,9 +3204,11 @@ imports:
  &#8226;   <a href="#core.arrival_core">core.arrival_core</a>
  &#8226;   <a href="#core.attendance_core">core.attendance_core</a>
  &#8226;   <a href="#core.common_core">core.common_core</a>
+ &#8226;   <a href="#core.compare_core">core.compare_core</a>
  &#8226;   <a href="#core.currency_core">core.currency_core</a>
  &#8226;   <a href="#core.delivery_core">core.delivery_core</a>
  &#8226;   <a href="#core.excel_tools_core">core.excel_tools_core</a>
+ &#8226;   <a href="#core.header_detect">core.header_detect</a>
  &#8226;   <a href="#core.invoice_core">core.invoice_core</a>
  &#8226;   <a href="#core.library">core.library</a>
  &#8226;   <a href="#core.paths">core.paths</a>
@@ -3223,9 +3229,11 @@ imported by:
  &#8226;   <a href="#core.arrival_core">core.arrival_core</a>
  &#8226;   <a href="#core.attendance_core">core.attendance_core</a>
  &#8226;   <a href="#core.common_core">core.common_core</a>
+ &#8226;   <a href="#core.compare_core">core.compare_core</a>
  &#8226;   <a href="#core.currency_core">core.currency_core</a>
  &#8226;   <a href="#core.delivery_core">core.delivery_core</a>
  &#8226;   <a href="#core.excel_tools_core">core.excel_tools_core</a>
+ &#8226;   <a href="#core.header_detect">core.header_detect</a>
  &#8226;   <a href="#core.invoice_core">core.invoice_core</a>
  &#8226;   <a href="#core.library">core.library</a>
  &#8226;   <a href="#core.paths">core.paths</a>
@@ -3247,6 +3255,7 @@ imported by:
  &#8226;   <a href="#ui.pages.arrival_page">ui.pages.arrival_page</a>
  &#8226;   <a href="#ui.pages.attendance_page">ui.pages.attendance_page</a>
  &#8226;   <a href="#ui.pages.base_page">ui.pages.base_page</a>
+ &#8226;   <a href="#ui.pages.compare_page">ui.pages.compare_page</a>
  &#8226;   <a href="#ui.pages.currency_page">ui.pages.currency_page</a>
  &#8226;   <a href="#ui.pages.delivery_page">ui.pages.delivery_page</a>
  &#8226;   <a href="#ui.pages.excel_tools_page">ui.pages.excel_tools_page</a>
@@ -3272,6 +3281,7 @@ imported by:
 <span class="moduletype">SourceModule</span>  <div class="import">
 imports:
     <a href="#core">core</a>
+ &#8226;   <a href="#core.common_core">core.common_core</a>
  &#8226;   <a href="#core.paths">core.paths</a>
  &#8226;   <a href="#core.settings">core.settings</a>
  &#8226;   <a href="#datetime">datetime</a>
@@ -3334,10 +3344,36 @@ imports:
   <div class="import">
 imported by:
     <a href="#core">core</a>
+ &#8226;   <a href="#core.arrival_core">core.arrival_core</a>
  &#8226;   <a href="#core.attendance_core">core.attendance_core</a>
+ &#8226;   <a href="#core.pivot_core">core.pivot_core</a>
+ &#8226;   <a href="#core.purchase_core">core.purchase_core</a>
  &#8226;   <a href="#core.reconcile_core">core.reconcile_core</a>
  &#8226;   <a href="#ui.pages.attendance_page">ui.pages.attendance_page</a>
  &#8226;   <a href="#ui.pages.reconcile_page">ui.pages.reconcile_page</a>
+
+  </div>
+
+</div>
+
+<div class="node">
+  <a name="core.compare_core"></a>
+  <a target="code" href="///C:/Users/mai/Desktop/%E7%A8%8B%E5%BA%8F%E9%87%8D%E6%9E%84/%E5%B3%B0%E8%BF%90%E9%80%9A%E6%95%B0%E6%8D%AE%E7%AE%A1%E7%90%86%E7%B3%BB%E7%BB%9F/core/compare_core.py" type="text/plain"><tt>core.compare_core</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#core">core</a>
+ &#8226;   <a href="#core.paths">core.paths</a>
+ &#8226;   <a href="#core.settings">core.settings</a>
+ &#8226;   <a href="#numbers">numbers</a>
+ &#8226;   <a href="#openpyxl">openpyxl</a>
+ &#8226;   <a href="#openpyxl.styles">openpyxl.styles</a>
+ &#8226;   <a href="#os">os</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#core">core</a>
+ &#8226;   <a href="#ui.pages.compare_page">ui.pages.compare_page</a>
 
   </div>
 
@@ -3367,6 +3403,7 @@ imported by:
 <span class="moduletype">SourceModule</span>  <div class="import">
 imports:
     <a href="#core">core</a>
+ &#8226;   <a href="#core.header_detect">core.header_detect</a>
  &#8226;   <a href="#core.paths">core.paths</a>
  &#8226;   <a href="#core.settings">core.settings</a>
  &#8226;   <a href="#openpyxl">openpyxl</a>
@@ -3402,6 +3439,24 @@ imports:
 imported by:
     <a href="#core">core</a>
  &#8226;   <a href="#ui.pages.excel_tools_page">ui.pages.excel_tools_page</a>
+
+  </div>
+
+</div>
+
+<div class="node">
+  <a name="core.header_detect"></a>
+  <a target="code" href="///C:/Users/mai/Desktop/%E7%A8%8B%E5%BA%8F%E9%87%8D%E6%9E%84/%E5%B3%B0%E8%BF%90%E9%80%9A%E6%95%B0%E6%8D%AE%E7%AE%A1%E7%90%86%E7%B3%BB%E7%BB%9F/core/header_detect.py" type="text/plain"><tt>core.header_detect</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#core">core</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#core">core</a>
+ &#8226;   <a href="#core.delivery_core">core.delivery_core</a>
+ &#8226;   <a href="#core.purchase_core">core.purchase_core</a>
 
   </div>
 
@@ -3482,6 +3537,7 @@ imported by:
     <a href="#core">core</a>
  &#8226;   <a href="#core.arrival_core">core.arrival_core</a>
  &#8226;   <a href="#core.attendance_core">core.attendance_core</a>
+ &#8226;   <a href="#core.compare_core">core.compare_core</a>
  &#8226;   <a href="#core.delivery_core">core.delivery_core</a>
  &#8226;   <a href="#core.excel_tools_core">core.excel_tools_core</a>
  &#8226;   <a href="#core.invoice_core">core.invoice_core</a>
@@ -3532,6 +3588,7 @@ imports:
     <a href="#collections">collections</a>
  &#8226;   <a href="#copy">copy</a>
  &#8226;   <a href="#core">core</a>
+ &#8226;   <a href="#core.common_core">core.common_core</a>
  &#8226;   <a href="#core.paths">core.paths</a>
  &#8226;   <a href="#core.settings">core.settings</a>
  &#8226;   <a href="#datetime">datetime</a>
@@ -3563,6 +3620,8 @@ imported by:
 <span class="moduletype">SourceModule</span>  <div class="import">
 imports:
     <a href="#core">core</a>
+ &#8226;   <a href="#core.common_core">core.common_core</a>
+ &#8226;   <a href="#core.header_detect">core.header_detect</a>
  &#8226;   <a href="#core.paths">core.paths</a>
  &#8226;   <a href="#core.settings">core.settings</a>
  &#8226;   <a href="#openpyxl">openpyxl</a>
@@ -3634,7 +3693,9 @@ imports:
  &#8226;   <a href="#core.paths">core.paths</a>
  &#8226;   <a href="#core.version">core.version</a>
  &#8226;   <a href="#json">json</a>
+ &#8226;   <a href="#logging">logging</a>
  &#8226;   <a href="#os">os</a>
+ &#8226;   <a href="#shutil">shutil</a>
 
   </div>
   <div class="import">
@@ -3642,6 +3703,7 @@ imported by:
     <a href="#core">core</a>
  &#8226;   <a href="#core.arrival_core">core.arrival_core</a>
  &#8226;   <a href="#core.attendance_core">core.attendance_core</a>
+ &#8226;   <a href="#core.compare_core">core.compare_core</a>
  &#8226;   <a href="#core.delivery_core">core.delivery_core</a>
  &#8226;   <a href="#core.invoice_core">core.invoice_core</a>
  &#8226;   <a href="#core.pivot_core">core.pivot_core</a>
@@ -3682,6 +3744,7 @@ imported by:
 imports:
     <a href="#core">core</a>
  &#8226;   <a href="#core.version">core.version</a>
+ &#8226;   <a href="#hashlib">hashlib</a>
  &#8226;   <a href="#json">json</a>
  &#8226;   <a href="#os">os</a>
  &#8226;   <a href="#ssl">ssl</a>
@@ -3761,6 +3824,7 @@ imported by:
 imports:
     <a href="#_ctypes">_ctypes</a>
  &#8226;   <a href="#ctypes._endian">ctypes._endian</a>
+ &#8226;   <a href="#ctypes.wintypes">ctypes.wintypes</a>
  &#8226;   <a href="#nt">nt</a>
  &#8226;   <a href="#os">os</a>
  &#8226;   <a href="#struct">struct</a>
@@ -3776,6 +3840,7 @@ imported by:
  &#8226;   <a href="#ctypes.wintypes">ctypes.wintypes</a>
  &#8226;   <a href="#main.py">main.py</a>
  &#8226;   <a href="#multiprocessing.sharedctypes">multiprocessing.sharedctypes</a>
+ &#8226;   <a href="#ui.main_window">ui.main_window</a>
  &#8226;   <a href="#uuid">uuid</a>
 
   </div>
@@ -3929,6 +3994,9 @@ imports:
   <div class="import">
 imported by:
     <a href="#core.paths">core.paths</a>
+ &#8226;   <a href="#ctypes">ctypes</a>
+ &#8226;   <a href="#main.py">main.py</a>
+ &#8226;   <a href="#ui.main_window">ui.main_window</a>
 
   </div>
 
@@ -7468,7 +7536,8 @@ imports:
   </div>
   <div class="import">
 imported by:
-    <a href="#hmac">hmac</a>
+    <a href="#core.updater">core.updater</a>
+ &#8226;   <a href="#hmac">hmac</a>
  &#8226;   <a href="#openpyxl.chartsheet.protection">openpyxl.chartsheet.protection</a>
  &#8226;   <a href="#pypdf._encryption">pypdf._encryption</a>
  &#8226;   <a href="#pypdf._writer">pypdf._writer</a>
@@ -8149,6 +8218,7 @@ imported by:
     <a href="#asyncio.futures">asyncio.futures</a>
  &#8226;   <a href="#asyncio.log">asyncio.log</a>
  &#8226;   <a href="#concurrent.futures._base">concurrent.futures._base</a>
+ &#8226;   <a href="#core.settings">core.settings</a>
  &#8226;   <a href="#hashlib">hashlib</a>
  &#8226;   <a href="#http.cookiejar">http.cookiejar</a>
  &#8226;   <a href="#multiprocessing.util">multiprocessing.util</a>
@@ -9162,6 +9232,7 @@ imports:
 imported by:
     <a href="#_pydecimal">_pydecimal</a>
  &#8226;   <a href="#core.arrival_core">core.arrival_core</a>
+ &#8226;   <a href="#core.compare_core">core.compare_core</a>
 
   </div>
 
@@ -9211,6 +9282,7 @@ imported by:
     <a href="#core.arrival_core">core.arrival_core</a>
  &#8226;   <a href="#core.attendance_core">core.attendance_core</a>
  &#8226;   <a href="#core.common_core">core.common_core</a>
+ &#8226;   <a href="#core.compare_core">core.compare_core</a>
  &#8226;   <a href="#core.delivery_core">core.delivery_core</a>
  &#8226;   <a href="#core.excel_tools_core">core.excel_tools_core</a>
  &#8226;   <a href="#core.invoice_core">core.invoice_core</a>
@@ -12159,6 +12231,7 @@ imports:
 imported by:
     <a href="#core.arrival_core">core.arrival_core</a>
  &#8226;   <a href="#core.attendance_core">core.attendance_core</a>
+ &#8226;   <a href="#core.compare_core">core.compare_core</a>
  &#8226;   <a href="#core.delivery_core">core.delivery_core</a>
  &#8226;   <a href="#core.invoice_core">core.invoice_core</a>
  &#8226;   <a href="#core.pivot_core">core.pivot_core</a>
@@ -14008,7 +14081,7 @@ imported by:
   <a target="code" href="" type="text/plain"><tt>org</tt></a>
 <span class="moduletype">MissingModule</span>  <div class="import">
 imported by:
-    <a href="#pickle">pickle</a>
+    <a href="#copy">copy</a>
 
   </div>
 
@@ -14052,6 +14125,7 @@ imported by:
  &#8226;   <a href="#core.arrival_core">core.arrival_core</a>
  &#8226;   <a href="#core.attendance_core">core.attendance_core</a>
  &#8226;   <a href="#core.common_core">core.common_core</a>
+ &#8226;   <a href="#core.compare_core">core.compare_core</a>
  &#8226;   <a href="#core.delivery_core">core.delivery_core</a>
  &#8226;   <a href="#core.excel_tools_core">core.excel_tools_core</a>
  &#8226;   <a href="#core.invoice_core">core.invoice_core</a>
@@ -14136,6 +14210,7 @@ imported by:
  &#8226;   <a href="#ui.pages.arrival_page">ui.pages.arrival_page</a>
  &#8226;   <a href="#ui.pages.attendance_page">ui.pages.attendance_page</a>
  &#8226;   <a href="#ui.pages.base_page">ui.pages.base_page</a>
+ &#8226;   <a href="#ui.pages.compare_page">ui.pages.compare_page</a>
  &#8226;   <a href="#ui.pages.delivery_page">ui.pages.delivery_page</a>
  &#8226;   <a href="#ui.pages.home_page">ui.pages.home_page</a>
  &#8226;   <a href="#ui.pages.invoice_page">ui.pages.invoice_page</a>
@@ -14227,14 +14302,14 @@ imported by:
   <a target="code" href="///C:/Users/mai/AppData/Local/Programs/Python/Python38/lib/pickle.py" type="text/plain"><tt>pickle</tt></a>
 <span class="moduletype">SourceModule</span>  <div class="import">
 imports:
-    <a href="#_compat_pickle">_compat_pickle</a>
+    <a href="#'org.python'">'org.python'</a>
+ &#8226;   <a href="#_compat_pickle">_compat_pickle</a>
  &#8226;   <a href="#_pickle">_pickle</a>
  &#8226;   <a href="#codecs">codecs</a>
  &#8226;   <a href="#copyreg">copyreg</a>
  &#8226;   <a href="#functools">functools</a>
  &#8226;   <a href="#io">io</a>
  &#8226;   <a href="#itertools">itertools</a>
- &#8226;   <a href="#org">org</a>
  &#8226;   <a href="#pprint">pprint</a>
  &#8226;   <a href="#re">re</a>
  &#8226;   <a href="#struct">struct</a>
@@ -16169,6 +16244,7 @@ imported by:
     <a href="#argparse">argparse</a>
  &#8226;   <a href="#core.invoice_core">core.invoice_core</a>
  &#8226;   <a href="#core.library">core.library</a>
+ &#8226;   <a href="#core.settings">core.settings</a>
  &#8226;   <a href="#ctypes.util">ctypes.util</a>
  &#8226;   <a href="#multiprocessing.util">multiprocessing.util</a>
  &#8226;   <a href="#tarfile">tarfile</a>
@@ -16774,6 +16850,7 @@ imported by:
  &#8226;   <a href="#multiprocessing.util">multiprocessing.util</a>
  &#8226;   <a href="#queue">queue</a>
  &#8226;   <a href="#subprocess">subprocess</a>
+ &#8226;   <a href="#ui.main_window">ui.main_window</a>
  &#8226;   <a href="#zipfile">zipfile</a>
 
   </div>
@@ -17085,6 +17162,7 @@ imported by:
  &#8226;   <a href="#ui.animations">ui.animations</a>
  &#8226;   <a href="#ui.dialogs">ui.dialogs</a>
  &#8226;   <a href="#ui.dialogs.attendance_review">ui.dialogs.attendance_review</a>
+ &#8226;   <a href="#ui.dialogs.compare_review">ui.dialogs.compare_review</a>
  &#8226;   <a href="#ui.dialogs.invoice_review">ui.dialogs.invoice_review</a>
  &#8226;   <a href="#ui.dialogs.library_picker">ui.dialogs.library_picker</a>
  &#8226;   <a href="#ui.dialogs.onboarding">ui.dialogs.onboarding</a>
@@ -17126,6 +17204,7 @@ imports:
   <div class="import">
 imported by:
     <a href="#ui.dialogs.reconcile_review">ui.dialogs.reconcile_review</a>
+ &#8226;   <a href="#ui.pages.compare_page">ui.pages.compare_page</a>
  &#8226;   <a href="#ui.pages.excel_tools_page">ui.pages.excel_tools_page</a>
  &#8226;   <a href="#ui.pages.pdf_page">ui.pages.pdf_page</a>
  &#8226;   <a href="#ui.pages.rename_page">ui.pages.rename_page</a>
@@ -17147,6 +17226,7 @@ imports:
   <div class="import">
 imported by:
     <a href="#ui.dialogs.attendance_review">ui.dialogs.attendance_review</a>
+ &#8226;   <a href="#ui.dialogs.compare_review">ui.dialogs.compare_review</a>
  &#8226;   <a href="#ui.dialogs.invoice_review">ui.dialogs.invoice_review</a>
  &#8226;   <a href="#ui.dialogs.library_picker">ui.dialogs.library_picker</a>
  &#8226;   <a href="#ui.dialogs.onboarding">ui.dialogs.onboarding</a>
@@ -17172,6 +17252,26 @@ imports:
   <div class="import">
 imported by:
     <a href="#ui.pages.attendance_page">ui.pages.attendance_page</a>
+
+  </div>
+
+</div>
+
+<div class="node">
+  <a name="ui.dialogs.compare_review"></a>
+  <a target="code" href="///C:/Users/mai/Desktop/%E7%A8%8B%E5%BA%8F%E9%87%8D%E6%9E%84/%E5%B3%B0%E8%BF%90%E9%80%9A%E6%95%B0%E6%8D%AE%E7%AE%A1%E7%90%86%E7%B3%BB%E7%BB%9F/ui/dialogs/compare_review.py" type="text/plain"><tt>ui.dialogs.compare_review</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#PySide2.QtGui">PySide2.QtGui</a>
+ &#8226;   <a href="#PySide2.QtWidgets">PySide2.QtWidgets</a>
+ &#8226;   <a href="#ui">ui</a>
+ &#8226;   <a href="#ui.dialogs">ui.dialogs</a>
+ &#8226;   <a href="#ui.theme">ui.theme</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#ui.pages.compare_page">ui.pages.compare_page</a>
 
   </div>
 
@@ -17321,13 +17421,17 @@ imports:
  &#8226;   <a href="#core.paths">core.paths</a>
  &#8226;   <a href="#core.settings">core.settings</a>
  &#8226;   <a href="#core.version">core.version</a>
+ &#8226;   <a href="#ctypes">ctypes</a>
+ &#8226;   <a href="#ctypes.wintypes">ctypes.wintypes</a>
  &#8226;   <a href="#os">os</a>
+ &#8226;   <a href="#threading">threading</a>
  &#8226;   <a href="#ui">ui</a>
  &#8226;   <a href="#ui.dialogs.onboarding">ui.dialogs.onboarding</a>
  &#8226;   <a href="#ui.icons">ui.icons</a>
  &#8226;   <a href="#ui.pages.about_page">ui.pages.about_page</a>
  &#8226;   <a href="#ui.pages.arrival_page">ui.pages.arrival_page</a>
  &#8226;   <a href="#ui.pages.attendance_page">ui.pages.attendance_page</a>
+ &#8226;   <a href="#ui.pages.compare_page">ui.pages.compare_page</a>
  &#8226;   <a href="#ui.pages.currency_page">ui.pages.currency_page</a>
  &#8226;   <a href="#ui.pages.delivery_page">ui.pages.delivery_page</a>
  &#8226;   <a href="#ui.pages.excel_tools_page">ui.pages.excel_tools_page</a>
@@ -17367,6 +17471,7 @@ imported by:
  &#8226;   <a href="#ui.pages.arrival_page">ui.pages.arrival_page</a>
  &#8226;   <a href="#ui.pages.attendance_page">ui.pages.attendance_page</a>
  &#8226;   <a href="#ui.pages.base_page">ui.pages.base_page</a>
+ &#8226;   <a href="#ui.pages.compare_page">ui.pages.compare_page</a>
  &#8226;   <a href="#ui.pages.currency_page">ui.pages.currency_page</a>
  &#8226;   <a href="#ui.pages.delivery_page">ui.pages.delivery_page</a>
  &#8226;   <a href="#ui.pages.excel_tools_page">ui.pages.excel_tools_page</a>
@@ -17487,6 +17592,7 @@ imported by:
     <a href="#ui.pages.about_page">ui.pages.about_page</a>
  &#8226;   <a href="#ui.pages.arrival_page">ui.pages.arrival_page</a>
  &#8226;   <a href="#ui.pages.attendance_page">ui.pages.attendance_page</a>
+ &#8226;   <a href="#ui.pages.compare_page">ui.pages.compare_page</a>
  &#8226;   <a href="#ui.pages.currency_page">ui.pages.currency_page</a>
  &#8226;   <a href="#ui.pages.delivery_page">ui.pages.delivery_page</a>
  &#8226;   <a href="#ui.pages.excel_tools_page">ui.pages.excel_tools_page</a>
@@ -17500,6 +17606,31 @@ imported by:
  &#8226;   <a href="#ui.pages.rename_page">ui.pages.rename_page</a>
  &#8226;   <a href="#ui.pages.settings_page">ui.pages.settings_page</a>
  &#8226;   <a href="#ui.pages.text_page">ui.pages.text_page</a>
+
+  </div>
+
+</div>
+
+<div class="node">
+  <a name="ui.pages.compare_page"></a>
+  <a target="code" href="///C:/Users/mai/Desktop/%E7%A8%8B%E5%BA%8F%E9%87%8D%E6%9E%84/%E5%B3%B0%E8%BF%90%E9%80%9A%E6%95%B0%E6%8D%AE%E7%AE%A1%E7%90%86%E7%B3%BB%E7%BB%9F/ui/pages/compare_page.py" type="text/plain"><tt>ui.pages.compare_page</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#PySide2.QtWidgets">PySide2.QtWidgets</a>
+ &#8226;   <a href="#core">core</a>
+ &#8226;   <a href="#core.compare_core">core.compare_core</a>
+ &#8226;   <a href="#os">os</a>
+ &#8226;   <a href="#ui.animations">ui.animations</a>
+ &#8226;   <a href="#ui.dialogs.compare_review">ui.dialogs.compare_review</a>
+ &#8226;   <a href="#ui.pages">ui.pages</a>
+ &#8226;   <a href="#ui.pages.base_page">ui.pages.base_page</a>
+ &#8226;   <a href="#ui.widgets.file_zone">ui.widgets.file_zone</a>
+ &#8226;   <a href="#ui.widgets.run_panel">ui.widgets.run_panel</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#ui.main_window">ui.main_window</a>
 
   </div>
 
@@ -17643,6 +17774,7 @@ imports:
  &#8226;   <a href="#ui.pages.base_page">ui.pages.base_page</a>
  &#8226;   <a href="#ui.theme">ui.theme</a>
  &#8226;   <a href="#ui.widgets.drop_area">ui.widgets.drop_area</a>
+ &#8226;   <a href="#ui.worker">ui.worker</a>
 
   </div>
   <div class="import">
@@ -17857,6 +17989,7 @@ imported by:
  &#8226;   <a href="#ui">ui</a>
  &#8226;   <a href="#ui.animations">ui.animations</a>
  &#8226;   <a href="#ui.dialogs.attendance_review">ui.dialogs.attendance_review</a>
+ &#8226;   <a href="#ui.dialogs.compare_review">ui.dialogs.compare_review</a>
  &#8226;   <a href="#ui.dialogs.invoice_review">ui.dialogs.invoice_review</a>
  &#8226;   <a href="#ui.dialogs.library_picker">ui.dialogs.library_picker</a>
  &#8226;   <a href="#ui.dialogs.onboarding">ui.dialogs.onboarding</a>
@@ -17974,6 +18107,7 @@ imports:
 imported by:
     <a href="#ui.pages.arrival_page">ui.pages.arrival_page</a>
  &#8226;   <a href="#ui.pages.attendance_page">ui.pages.attendance_page</a>
+ &#8226;   <a href="#ui.pages.compare_page">ui.pages.compare_page</a>
  &#8226;   <a href="#ui.pages.delivery_page">ui.pages.delivery_page</a>
  &#8226;   <a href="#ui.pages.excel_tools_page">ui.pages.excel_tools_page</a>
  &#8226;   <a href="#ui.pages.pdf_page">ui.pages.pdf_page</a>
@@ -18001,6 +18135,7 @@ imports:
 imported by:
     <a href="#ui.pages.arrival_page">ui.pages.arrival_page</a>
  &#8226;   <a href="#ui.pages.attendance_page">ui.pages.attendance_page</a>
+ &#8226;   <a href="#ui.pages.compare_page">ui.pages.compare_page</a>
  &#8226;   <a href="#ui.pages.delivery_page">ui.pages.delivery_page</a>
  &#8226;   <a href="#ui.pages.excel_tools_page">ui.pages.excel_tools_page</a>
  &#8226;   <a href="#ui.pages.invoice_page">ui.pages.invoice_page</a>
@@ -18028,6 +18163,7 @@ imports:
 imported by:
     <a href="#ui.pages.about_page">ui.pages.about_page</a>
  &#8226;   <a href="#ui.pages.base_page">ui.pages.base_page</a>
+ &#8226;   <a href="#ui.pages.library_page">ui.pages.library_page</a>
 
   </div>
 

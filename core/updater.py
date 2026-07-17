@@ -23,9 +23,15 @@ check_update() 返回：
 """
 import json
 import ssl
+import hashlib
 import urllib.request
 
 from . import version
+
+# 清单里 url→sha256 的缓存：check_update 解析清单时填入，download_installer
+# 校验时按下载地址取回。因界面层(about_page)只把 url 传给下载函数、拿不到
+# sha256，故用本进程内缓存搭桥；不影响向后兼容(清单无 sha256 则不缓存)。
+_SHA_CACHE = {}
 
 
 def manifest_url():
@@ -87,10 +93,16 @@ def check_update(timeout=8):
         return {"status": "error", "msg": str(e)}
     remote = _parse_ver(data.get("version", "0.0.0"))
     if remote > version.VERSION_TUPLE:
+        dl_url = data.get("url", "")
+        sha256 = (data.get("sha256", "") or "").strip().lower()   # 可选:清单提供才有
+        if dl_url and sha256:
+            # 缓存到"实际下载地址(套加速后)"下,供 download_installer 校验取回
+            _SHA_CACHE[accelerate(dl_url)] = sha256
         return {"status": "update",
                 "version": data.get("version", ""),
                 "notes": data.get("notes", ""),
-                "url": data.get("url", ""),
+                "url": dl_url,
+                "sha256": sha256,
                 "mandatory": bool(data.get("mandatory", False))}
     return {"status": "latest"}
 
@@ -109,11 +121,28 @@ def _download_name(url):
     return "%s_Update.exe" % version.APP_ID
 
 
-def download_installer(url, dest_dir=None, progress=None, log=None, timeout=30):
+def _file_sha256(path, chunk=1048576):
+    """分块读取计算文件 SHA256(大文件不占内存)。返回小写十六进制串。"""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        while True:
+            b = f.read(chunk)
+            if not b:
+                break
+            h.update(b)
+    return h.hexdigest()
+
+
+def download_installer(url, dest_dir=None, progress=None, log=None, timeout=30,
+                       sha256=None):
     """下载安装包到临时目录，返回本地路径。
 
-    progress(pct): 可选回调，报告 0~100 进度百分比（供界面进度条）。
+    progress(pct): 可选回调，报告 0~100 进度百分比（供界面进度条）；
+                   服务器不返回 Content-Length 时传 -1 表示"不确定进度"，
+                   调用方可据此切进度条为不确定态(此处同时按 KB 周期性 log)。
     log(msg):      可选回调，输出文字日志。
+    sha256:        可选期望哈希；未显式传入则回退到清单缓存(_SHA_CACHE)。
+                   校验不通过将删文件并抛错，绝不返回可疑安装包。
     出错抛异常（由上层 Worker 捕获转成友好提示）。
     """
     import os
@@ -124,6 +153,8 @@ def download_installer(url, dest_dir=None, progress=None, log=None, timeout=30):
     if not url:
         raise ValueError("下载地址为空，无法下载安装包。")
     url = accelerate(url)                # 安装包下载套加速镜像
+    # 期望哈希：优先用显式入参，否则取清单缓存(按套加速后的地址)
+    expect_sha = (sha256 or _SHA_CACHE.get(url) or "").strip().lower()
     dest_dir = dest_dir or os.path.join(tempfile.gettempdir(), version.APP_ID + "_update")
     if not os.path.isdir(dest_dir):
         os.makedirs(dest_dir)
@@ -135,6 +166,7 @@ def download_installer(url, dest_dir=None, progress=None, log=None, timeout=30):
     with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
         total = int(resp.headers.get("Content-Length", 0) or 0)
         done = 0
+        indeterminate_notified = False
         with open(dest, "wb") as f:
             while True:
                 chunk = resp.read(65536)
@@ -142,10 +174,38 @@ def download_installer(url, dest_dir=None, progress=None, log=None, timeout=30):
                     break
                 f.write(chunk)
                 done += len(chunk)
-                if progress and total:
-                    progress(min(99, done * 100 // total))
-                if log and total and done % (2 * 1024 * 1024) < 65536:
-                    log("已下载 %.1f / %.1f MB" % (done / 1048576.0, total / 1048576.0))
+                if total > 0:
+                    if progress:
+                        progress(min(99, done * 100 // total))
+                    if log and done % (2 * 1024 * 1024) < 65536:
+                        log("已下载 %.1f / %.1f MB" % (done / 1048576.0, total / 1048576.0))
+                else:
+                    # 服务器未给 Content-Length：切不确定态(progress=-1)，
+                    # 并按已下载 KB 周期性 log，避免进度条永远卡在 0。
+                    if progress and not indeterminate_notified:
+                        progress(-1)
+                        indeterminate_notified = True
+                    if log and done % (2 * 1024 * 1024) < 65536:
+                        log("已下载 %.1f MB…" % (done / 1048576.0))
+    # 完整性校验一：total 已知时字节数必须吻合，截断包一律拒绝
+    if total > 0 and done != total:
+        try:
+            os.remove(dest)
+        except OSError:
+            pass
+        raise IOError("下载不完整，请重试（已收 %d/%d 字节）。" % (done, total))
+    # 完整性校验二：清单提供了 sha256 时校验哈希，不匹配则删包拒绝，
+    # 绝不把来路不明的 exe 交给 run_installer 以管理员权限执行。
+    if expect_sha:
+        actual = _file_sha256(dest)
+        if actual.lower() != expect_sha:
+            try:
+                os.remove(dest)
+            except OSError:
+                pass
+            raise IOError("安装包校验失败（哈希不匹配），已拒绝运行，请重试或联系管理员。")
+        if log:
+            log("哈希校验通过。")
     if progress:
         progress(100)
     if log:

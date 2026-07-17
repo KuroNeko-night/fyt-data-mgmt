@@ -46,6 +46,9 @@ def parse_pages(spec, total):
         if "-" in part:
             a, _, b = part.partition("-")
             a = a.strip(); b = b.strip()
+            # 两端都不是数字(如 "-"、"a-b")视为非法段,跳过,避免回退成静默全选
+            if not a.isdigit() and not b.isdigit():
+                continue
             start = int(a) if a.isdigit() else 1
             end = int(b) if b.isdigit() else total
             if start > end:

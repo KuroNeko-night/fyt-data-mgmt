@@ -23,6 +23,8 @@ from openpyxl.utils import get_column_letter
 
 from . import paths as _paths
 from . import settings as settings_mod
+from .common_core import warn_if_uncached   # 公式未刷新检测(读关键表前告警)
+from . import header_detect
 
 # 表头关键词 -> 角色。识别时先精确匹配，再包含匹配；每列只归一个角色。
 HEADER_KEYS = {
@@ -49,7 +51,18 @@ def norm_spec(v):
 
 
 def norm_no(v):
-    return "" if v is None else str(v).strip().upper()
+    """材料编号归一(参考 delivery_core.norm_code): 让 "123.0"/"00123"/"123" 归为同值。
+    否则 float 编码 123.0->"123.0"、文本 "00123" 原样, 会导致同编号匹配不上误报"对方无此编号"。"""
+    if v is None:
+        return ""
+    # float 整数取 int(去掉尾随 .0)
+    if isinstance(v, float) and v.is_integer():
+        v = int(v)
+    s = str(v).strip().upper()
+    # 纯数字串去前导零(00123->123); 保留全零为 "0", 非纯数字(含字母/横杠)原样
+    if s.isdigit():
+        s = s.lstrip("0") or "0"
+    return s
 
 
 def batch_core(v):
@@ -125,65 +138,60 @@ def qty_eq(a, b):
 # ---------------------------------------------------------------------------
 # 表头/列自动识别
 # ---------------------------------------------------------------------------
-def detect_layout(ws, scan_rows=12):
+def detect_layout(ws, scan_rows=12, log=None):
     """在前若干行里找表头行并映射列。返回 (header_row, {角色:列号}) 或 (None, {})。
 
     选"能命中最多角色"的行为表头行；要求至少含 name 与 qty 两列，否则视为未识别。
+    薄封装:算法在 header_detect.detect_layout,此处只传本功能的常量。
+    采购表无供应商角色,故无需 exclude_contains;若日后加供应商列,守卫随引擎自动可用。
     """
-    best_row, best_map = None, {}
-    for r in range(1, min(scan_rows, ws.max_row) + 1):
-        col_map = {}
-        used = set()
-        # 先精确匹配，再包含匹配，保证"编号"不会抢占"材料编号"等
-        for pass_exact in (True, False):
-            for c in range(1, ws.max_column + 1):
-                if c in used:
-                    continue
-                cell = ws.cell(r, c).value
-                if cell is None:
-                    continue
-                text = str(cell).strip()
-                for role, keys in HEADER_KEYS.items():
-                    if role in col_map:
-                        continue
-                    hit = (text in keys) if pass_exact else any(k in text for k in keys)
-                    if hit:
-                        col_map[role] = c
-                        used.add(c)
-                        break
-        if "name" in col_map and "qty" in col_map and len(col_map) > len(best_map):
-            best_map = col_map
-            best_row = r
-    return best_row, best_map
+    return header_detect.detect_layout(
+        ws, HEADER_KEYS, require=("name", "qty"), scan_rows=scan_rows, log=log)
 
 
-def load_rows(path, sheet=None):
+def load_rows(path, sheet=None, log=None):
     """读取一张表的有效数据行。返回 (rows, layout)。
     rows: [{r, no, name, spec, unit, qty, batch}]，已过滤空行/合计行。
     """
+    # 数量列常是公式; 未刷新时 data_only 读出 None -> qty_eq 恒 False, 该行永远标黄。
+    # 读表前先醒目告警(命中列含"数量"即提示)。
+    if log:
+        warn_if_uncached(path, log, sheet=sheet, what="数量")
     wb = openpyxl.load_workbook(path, data_only=True)
-    ws = wb[sheet] if sheet else wb[wb.sheetnames[0]]
-    header_row, col = detect_layout(ws)
-    if not header_row:
-        raise ValueError("未能在 %s / %s 中识别表头（需含“名称”“数量”列）"
-                         % (os.path.basename(path), ws.title))
-    rows = []
-    for r in range(header_row + 1, ws.max_row + 1):
-        nm = ws.cell(r, col["name"]).value
-        if nm is None:
-            continue
-        if isinstance(nm, str) and ("合计" in nm or "小计" in nm or "总计" in nm):
-            continue
-        rows.append({
-            "r": r,
-            "no": ws.cell(r, col["no"]).value if "no" in col else None,
-            "name": nm,
-            "spec": ws.cell(r, col["spec"]).value if "spec" in col else None,
-            "unit": ws.cell(r, col["unit"]).value if "unit" in col else None,
-            "qty": ws.cell(r, col["qty"]).value,
-            "batch": ws.cell(r, col["batch"]).value if "batch" in col else None,
-        })
-    return rows, {"sheet": ws.title, "header_row": header_row, "col": col}
+    try:
+        ws = wb[sheet] if sheet else wb[wb.sheetnames[0]]
+        header_row, col = detect_layout(ws, log=log)
+        if not header_row:
+            raise ValueError("未能在 %s / %s 中识别表头（需含“名称”“数量”列）"
+                             % (os.path.basename(path), ws.title))
+        rows = []
+        none_qty = 0                                # 数量读出 None 的行数(疑似公式未刷新)
+        for r in range(header_row + 1, ws.max_row + 1):
+            nm = ws.cell(r, col["name"]).value
+            if nm is None:
+                continue
+            if isinstance(nm, str) and ("合计" in nm or "小计" in nm or "总计" in nm):
+                continue
+            qv = ws.cell(r, col["qty"]).value
+            if qv is None:
+                none_qty += 1
+            rows.append({
+                "r": r,
+                "no": ws.cell(r, col["no"]).value if "no" in col else None,
+                "name": nm,
+                "spec": ws.cell(r, col["spec"]).value if "spec" in col else None,
+                "unit": ws.cell(r, col["unit"]).value if "unit" in col else None,
+                "qty": qv,
+                "batch": ws.cell(r, col["batch"]).value if "batch" in col else None,
+            })
+        layout = {"sheet": ws.title, "header_row": header_row, "col": col}
+    finally:
+        wb.close()                                  # 显式释放, 避免文件句柄泄漏
+    # 数量取不到值的行单独提示(而非直接判不等标黄)
+    if none_qty and log:
+        log("⚠ 《%s》有 %d 行的数量未取到值(可能公式未刷新), 这些行将无法正确对账, 请核对。"
+            % (os.path.basename(path), none_qty))
+    return rows, layout
 
 
 # ---------------------------------------------------------------------------
@@ -201,7 +209,13 @@ def _can_match(a, b):
     if na and nb:
         # 编号双方都有：必须相等，且批次不得矛盾（容忍单字符笔误，拒绝不同批次）
         return na == nb and batch_consistent(a["batch"], b["batch"])
-    return batch_compat(a["batch"], b["batch"])   # 编号缺一侧：批次兜底
+    # 编号缺一侧或双缺: 有批次时按批次兜底
+    if batch_compat(a["batch"], b["batch"]):
+        return True
+    # 双方均无编号且批次都空: 名称+规格+数量已全同, 退化为按此三项配对(见 pair_note 会提示)
+    if not na and not nb and not batch_core(a["batch"]) and not batch_core(b["batch"]):
+        return True
+    return False
 
 
 def _pair_score(a, b):
@@ -330,6 +344,9 @@ def pair_note(a, b):
     # 两侧编号缺失：仅当批次核心并非完全相等时提示
     if batch_core(a["batch"]) != batch_core(b["batch"]):
         return "无编号且批次仅近似(%s↔%s)，请核对" % (a["batch"], b["batch"])
+    # 双方均无编号且批次都空: 仅凭名称+规格+数量配对, 依据最弱, 务必核对
+    if not batch_core(a["batch"]):
+        return "无编号且无批次，仅按名称+规格+数量匹配，请核对"
     return ""
 
 
@@ -359,14 +376,17 @@ def _put(ws, r, c, val, fill=None, font=None, align=None, border=True):
 def apply_colors(path, sheet, matched, rows, qty_col, out_path):
     """在原文件副本上给数量列上色（保留原格式/公式），另存为 out_path。"""
     wb = openpyxl.load_workbook(path)
-    ws = wb[sheet] if sheet else wb[wb.sheetnames[0]]
-    for flag, info in zip(matched, rows):
-        ws.cell(info["r"], qty_col).fill = GREEN if flag else YELLOW
     try:
-        wb.save(out_path)
-        return out_path
-    except PermissionError:
-        raise PermissionError("无法保存 %s —— 请先在 Excel 里关闭该文件后重试" % out_path)
+        ws = wb[sheet] if sheet else wb[wb.sheetnames[0]]
+        for flag, info in zip(matched, rows):
+            ws.cell(info["r"], qty_col).fill = GREEN if flag else YELLOW
+        try:
+            wb.save(out_path)
+            return out_path
+        except PermissionError:
+            raise PermissionError("无法保存 %s —— 请先在 Excel 里关闭该文件后重试" % out_path)
+    finally:
+        wb.close()                                  # 显式释放, 避免文件句柄泄漏
 
 
 # 汇报单列布局：我方 5 列 + 供方 5 列 + 备注；共 12 列
@@ -497,8 +517,8 @@ def run(file1, file2, sheet1=None, sheet2=None, name1="我方", name2="供方",
         if log:
             log(msg)
 
-    rows1, lay1 = load_rows(file1, sheet1)
-    rows2, lay2 = load_rows(file2, sheet2)
+    rows1, lay1 = load_rows(file1, sheet1, log=_lg)
+    rows2, lay2 = load_rows(file2, sheet2, log=_lg)
     _lg("%s 有效行: %d（表头第%d行，工作表 %s）"
         % (name1, len(rows1), lay1["header_row"], lay1["sheet"]))
     _lg("%s 有效行: %d（表头第%d行，工作表 %s）"

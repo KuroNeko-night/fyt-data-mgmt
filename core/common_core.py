@@ -295,6 +295,53 @@ def to_num(v, skip=None):
         return None
 
 
+# ---------------- 公式未刷新检测（贯穿性根因） ----------------
+def detect_uncached_formula(path, sheet=None, sample_rows=400):
+    """检测工作簿里是否有"公式单元格但无缓存值"。
+
+    openpyxl 以 data_only=True 读取时，公式单元格若从未被 Excel 打开并保存过，
+    缓存值为 None —— 下游会把它误当空/0，造成静默丢数。本函数用 data_only=False
+    再扫一遍：某格是公式(值以 '=' 开头)却在 data_only 读取下为 None，即判定该表
+    "公式未刷新"。返回命中的列(0-based)集合；空集表示无此问题。
+    仅 .xlsx/.xlsm 适用（.xls 无此机制），其余或读取失败一律返回 set()（不误报）。
+    """
+    ext = os.path.splitext(path)[1].lower()
+    if ext not in (".xlsx", ".xlsm"):
+        return set()
+    cols = set()
+    try:
+        wb_f = openpyxl.load_workbook(path, data_only=False, read_only=True)
+        wb_v = openpyxl.load_workbook(path, data_only=True, read_only=True)
+        try:
+            names = [sheet] if sheet and sheet in wb_f.sheetnames else wb_f.sheetnames
+            for nm in names:
+                wf, wv = wb_f[nm], wb_v[nm]
+                fit = wf.iter_rows(max_row=sample_rows, values_only=True)
+                vit = wv.iter_rows(max_row=sample_rows, values_only=True)
+                for frow, vrow in zip(fit, vit):
+                    for c, fval in enumerate(frow):
+                        if (isinstance(fval, str) and fval.startswith("=")
+                                and (c >= len(vrow) or vrow[c] is None)):
+                            cols.add(c)
+        finally:
+            wb_f.close(); wb_v.close()
+    except Exception:
+        return set()          # 检测本身失败绝不阻断主流程，也不误报
+    return cols
+
+
+def warn_if_uncached(path, log, sheet=None, what="数据"):
+    """便捷封装：检测到公式未刷新则通过 log 发醒目警告，返回是否命中。
+    各核心在读关键表前调用，把"公式未刷新→静默丢数"变成用户可见的提示。"""
+    cols = detect_uncached_formula(path, sheet)
+    if cols:
+        log("⚠ 警告：《%s》中%s所在列含未刷新的公式（读取值为空），可能导致漏算或算错。"
+            % (os.path.basename(path), what))
+        log("  请先用 Excel 打开该表、按 Ctrl+S 保存一次以刷新公式后重试。")
+        return True
+    return False
+
+
 # ---------------- 统一多格式读取 ----------------
 def read_sheets(path):
     """读取任意工作簿为 [(sheet_name, rows)]，rows 为二维列表。

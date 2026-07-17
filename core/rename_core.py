@@ -84,10 +84,13 @@ _RESERVED = {"CON", "PRN", "AUX", "NUL"} | {"COM%d" % i for i in range(1, 10)} \
 
 
 def _name_invalid(name):
-    """新文件名是否非法(空、含非法字符、Windows 保留名)。"""
+    """新文件名是否非法(空、含非法字符、结尾空格/点、Windows 保留名)。"""
     if not name or name in (".", ".."):
         return True
     if any(c in _ILLEGAL for c in name):
+        return True
+    # 结尾空格/点会被 Windows 落盘时静默去掉→预览与实际不符、冲突检测漏判,判为非法
+    if name.rstrip(" .") != name:
         return True
     stem = os.path.splitext(name)[0].upper().rstrip(" .")
     return stem in _RESERVED
@@ -204,10 +207,16 @@ def apply_plan(items, log=None):
             # 目标失败：尽力把临时名改回原名，避免留下 __renaming__ 垃圾
             try:
                 os.rename(tmp, origin)
-            except OSError:
-                pass
-            failed.append((os.path.basename(origin), str(e)))
-            _lg("失败 %s：%s" % (os.path.basename(origin), e))
+                failed.append((os.path.basename(origin), str(e)))
+                _lg("失败 %s：%s" % (os.path.basename(origin), e))
+            except OSError as e2:
+                # 双重故障:临时名既改不到目标、也回不了原名,留下孤儿文件。
+                # 把孤儿 tmp 路径记入 failed 供页面提示,用户可据此手动恢复。
+                failed.append((os.path.basename(tmp),
+                               "改名失败且回滚失败,遗留临时文件:%s(原名 %s;%s / %s)"
+                               % (tmp, os.path.basename(origin), e, e2)))
+                _lg("严重:%s 遗留临时文件 %s(回滚亦失败:%s)"
+                    % (os.path.basename(origin), tmp, e2))
 
     return len(done_undo), failed, done_undo
 

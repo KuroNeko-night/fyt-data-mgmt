@@ -29,6 +29,7 @@ FEATURE_DIRS = {
     "purchase": "采购数对账",
     "delivery": "送货计划",
     "invoice": "增值税发票统计",
+    "compare": "表格比对",
 }
 
 

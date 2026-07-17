@@ -94,15 +94,19 @@ def _load_source_one(path, data, days_seen, log=None, opts=None):
             nm = _norm_name(row[col_name])
             if not nm:
                 continue
-            day = _day_of(row[col_date]) if col_date < len(row) else None
-            if day is None:
+            # 以完整 (年,月,日) 为 key,避免跨月同号日被相加合并;
+            # 只有日号(缺年月)的旧格式退回当月第几天,行为与旧版一致
+            key = cc.norm_date(row[col_date]) if col_date < len(row) else None
+            if key is None:
+                key = _day_of(row[col_date]) if col_date < len(row) else None
+            if key is None:
                 continue
             work = _to_num(row[col_work], skip=skip) if col_work < len(row) else None
             if work is None:
                 continue
             data.setdefault(nm, {})
-            data[nm][day] = data[nm].get(day, 0.0) + work
-            days_seen.add(day)
+            data[nm][key] = data[nm].get(key, 0.0) + work
+            days_seen.add(key)
             cnt += 1
         file_cnt += cnt
         _lg("  · [读取] %s / %s：%d 条明细" % (fname, sname, cnt))
@@ -362,8 +366,12 @@ def _locate_zong(ws, opts=None, path=""):
             day_cols = tmp
             day_row = r
     data_start = ds_override if ds_override else ((day_row or 2) + 1)
+    # 识别不到"姓名"列时不再静默回退硬编码列(旧代码 name_col or 2),明确报错交上层中止
+    if name_col is None:
+        raise ValueError("总表未能识别到『姓名』列，请检查表头")
     return {
-        "name_col": name_col or 2, "comp_col": comp_col or 3,
+        # comp_col 允许为 None(旧代码 or 3 会误指第3列),下游已按 None 兜底
+        "name_col": name_col, "comp_col": comp_col,
         "day_cols": day_cols, "work_col": work_col,
         "check_col": check_col, "data_start": data_start,
     }
@@ -376,6 +384,29 @@ def fill_zong(ws, src_data, log=None, opts=None, path=""):
             log(m)
 
     lay = _locate_zong(ws, opts=opts, path=path)
+    # 日期表头识别失败(day_cols 为空)属结构识别失败,不能静默给每人写 work=0
+    if not lay["day_cols"]:
+        raise ValueError("总表未能识别到任何『日期』列(日期表头行识别失败)，请检查表头")
+    # src_data 的 key 现为 (年,月,日) 元组或纯日号:先定出总表对应的目标年月
+    month_days = {}   # (年,月) -> 该月出现的日数,用于选主月份并提示跨月
+    for person in src_data.values():
+        for k in person:
+            if isinstance(k, tuple):
+                month_days.setdefault(k[:2], set()).add(k[2])
+    target_ym = max(month_days, key=lambda ym: len(month_days[ym])) if month_days else None
+    if len(month_days) > 1:   # 数据跨多个月份:总表按天号列只能落一个月,提示避免误解
+        _lg("  注意：数据来源跨 %d 个月份 %s，总表逐日列仅对应主月份 %s，其余月份不并入逐日"
+            % (len(month_days), sorted("%d-%02d" % ym for ym in month_days),
+               ("%d-%02d" % target_ym) if target_ym else "-"))
+
+    def _day_val(person, d):
+        """取某人第 d 天工时:优先目标年月的 (y,m,d),回退纯日号 key。"""
+        if target_ym is not None and (target_ym[0], target_ym[1], d) in person:
+            return person[(target_ym[0], target_ym[1], d)]
+        if d in person:      # 兼容只有日号(无年月)的旧数据
+            return person[d]
+        return None
+
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
     filled_people = 0
     filled_cells = 0
@@ -389,11 +420,23 @@ def fill_zong(ws, src_data, log=None, opts=None, path=""):
             continue
         person = src_data[nm]
         total = 0.0
+        used_days = set()
         for d, col in lay["day_cols"].items():
-            if d in person:
-                ws.cell(r, col).value = person[d]
-                total += person[d]
+            v = _day_val(person, d)
+            if v is not None:
+                ws.cell(r, col).value = v
+                total += v
                 filled_cells += 1
+                used_days.add(d)
+        # 源数据有、总表无对应日列的工时会被漏出合计:统计溢出天数并提示
+        overflow = 0
+        for k in person:
+            kd = k[2] if isinstance(k, tuple) else k
+            in_target = (not isinstance(k, tuple)) or (target_ym is not None and k[:2] == target_ym)
+            if in_target and kd not in used_days:
+                overflow += 1
+        if overflow:
+            _lg("  · 提示：%s 有 %d 天工时无对应日列，未计入合计" % (nm, overflow))
         if lay["work_col"]:
             ws.cell(r, lay["work_col"]).value = round(total, 2)
         if lay["check_col"]:
@@ -417,17 +460,26 @@ def _zong_names(ws, lay):
 # ---------------------------------------------------------------------------
 # 4) 对账比较：总工时 + 逐日；劳务公司"假/休/空白"不参与
 # ---------------------------------------------------------------------------
-def reconcile(ws, lay, labor, comp_map=None, log=None, tol=None, skip=None):
+def reconcile(ws, lay, labor, comp_map=None, log=None, tol=None, skip=None, ws_v=None):
     """
     读取(已填好的)总表每人每日工时，与 labor(合并后的劳务公司数据)对比。
     返回异常记录列表 anomalies。
     labor: {姓名: {"days":{日:h}, "total":h, "source":文件名}}
     comp_map: {姓名: 所属劳务公司}（用于解析公式列的缓存值）
     tol: 工时比对容差；None 用默认 TOL。
+    ws_v: 可选,同一总表的 data_only 副本;当可写簿里读到公式串时取其缓存值,
+          避免公式列(如出勤工时)被当 None 而丢数。
     """
     def _lg(m):
         if log:
             log(m)
+
+    def _cell_val(r, c):
+        """读单元格值;可写簿读到公式串(以 = 开头)时回退 data_only 副本的缓存值。"""
+        v = ws.cell(r, c).value
+        if isinstance(v, str) and v.startswith("=") and ws_v is not None:
+            return ws_v.cell(r, c).value
+        return v
 
     if tol is None:
         tol = TOL
@@ -446,10 +498,10 @@ def reconcile(ws, lay, labor, comp_map=None, log=None, tol=None, skip=None):
         comp = str(comp).strip() if comp is not None else ""
         days = {}
         for d, col in lay["day_cols"].items():
-            v = _to_num(ws.cell(r, col).value, skip=skip)
+            v = _to_num(_cell_val(r, col), skip=skip)
             if v is not None:
                 days[d] = v
-        total = _to_num(ws.cell(r, lay["work_col"]).value, skip=skip) if lay["work_col"] else None
+        total = _to_num(_cell_val(r, lay["work_col"]), skip=skip) if lay["work_col"] else None
         if total is None:
             total = round(sum(days.values()), 2)
         zong[nm] = {"days": days, "total": total, "comp": comp}
@@ -924,6 +976,9 @@ def run(target_path, source_paths, labor_paths, out_dir=None, log=None, opts=Non
     _lg("输出文件夹：%s" % out_dir)
 
     _lg("① 读取数据来源 ...")
+    # 读工时来源表前先探测"公式未刷新(读出 None)",命中则醒目提示,避免静默漏算
+    for _sp in ([source_paths] if isinstance(source_paths, str) else source_paths):
+        cc.warn_if_uncached(_sp, _lg, what="工时")
     src_data, days_seen = load_source(source_paths, log=_lg, opts=opts)
     _lg("   共 %d 人、覆盖 %d 天" % (len(src_data), len(days_seen)))
 
@@ -939,7 +994,11 @@ def run(target_path, source_paths, labor_paths, out_dir=None, log=None, opts=Non
         ws = wb["总表"] if "总表" in wb.sheetnames else wb.worksheets[0]
     stats = fill_zong(ws, src_data, log=_lg, opts=opts, path=target_path)
 
+    # data_only 副本:既用于解析"所属劳务公司"缓存值,也作对账时公式列的取值回退。
+    # 保持打开到对账结束,最后统一 close(见 finally)。
     comp_map = {}
+    wb_v = None
+    ws_v = None
     try:
         wb_v = openpyxl.load_workbook(target_path, data_only=True)
         if want_zong:
@@ -954,8 +1013,9 @@ def run(target_path, source_paths, labor_paths, out_dir=None, log=None, opts=Non
             v = ws_v.cell(r, lay["comp_col"]).value if lay["comp_col"] else None
             if v is not None and not (isinstance(v, str) and v.startswith("=")):
                 comp_map[nm] = str(v).strip()
-    except Exception:
-        pass
+    except Exception as e:
+        # 不再静默吞掉:告知失败原因,对账仍可继续(comp/公式列退回可写簿的原始值)
+        _lg("   ⚠ 读取总表缓存值失败(所属劳务公司/公式列将退回原始值)：%s" % e)
 
     base = os.path.splitext(os.path.basename(target_path))[0]
     filled_path = cc.out_path(out_dir, base, "_已填写", ".xlsx", ts=ts)
@@ -998,11 +1058,24 @@ def run(target_path, source_paths, labor_paths, out_dir=None, log=None, opts=Non
             _lg("   已应用 %d 组姓名配对" % applied)
 
     _lg("④ 对账比较 ...")
-    anomalies = reconcile(ws, stats["layout"], labor, comp_map=comp_map,
-                          log=_lg, tol=opts.tolerance, skip=opts.skip_set())
-
-    # ---- 汇总过程指标，评估可信度 ----
-    zong_names = _zong_names(ws, stats["layout"])
+    try:
+        # 传入 data_only 副本 ws_v:公式列(出勤工时等)在可写簿读到公式串时取缓存值
+        anomalies = reconcile(ws, stats["layout"], labor, comp_map=comp_map,
+                              log=_lg, tol=opts.tolerance, skip=opts.skip_set(),
+                              ws_v=ws_v)
+        # ---- 汇总过程指标，评估可信度 ----
+        zong_names = _zong_names(ws, stats["layout"])
+    finally:
+        # 成功/异常路径都关闭两个工作簿,避免句柄泄漏
+        try:
+            wb.close()
+        except Exception:
+            pass
+        if wb_v is not None:
+            try:
+                wb_v.close()
+            except Exception:
+                pass
     labor_names = set(labor.keys())
     matched_pairs = len(zong_names & labor_names)
     only_us = len(zong_names - labor_names)

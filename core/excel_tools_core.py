@@ -67,7 +67,22 @@ def _read_sheets(path):
         book = xlrd.open_workbook(path)
         out = []
         for sh in book.sheets():
-            rows = [sh.row_values(r) for r in range(sh.nrows)]
+            rows = []
+            for r in range(sh.nrows):
+                # 逐格判类型:日期格(XL_CELL_DATE)按 xldate 还原为 datetime,
+                # 否则原样取值——避免日期被写成 Excel 序列号(float)静默变数字
+                cells = []
+                for c in range(sh.ncols):
+                    cell = sh.cell(r, c)
+                    if cell.ctype == xlrd.XL_CELL_DATE:
+                        try:
+                            cells.append(xlrd.xldate.xldate_as_datetime(
+                                cell.value, book.datemode))
+                        except Exception:
+                            cells.append(cell.value)   # 还原失败退回原值
+                    else:
+                        cells.append(cell.value)
+                rows.append(cells)
             out.append((sh.name, rows))
         return out
     raise ExcelToolError("不支持的文件类型:%s" % ext)
@@ -176,12 +191,14 @@ def split_sheets(file, out_dir=None, log=None):
 
     outs = []
     if ext in (".xlsx", ".xlsm"):
-        names = openpyxl.load_workbook(file, read_only=True).sheetnames
+        # 只载入一次整簿(保留全部格式/绘图),之后每个目标表用 deepcopy 复用,避免 O(N²) 反复读盘
+        full = openpyxl.load_workbook(file)
+        names = list(full.sheetnames)
         if len(names) < 2:
+            full.close()
             raise ExcelToolError("该工作簿只有 1 个工作表,无需拆分")
         for target in names:
-            # 每个目标表:重新载入整簿(保留全部格式/绘图),删掉其余表再存
-            wb = openpyxl.load_workbook(file)
+            wb = _copy.deepcopy(full)      # 深拷贝脱离原簿,删掉其余表再存
             for sn in list(wb.sheetnames):
                 if sn != target:
                     del wb[sn]
@@ -192,6 +209,7 @@ def split_sheets(file, out_dir=None, log=None):
             wb.close()
             outs.append(of)
             log("导出工作表「%s」(含格式)→ %s" % (target, os.path.basename(of)))
+        full.close()
     else:
         sheets = _read_sheets(file)
         if len(sheets) < 2:
@@ -209,14 +227,27 @@ def split_sheets(file, out_dir=None, log=None):
     return {"out_files": outs, "out_dir": out_dir, "out_file": outs[0] if outs else ""}
 
 
-def _read_csv(path):
-    """读 CSV → [row,...]。尝试 utf-8-sig,失败退回 gbk。"""
+def _read_csv(path, log=None):
+    """读 CSV → [row,...]。尝试 utf-8-sig,失败退回 gbk。
+
+    gbk 几乎能"解码"任意字节,异编码会静默乱码,故解码成功后再抽样校验:
+    若出现替换符/大量不可见控制字符,log 提示编码可能不对,请人工核对。"""
+    log = log or (lambda *_: None)
     for enc in ("utf-8-sig", "gbk", "utf-8"):
         try:
             with open(path, "r", encoding=enc, newline="") as f:
-                return [row for row in csv.reader(f)]
+                rows = [row for row in csv.reader(f)]
         except (UnicodeDecodeError, UnicodeError):
             continue
+        # 抽样前若干单元格,统计替换符�与异常控制字符占比
+        sample = "".join(str(c) for r in rows[:50] for c in r)[:5000]
+        if sample:
+            bad = sum(1 for ch in sample
+                      if ch == "�" or (ord(ch) < 32 and ch not in "\t\n\r"))
+            if bad and bad / float(len(sample)) > 0.02:
+                log("警告:%s 以 %s 解码后疑似乱码,编码可能不是 utf-8/gbk,请核对"
+                    % (os.path.basename(path), enc))
+        return rows
     raise ExcelToolError("无法识别 CSV 编码:%s" % os.path.basename(path))
 
 
@@ -238,7 +269,7 @@ def convert(files, target, out_dir=None, log=None):
             wb = openpyxl.Workbook(); wb.remove(wb.active); used = set()
             if ext == ".csv":
                 ws = wb.create_sheet(_safe_sheet_title(stem, used))
-                _write_rows(ws, _read_csv(f))
+                _write_rows(ws, _read_csv(f, log))   # 传 log,乱码兜底可提示
             else:
                 for name, rows in _read_sheets(f):
                     _write_rows(wb.create_sheet(_safe_sheet_title(name, used)), rows)
@@ -276,6 +307,7 @@ def stack_tables(files, has_header=True, out_dir=None,
     wb = openpyxl.Workbook(); ws = wb.active; ws.title = "合并"
     header_written = False
     total_rows = 0
+    base_cols = None            # 首个非空表的列数,后续按它校验,防止结构不一致时静默错位
     for f in files:
         sheets = _read_sheets(f)
         if not sheets:
@@ -288,9 +320,21 @@ def stack_tables(files, has_header=True, out_dir=None,
             if not header_written:
                 ws.append(list(rows[0]) + ["来源文件"])
                 header_written = True
+                base_cols = len(rows[0])
             start = 1
+        elif base_cols is None:
+            base_cols = len(rows[0])
         for r in rows[start:]:
-            ws.append(list(r) + [os.path.basename(f)])
+            row = list(r)
+            # 列数与首表不一致→告警(不静默),并补齐/截断到基准列数保持对齐
+            if base_cols is not None and len(row) != base_cols:
+                log("警告:%s 某行列数为 %d,与首表 %d 列不一致,已补齐/截断对齐"
+                    % (os.path.basename(f), len(row), base_cols))
+                if len(row) < base_cols:
+                    row = row + [None] * (base_cols - len(row))
+                else:
+                    row = row[:base_cols]
+            ws.append(row + [os.path.basename(f)])
             total_rows += 1
         log("追加 %s:%d 行" % (os.path.basename(f), len(rows) - start))
     out_file = os.path.join(out_dir, out_name)

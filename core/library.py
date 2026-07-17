@@ -61,9 +61,11 @@ def _norm(s):
     return re.sub(r"\s+", "", str(s)) if s is not None else ""
 
 
-def scan_headers(path, max_rows=15, max_cells=60):
+def scan_headers(path, max_rows=15, max_cells=60, log=None):
     """轻量读取：只取每个子表前若干行的单元格文本，用于表头识别。
-    返回 {sheet_name: set(归一化文本)}。尽量快、低内存。"""
+    返回 {sheet_name: set(归一化文本)}。尽量快、低内存。
+    传 log 时，整表打不开(损坏/加密/被占用)会记一条告警而非静默返回空
+    ——否则文件读不出会被当成"无法识别"归入 unknown，用户无从分辨。"""
     ext = os.path.splitext(path)[1].lower()
     out = {}
     try:
@@ -100,8 +102,14 @@ def scan_headers(path, max_rows=15, max_cells=60):
                         if t:
                             toks.add(t)
                 out[sh.name] = toks
-    except Exception:
-        pass
+    except Exception as e:
+        # 整表读取失败:记告警(带异常类型),让"读不出"区别于"识别不了"。
+        if log:
+            try:
+                log("⚠ 无法读取 %s(%s: %s),将按未识别处理"
+                    % (os.path.basename(path), type(e).__name__, e))
+            except Exception:
+                pass
     return out
 
 
@@ -238,7 +246,11 @@ def _score_sheet(fname, tokens, ext):
             s += 12; sig.append("文件名含物料清单/KD")
     res["deliv_bom"] = (s, sig)
 
-    # deliv_supp —— 送货·供应商明细。唯一强特征"零部件代码"(其余表都用物料号/材料编号)。
+    # deliv_supp —— 送货·供应商明细。两条判据(取高者):
+    #   A) 经典表:唯一强特征"零部件代码";
+    #   B) SAP KD 表:用"下阶物料/物料"作编码,靠 供应商代码+供应商名称 双列定性,
+    #      并要求带 库区/结算/科室 等供应商表特征列。排除到料"送货计划"(文件名)与
+    #      劳务单(姓名),避免抢 arrival_plan / rec_labor。
     s, sig = 0, []
     if has("零部件代码"):
         s += 50; sig.append("含零部件代码")
@@ -246,6 +258,14 @@ def _score_sheet(fname, tokens, ext):
             s += 25; sig.append("含供应商代码/名称")
         if has("库区", "结算方式", "属性", "订单情况"):
             s += 12; sig.append("含库区/结算/属性列")
+    elif (has("供应商代码") and has("供应商名称") and not has("姓名")
+          and not fnhas("送货计划")):
+        # 供应商代码+名称双列同现,基本只出现在供应商明细/缺账表
+        s += 55; sig.append("含供应商代码+供应商名称双列")
+        if has("下阶物料", "下阶物料描述", "物料", "料号"):
+            s += 12; sig.append("含物料/下阶物料列")
+        if has("库区", "结算方式", "科室", "订单情况", "发货数量", "签收数量", "批次号"):
+            s += 12; sig.append("含库区/结算/发签数等供应商表列")
     res["deliv_supp"] = (s, sig)
 
     return res
@@ -254,25 +274,36 @@ def _score_sheet(fname, tokens, ext):
 ACCEPT_THRESHOLD = 50          # 最高分低于此值 → 未识别
 
 
-def classify(path):
-    """对一个文件分类。返回 dict：category / confidence / signals / sheet。"""
+def classify(path, log=None):
+    """对一个文件分类。返回 dict：category / confidence / signals / sheet。
+    传 log 时，文件整体读取失败会记告警(见 scan_headers)。"""
     ext = os.path.splitext(path)[1].lower()
     fname = os.path.basename(path)
-    sheets = scan_headers(path)
+    sheets = scan_headers(path, log=log)
     if not sheets:
         sheets = {"": set()}
     best = {"category": UNKNOWN, "score": 0, "signals": [], "sheet": ""}
+    # 每个类别记录其"最高分子表"——支持一个文件多子表分属不同功能(多标签)。
+    per_cat = {}          # cat -> {"score", "signals", "sheet"}
     for sname, tokens in sheets.items():
         scored = _score_sheet(fname, tokens, ext)
         for cat, (sc, sig) in scored.items():
             if sc > best["score"]:
                 best = {"category": cat, "score": sc, "signals": sig, "sheet": sname}
+            if cat not in per_cat or sc > per_cat[cat]["score"]:
+                per_cat[cat] = {"score": sc, "signals": sig, "sheet": sname}
     if best["score"] < ACCEPT_THRESHOLD:
         conf = int(best["score"])          # 记录原始分供参考
-        return {"category": UNKNOWN, "confidence": conf,
-                "signals": best["signals"], "sheet": best["sheet"]}
+        return {"category": UNKNOWN, "confidence": conf, "categories": [],
+                "signals": best["signals"], "sheet": best["sheet"], "sheets": {}}
+    # 所有达到阈值的类别都作为标签,按分数降序;主类别 = 最高分(=best,首位)。
+    labels = sorted((c for c, v in per_cat.items() if v["score"] >= ACCEPT_THRESHOLD),
+                    key=lambda c: per_cat[c]["score"], reverse=True)
+    # 各标签命中的子表名(供多子表分属不同功能时,读取器定位用)。
+    sheet_map = {c: per_cat[c]["sheet"] for c in labels}
     return {"category": best["category"], "confidence": min(100, int(best["score"])),
-            "signals": best["signals"], "sheet": best["sheet"]}
+            "signals": best["signals"], "sheet": best["sheet"],
+            "categories": labels, "sheets": sheet_map}
 
 
 # ---------------- 索引读写 ----------------
@@ -289,11 +320,27 @@ def _load_index():
 
 
 def _save_index(idx):
+    """原子写索引：临时文件 + os.replace，避免写一半坏掉索引。
+    失败返回 False 上报调用方（不再静默吞异常导致孤立文件）。"""
+    p = paths.library_index_path()
+    tmp = p + ".tmp"
     try:
-        with open(paths.library_index_path(), "w", encoding="utf-8") as f:
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(idx, f, ensure_ascii=False, indent=2)
+            f.flush()
+            try:
+                os.fsync(f.fileno())
+            except OSError:
+                pass
+        os.replace(tmp, p)
+        return True
     except Exception:
-        pass
+        try:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        except OSError:
+            pass
+        return False
 
 
 def _cat_dir(category):
@@ -310,17 +357,25 @@ def list_items(category=None):
     """列出库中条目（可按类别过滤）。返回列表，每项含 name/category/path/updated/size/confidence/signals。"""
     items = _load_index()["items"]
     if category:
-        items = [it for it in items if it.get("category") == category]
+        # 多标签:命中主类别或任一附加标签都算(旧条目无 categories 时回退到 category)。
+        items = [it for it in items
+                 if category in (it.get("categories") or [it.get("category")])]
     return items
 
 
+def _item_cats(it):
+    """条目的全部类别标签(兼容旧索引:无 categories 时用单个 category)。"""
+    return it.get("categories") or [it.get("category", UNKNOWN)]
+
+
 def counts():
-    """各类别条目数量 {category: n}，含 unknown。"""
+    """各类别条目数量 {category: n}，含 unknown。多标签文件在其每个标签下各计一次
+    (与"从数据库选择"里的可见性一致)。"""
     c = {cat: 0 for cat in CATEGORIES}
     c[UNKNOWN] = 0
     for it in _load_index()["items"]:
-        cat = it.get("category", UNKNOWN)
-        c[cat] = c.get(cat, 0) + 1
+        for cat in _item_cats(it):
+            c[cat] = c.get(cat, 0) + 1
     return c
 
 
@@ -357,7 +412,7 @@ def import_file(path, log=None):
     def _lg(m):
         if log:
             log(m)
-    info = classify(path)
+    info = classify(path, log=_lg)
     cat = info["category"]
     fname = os.path.basename(path)
     dst_dir = _cat_dir(cat)
@@ -379,20 +434,35 @@ def import_file(path, log=None):
     items = [it for it in items
              if not (it.get("category") == cat and it.get("name") == fname)]
 
-    shutil.copy2(path, dst)
+    # 原子落盘：先复制到 dst.part 再 os.replace 到 dst（同盘原子）。
+    # copy2 写一半失败时坏的是临时文件,不会污染 dst,索引也不会指向半截文件。
+    part = dst + ".part"
+    shutil.copy2(path, part)
+    os.replace(part, dst)
     try:
         size = os.path.getsize(dst)
     except Exception:
         size = 0
+    # categories: 所有达阈值的标签(含主类别,主类别在首位);多子表分属不同功能时
+    # 该文件会同时出现在各功能的"从数据库选择"里。sheets: 各标签命中的子表名。
+    cats = info.get("categories") or [cat]
     item = {
-        "name": fname, "category": cat, "path": dst,
+        "name": fname, "category": cat, "categories": cats, "path": dst,
         "updated": _now_str(), "size": size,
         "confidence": info["confidence"], "signals": info["signals"],
-        "sheet": info.get("sheet", ""), "origin": os.path.abspath(path),
+        "sheet": info.get("sheet", ""), "sheets": info.get("sheets", {}),
+        "origin": os.path.abspath(path),
     }
     items.append(item)
     idx["items"] = items
-    _save_index(idx)
+    # 索引写盘失败 → 删掉刚复制的归档文件,避免"文件在、索引无"的孤立残留;
+    # 抛错让上层(import_many)记录为导入失败,原件也不会被误删(见 library_page)。
+    if not _save_index(idx):
+        try:
+            os.remove(dst)
+        except OSError:
+            pass
+        raise IOError("索引保存失败，已回滚该文件的归档：%s" % fname)
     _lg("%s → 【%s】可信度 %d%s"
         % (fname, CATEGORY_TITLES.get(cat, cat), info["confidence"],
            "（替换旧版）" if replaced else ""))
@@ -448,6 +518,7 @@ def reclassify(category, name, new_category):
             except Exception:
                 return False
             it["category"] = new_category
+            it["categories"] = [new_category]   # 人工指定即权威,清掉自动多标签
             it["path"] = dst
             it["updated"] = _now_str()
             it["confidence"] = 100          # 人工确认

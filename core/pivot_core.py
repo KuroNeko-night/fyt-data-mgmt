@@ -32,6 +32,7 @@ from openpyxl.utils import get_column_letter
 
 from . import paths as _paths
 from . import settings as _settings
+from .common_core import warn_if_uncached   # 公式未刷新检测(读关键表前告警)
 
 L_VER   = "版本序号"
 L_CODE  = "材料编号"
@@ -370,7 +371,12 @@ def clean_rows_ex(rows):
         if _is_zero(g) or _is_blank(g):
             if KEEP_TOKEN not in str(nm if nm is not None else ""):
                 d2 += 1
-                # 采购量为0/空的行本不该有量; 理论到不了这里, 保留兜底不误报。
+                # 区分"公式未刷新"与"真实空/0": 最终采购数量为 None(非 0/非空串)且本行有有效编码,
+                # 极可能是公式未刷新读出 None, 不当真实空行静默删, 挑入 held 交人工确认。
+                if g is None and _is_valid_code(rec[F_CODE]):
+                    held.append({"rec": rec,
+                                 "reason": "最终采购数量为空(疑似公式未刷新)",
+                                 "has_code": True})
                 continue
         kept.append(rec)
     return kept, held, d1, d2
@@ -680,6 +686,9 @@ def _is_blank(v):
     return v is None or str(v).strip() == ""
 
 def _num(v):
+    # bool 是 int 子类, float(True)=1.0 会把 TRUE/FALSE 当 1/0 求和, 先排除
+    if isinstance(v, bool):
+        return None
     try:
         f = float(v)
         return int(f) if f == int(f) else f
@@ -1033,7 +1042,7 @@ def inject_pivots(xlsx_path, pivots):
 
 
 
-def process_workbook(in_path, out_path=None):
+def process_workbook(in_path, out_path=None, log=None):
     """
     复刻 RunProcess: 打开工作簿, 对每张数据表清洗并生成一张透视结果表.
     不改动原文件(输出到 out_path, 默认在原名后加 _透视结果).
@@ -1071,13 +1080,17 @@ def process_workbook(in_path, out_path=None):
         out_path = os.path.join(d, base + "_透视结果.xlsx")
     wb.save(out_path)
     # 3) 注入原生 OOXML 动态透视表(兼容 Excel/WPS); 失败则保留静态表
+    pivot_error = ""
     if pivot_jobs:
         try:
             inject_pivots(out_path, pivot_jobs)
-        except Exception:
-            pass
+        except Exception as e:
+            # 不再静默吞掉: 保留静态汇总值, 但至少报一句, 便于发现"透视表打不开却无人知"
+            pivot_error = "%s: %s" % (type(e).__name__, e)
+            if log:
+                log("⚠ 动态透视表注入失败(已保留静态汇总值): %s" % pivot_error)
     return {'processed': processed, 'skipped': skipped,
-            'sheets': detail, 'out': out_path}
+            'sheets': detail, 'out': out_path, 'pivot_error': pivot_error}
 
 
 def _safe_sheet_name(wb, base):
@@ -1407,7 +1420,7 @@ def _default_choices(plan):
     }
 
 
-def apply_plan(plan, choices, out_path):
+def apply_plan(plan, choices, out_path, log=None):
     """第二阶段: 按人工最终选择合并、聚类、聚合并写出透视结果与报告。
        choices 见 _default_choices。返回结果 dict(兼容旧结构 + review 明细)。"""
     import os, copy
@@ -1473,13 +1486,18 @@ def apply_plan(plan, choices, out_path):
         pivot_jobs = []
 
     out_wb.save(out_path)
+    pivot_error = ""
     if pivot_jobs:
         try:
             inject_pivots(out_path, pivot_jobs)
-        except Exception:
-            pass
+        except Exception as e:
+            # 不再静默吞掉: 保留静态汇总值, 但至少报一句异常摘要, 便于发现透视表未生成
+            pivot_error = "%s: %s" % (type(e).__name__, e)
+            if log:
+                log("⚠ 动态透视表注入失败(已保留静态汇总值): %s" % pivot_error)
 
     result = {'processed': processed, 'skipped': skipped, 'sheets': detail,
+              'pivot_error': pivot_error,
               'out': out_path, 'files': plan["files"], 'groups': groups,
               'total': total, 'd1': d1_sum, 'd2': d2_sum, 'audit': audit,
               'clean_rows': len(all_rows),
@@ -1531,12 +1549,16 @@ def run(in_paths, choices=None, out_dir=None, log=None):
         out_dir = _paths.resolve_output_dir("pivot", **st.output_kwargs())
     fname = "%s透视结果.xlsx" % _beijing_date()
     out_path = os.path.join(out_dir, fname)
+    # "最终采购数量"常是公式; 未刷新时 data_only 读出 None 会被 clean_rows 当空删除,
+    # 导致总计漏数且置信度检查不报警。读表前逐个文件醒目告警。
+    for p in in_paths:
+        warn_if_uncached(p, log, what="最终采购数量")
     log("① 分析 %d 个文件..." % len(in_paths))
     plan = analyze_workbooks(in_paths)
     if choices is None:
         choices = _default_choices(plan)
     log("② 应用选择、聚合并写出...")
-    res = apply_plan(plan, choices, out_path)
+    res = apply_plan(plan, choices, out_path, log=log)
     log("   分组 %d 项，合计 %s；可信度【%s】%d/100"
         % (res.get("groups", 0), _fmt_num(res.get("total", 0)),
            res.get("level", "?"), res.get("score", 0)))

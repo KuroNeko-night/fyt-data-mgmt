@@ -13,9 +13,13 @@
 """
 import os
 import json
+import shutil
+import logging
 
 from . import paths
 from . import version
+
+_log = logging.getLogger(__name__)
 
 DEFAULTS = {
     "output_mode": "unified",          # unified | beside | custom
@@ -40,12 +44,23 @@ class Settings(object):
 
     def load(self):
         p = paths.config_path()
+        # 区分"文件不存在"与"存在但损坏"：只有前者才迁移旧配置；
+        # 后者若也迁移，会用陈旧旧配置覆盖并悄悄丢弃用户当前设置。
+        if not os.path.exists(p):
+            self._migrate_legacy()   # 首次运行：尝试迁移旧配置
+            return
         try:
             with open(p, "r", encoding="utf-8") as f:
                 disk = json.load(f)
             self._merge(self._data, disk)
-        except Exception:
-            self._migrate_legacy()   # 首次运行：尝试迁移旧配置
+        except Exception as e:
+            # 配置存在但解析失败(如被写坏)：备份损坏文件、告警、回落默认，
+            # 不跑迁移(避免旧配置覆盖)，也不静默。
+            try:
+                shutil.copy2(p, p + ".bak")
+            except Exception:
+                pass
+            _log.warning("配置文件损坏，已备份为 %s.bak 并回落默认设置：%s", p, e)
 
     def _merge(self, base, over):
         for k, v in over.items():
@@ -67,11 +82,26 @@ class Settings(object):
             pass
 
     def save(self):
+        # 原子写：先落临时文件再 os.replace 到正式路径（同盘原子），
+        # 写一半被杀不会留半截 JSON 覆盖掉好配置。失败时 log,不完全静默。
+        p = paths.config_path()
+        tmp = p + ".tmp"
         try:
-            with open(paths.config_path(), "w", encoding="utf-8") as f:
+            with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(self._data, f, ensure_ascii=False, indent=2)
-        except Exception:
-            pass
+                f.flush()
+                try:
+                    os.fsync(f.fileno())
+                except OSError:
+                    pass
+            os.replace(tmp, p)
+        except Exception as e:
+            _log.warning("保存配置失败：%s", e)
+            try:
+                if os.path.exists(tmp):
+                    os.remove(tmp)
+            except OSError:
+                pass
 
     # ---- 便捷访问 ----
     def get(self, key, default=None):
