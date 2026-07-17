@@ -8,10 +8,11 @@
 """
 from PySide2.QtCore import (Qt, QEasingCurve, QTimer, QVariantAnimation, QSize,
                             QPropertyAnimation, QRect, QEvent)
-from PySide2.QtGui import QPixmap, QPainter, QColor
+from PySide2.QtGui import QPixmap, QPainter, QColor, QIcon
 from PySide2.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
                                QLabel, QPushButton, QStackedWidget, QApplication,
-                               QButtonGroup, QScrollArea, QFrame)
+                               QButtonGroup, QScrollArea, QFrame,
+                               QSystemTrayIcon, QMenu)
 
 from . import theme
 from . import icons
@@ -104,7 +105,11 @@ class MainWindow(QMainWindow):
         self._cur_key = None       # 当前页，用于判断是否需要切换动画
         self._xfade = None         # 交叉淡出叠层(QLabel)，防 GC
         self._xfade_anim = None
+        self._tray = None          # 系统托盘图标（防 GC）
+        self._force_quit = False   # True 时 closeEvent 放行真正退出
+        self._tray_tip_shown = False
         self._build()
+        self._build_tray()
         self.switch_to("home")
         QTimer.singleShot(300, self._maybe_onboard)
 
@@ -418,3 +423,59 @@ class MainWindow(QMainWindow):
             dlg.exec_()
             self.settings.set("onboarding_seen", True)
             self.settings.save()
+
+    # ---------- 系统托盘 ----------
+    def _build_tray(self):
+        """建系统托盘图标 + 右键菜单。系统不支持托盘时静默跳过（关闭即退出）。"""
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            return
+        from core import paths
+        import os
+        icon = QIcon(os.path.join(paths.assets_dir(), "icon.ico"))
+        if icon.isNull():
+            icon = self.windowIcon()
+        self._tray = QSystemTrayIcon(icon, self)
+        self._tray.setToolTip(version.APP_NAME)
+        menu = QMenu()
+        act_show = menu.addAction("打开主窗口")
+        act_show.triggered.connect(self._restore_from_tray)
+        menu.addSeparator()
+        act_quit = menu.addAction("退出程序")
+        act_quit.triggered.connect(self._quit_app)
+        self._tray.setContextMenu(menu)
+        self._tray.activated.connect(self._on_tray_activated)
+        self._tray.show()
+
+    def _on_tray_activated(self, reason):
+        # 左键单击/双击托盘图标 → 还原窗口
+        if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):
+            self._restore_from_tray()
+
+    def _restore_from_tray(self):
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    def _quit_app(self):
+        """真正退出：放行 closeEvent 并收起托盘图标。"""
+        self._force_quit = True
+        if self._tray is not None:
+            self._tray.hide()
+        QApplication.quit()
+
+    def closeEvent(self, event):
+        """点关闭按钮：按设置最小化到托盘；托盘不可用或已选退出则正常关闭。"""
+        if (self._force_quit or self._tray is None
+                or not self.settings.get("minimize_to_tray", True)):
+            if self._tray is not None:
+                self._tray.hide()
+            super(MainWindow, self).closeEvent(event)
+            return
+        event.ignore()
+        self.hide()
+        if not self._tray_tip_shown:                 # 首次隐藏时提示一次去哪了
+            self._tray_tip_shown = True
+            self._tray.showMessage(
+                version.APP_NAME, "程序已最小化到托盘，仍在后台运行。\n"
+                "点击托盘图标可重新打开，右键可退出。",
+                QSystemTrayIcon.Information, 4000)

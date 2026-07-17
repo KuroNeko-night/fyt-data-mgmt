@@ -103,6 +103,11 @@ class SettingsPage(BasePage):
         self.cb_donedlg.toggled.connect(
             lambda on: self._save_bool("show_done_dialog", on))
         v.addWidget(self.cb_donedlg)
+        self.cb_tray = QCheckBox("点关闭按钮时最小化到托盘（而非退出程序）")
+        self.cb_tray.setChecked(bool(self.settings.get("minimize_to_tray", True)))
+        self.cb_tray.toggled.connect(
+            lambda on: self._save_bool("minimize_to_tray", on))
+        v.addWidget(self.cb_tray)
         return card
 
     def _card_storage(self):
