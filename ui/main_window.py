@@ -7,7 +7,7 @@
 兼容 Windows 7 + Python 3.8 + PySide2。
 """
 from PySide2.QtCore import (Qt, QEasingCurve, QTimer, QVariantAnimation, QSize,
-                            QPropertyAnimation, QRect, QEvent)
+                            QPropertyAnimation, QRect, QEvent, Signal)
 from PySide2.QtGui import QPixmap, QPainter, QColor, QIcon
 from PySide2.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
                                QLabel, QPushButton, QStackedWidget, QApplication,
@@ -94,6 +94,9 @@ class _CrossFade(QWidget):
 
 
 class MainWindow(QMainWindow):
+    # 监听线程收到"再次启动"事件后发此信号；跨线程 → 队列连接回 GUI 线程还原窗口
+    _show_requested = Signal()
+
     def __init__(self):
         super(MainWindow, self).__init__()
         self.setWindowTitle(version.full_title())
@@ -108,6 +111,9 @@ class MainWindow(QMainWindow):
         self._tray = None          # 系统托盘图标（防 GC）
         self._force_quit = False   # True 时 closeEvent 放行真正退出
         self._tray_tip_shown = False
+        self._show_event = None     # 单实例唤醒事件句柄
+        self._show_thread = None    # 等待唤醒的监听线程
+        self._show_requested.connect(self._restore_from_tray)
         self._build()
         self._build_tray()
         self.switch_to("home")
@@ -424,6 +430,35 @@ class MainWindow(QMainWindow):
             self.settings.set("onboarding_seen", True)
             self.settings.save()
 
+    # ---------- 单实例唤醒 ----------
+    def attach_show_event(self, handle):
+        """接入单实例具名事件：起一个守护线程等它被 SetEvent，收到即还原窗口。
+
+        再次启动本程序时，那个新进程会 SetEvent 后自杀（见 main._single_instance_guard），
+        本线程随即唤醒、发信号回 GUI 线程把窗口从托盘/最小化拉回前台。
+        句柄为空（非 Windows/建事件失败）时不起线程，不影响其余功能。
+        """
+        if not handle:
+            return
+        import threading
+        self._show_event = handle
+        t = threading.Thread(target=self._wait_show_loop, args=(handle,),
+                             daemon=True)
+        self._show_thread = t
+        t.start()
+
+    def _wait_show_loop(self, handle):
+        import ctypes
+        from ctypes import wintypes
+        k = ctypes.WinDLL("kernel32", use_last_error=True)
+        k.WaitForSingleObject.restype = wintypes.DWORD
+        k.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        WAIT_OBJECT_0 = 0x0
+        while not self._force_quit:
+            r = k.WaitForSingleObject(handle, 500)   # 500ms 轮询，便于退出时收线程
+            if r == WAIT_OBJECT_0:
+                self._show_requested.emit()          # 队列连接 → GUI 线程还原
+
     # ---------- 系统托盘 ----------
     def _build_tray(self):
         """建系统托盘图标 + 右键菜单。系统不支持托盘时静默跳过（关闭即退出）。"""
@@ -452,6 +487,9 @@ class MainWindow(QMainWindow):
             self._restore_from_tray()
 
     def _restore_from_tray(self):
+        # 清掉最小化标志再显示，避免"还原后仍停在最小化"；然后置顶抢焦点
+        self.setWindowState((self.windowState() & ~Qt.WindowMinimized)
+                            | Qt.WindowActive)
         self.showNormal()
         self.raise_()
         self.activateWindow()
