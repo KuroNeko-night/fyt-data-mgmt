@@ -16,9 +16,9 @@ PUBLISHER = "KuroNeko-night"
 COPYRIGHT = "Copyright (c) 2026 KuroNeko-night"
 
 # ---------------- 版本号（语义化 主.次.修订）----------------
-VERSION = "1.0.5"
-VERSION_TUPLE = (1, 0, 5)
-BUILD_DATE = "2026-07-16"
+VERSION = "1.0.6"
+VERSION_TUPLE = (1, 0, 6)
+BUILD_DATE = "2026-07-17"
 
 # ---------------- 更新检查 ----------------
 # 更新模块优先读取 UPDATE_MANIFEST_URL；留空则由下面的 OWNER/REPO 自动拼 GitHub latest 地址。
