@@ -96,6 +96,10 @@ _SVG = {
     "excel":                           # Excel：表格网格
         '<rect x="4" y="4" width="16" height="16" rx="2" {p}/>'
         '<path d="M4 10h16M4 15h16M10 4v16M15 4v16" {p}/>',
+    "compare":                          # 表格比对：两张并排的表 + 中间对比箭头
+        '<rect x="3" y="4" width="7.5" height="16" rx="1.5" {p}/>'
+        '<rect x="13.5" y="4" width="7.5" height="16" rx="1.5" {p}/>'
+        '<path d="M5 9h3.5M5 12.5h3.5M15.5 9h3.5M15.5 12.5h3.5" {p}/>',
 }
 
 _cache = {}

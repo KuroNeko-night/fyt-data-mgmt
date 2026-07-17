@@ -96,6 +96,10 @@ def main():
     if not is_first:
         return                            # 已唤醒运行中的实例，本进程直接退出
 
+    # 尽早挂崩溃兜底：让早期 import / QApplication 构造阶段的异常也能写日志,
+    # 不再白屏退出。（_write_crash 内部惰性 import，此处提前设置无副作用。）
+    sys.excepthook = _write_crash
+
     _setup_high_dpi()
     from PySide2.QtWidgets import QApplication
     from PySide2.QtGui import QFont, QIcon
@@ -103,7 +107,6 @@ def main():
     from ui.main_window import MainWindow
     from core import version, settings as settings_mod, paths
 
-    sys.excepthook = _write_crash
     app = QApplication(sys.argv)
     app._mutex = mutex                    # 持有句柄至进程结束，供更新安装器识别
     app._show_event = show_event          # 同上，防句柄被回收

@@ -16,6 +16,7 @@ from PySide2.QtWidgets import (QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
 
 from .base_page import BasePage
 from ..widgets.drop_area import DropArea
+from ..worker import Worker
 from .. import theme
 from core import library, paths
 
@@ -217,8 +218,36 @@ class LibraryPage(BasePage):
         files = [f for f in files if os.path.exists(f)]
         if not files:
             return
-        items = library.import_many(files)
-        self._refresh()
+        if getattr(self, "_importing", False):
+            return                       # 导入进行中：忽略重复投放，防叠加
+        # import_many 要用 openpyxl 扫表头，大批量会卡 GUI 线程,故移到后台线程跑;
+        # 导入期间禁用拖放/按钮并提示"导入中…",完成后恢复。
+        self._importing = True
+        self._set_import_busy(True)
+        w = Worker(lambda log=None: library.import_many(files))
+        w.sig_done.connect(lambda items: self._on_imported(files, items))
+        w.sig_error.connect(self._on_import_error)
+        self._import_worker = w          # 防 GC
+        w.start()
+
+    def _set_import_busy(self, on):
+        """导入中禁用交互(拖放/操作按钮),完成后恢复。"""
+        self.drop.setEnabled(not on)
+        for b in (self.btn_all, self.btn_reclass, self.btn_remove, self.btn_open):
+            b.setEnabled(not on)
+        if on:
+            self.summary.setText("导入中…请稍候")
+
+    def _on_import_error(self, msg, tb):
+        self._importing = False
+        self._set_import_busy(False)
+        self._refresh(); self._on_sel()
+        self.warn("导入未完成", "导入时遇到问题：%s" % msg)
+
+    def _on_imported(self, files, items):
+        self._importing = False
+        self._set_import_busy(False)
+        self._refresh(); self._on_sel()
         lines, unknown = [], 0
         for it in items:
             if it["category"] == library.UNKNOWN:
@@ -232,6 +261,15 @@ class LibraryPage(BasePage):
         if unknown:
             msg += "\n\n其中 %d 张未能识别，已放入“未识别”，可稍后手动归类。" % unknown
         self.info("导入完成", msg)
+        # 仅统计成功归档项的来源路径：import_many 返回 items,每项的 origin 是原件
+        # 绝对路径;归档失败的文件不在 items 里,其原件绝不能删,否则丢数据。
+        archived = set()
+        for it in items:
+            org = it.get("origin")
+            if org:
+                archived.add(os.path.normcase(os.path.abspath(org)))
+        if not archived:
+            return
         ret = QMessageBox.question(
             self, "删除原文件？",
             "表格已复制进数据库。是否删除原始文件？\n（删除后原位置将不再保留，数据库中的副本不受影响）",
@@ -239,6 +277,9 @@ class LibraryPage(BasePage):
         if ret == QMessageBox.Yes:
             gone = 0
             for f in files:
+                # 只删成功归档的原件（按 origin 匹配），跳过归档失败的文件
+                if os.path.normcase(os.path.abspath(f)) not in archived:
+                    continue
                 try:
                     os.remove(f); gone += 1
                 except Exception:

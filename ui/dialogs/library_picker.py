@@ -61,8 +61,13 @@ class LibraryPicker(QDialog):
 
     def _load(self):
         self._items = []
+        seen = set()                       # 多标签文件在多类别 picker 里只列一次(按路径去重)
         for cat in self._cats:
             for it in library.list_items(cat):
+                key = it.get("path") or (it.get("category"), it.get("name"))
+                if key in seen:
+                    continue
+                seen.add(key)
                 self._items.append(it)
         self._items.sort(key=lambda x: x.get("updated", ""), reverse=True)
         for it in self._items:

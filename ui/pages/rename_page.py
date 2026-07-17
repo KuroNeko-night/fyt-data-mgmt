@@ -246,7 +246,14 @@ class RenamePage(BasePage):
                                 QMessageBox.Yes | QMessageBox.No,
                                 QMessageBox.Yes) != QMessageBox.Yes:
             return
-        n, failed, undo_map = rename_core.apply_plan(plan)
+        # 执行期间禁用按钮防重复点击(量大时同步执行会卡顿);
+        # 结束后由末尾 _refresh_preview→_update_apply_state 重算启用态,出错也恢复。
+        self.btn_apply.setEnabled(False)
+        try:
+            n, failed, undo_map = rename_core.apply_plan(plan)
+        except Exception:
+            self._refresh_preview()          # 恢复按钮启用态
+            raise
         self._undo_map = undo_map if undo_map else None
         self.btn_undo.setEnabled(bool(self._undo_map))
         # 用新名更新文件列表(成功项)，失败/未变项保留原路径

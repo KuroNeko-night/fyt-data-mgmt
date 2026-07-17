@@ -30,6 +30,7 @@ from .pages.invoice_page import InvoicePage
 from .pages.text_page import TextPage
 from .pages.pdf_page import PdfPage
 from .pages.excel_tools_page import ExcelToolsPage
+from .pages.compare_page import ComparePage
 from .pages.settings_page import SettingsPage
 from .pages.about_page import AboutPage
 from core import version, settings as settings_mod
@@ -51,6 +52,7 @@ NAV = [
     ("工具箱", "文本工具箱", "text"),
     ("工具箱", "PDF 工具箱", "pdf"),
     ("工具箱", "Excel 工具箱", "excel"),
+    ("工具箱", "表格比对", "compare"),
     ("系统", "设置", "settings"),
     ("系统", "关于 / 更新", "about"),
 ]
@@ -299,7 +301,7 @@ class MainWindow(QMainWindow):
                  "delivery": DeliveryPage, "library": LibraryPage,
                  "rename": RenamePage, "currency": CurrencyPage,
                  "text": TextPage, "pdf": PdfPage, "excel": ExcelToolsPage,
-                 "invoice": InvoicePage,
+                 "compare": ComparePage, "invoice": InvoicePage,
                  "settings": SettingsPage, "about": AboutPage}
         for _, _, key in NAV:
             page = ctors[key](self)
@@ -387,6 +389,7 @@ class MainWindow(QMainWindow):
         if self._xfade_anim is not None:
             try:
                 self._xfade_anim.stop()
+                self._xfade_anim.deleteLater()   # 长会话切页累积:旧动画对象一并回收
             except Exception:
                 pass
         if self._xfade is not None:

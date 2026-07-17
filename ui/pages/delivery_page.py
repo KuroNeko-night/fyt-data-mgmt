@@ -6,7 +6,7 @@
 """
 from PySide2.QtCore import Qt
 from PySide2.QtWidgets import (QFrame, QVBoxLayout, QHBoxLayout, QLabel,
-                               QRadioButton, QButtonGroup)
+                               QRadioButton, QButtonGroup, QComboBox)
 
 from .base_page import BasePage
 from ..widgets.file_zone import FileZone
@@ -34,9 +34,19 @@ class DeliveryPage(BasePage):
                               "一张往期做好的送货计划，选 1 个；不传则 CASE/班组 留空。",
                               multi=False, library_cats=["arrival_plan"],
                               detail="按物料编码带出 CASE / CASE托数 / 班组。自动跳过透视汇总表。")
-        for z in (self.z_list, self.z_sup, self.z_ref):
-            z.changed.connect(self._refresh)
-            layout.addWidget(z)
+        # 子表下拉:多子表文件(如 SAP 导出的 KD 清单含 Sheet1/BOM/发运清单…)默认
+        # 只读第一子表未必是想要的表,故给物料清单/供应商明细各配一个"工作表"下拉。
+        self.cb_list = self._sheet_combo()
+        self.cb_sup = self._sheet_combo()
+        self.z_list.changed.connect(lambda ps: self._fill_sheets(self.cb_list, ps))
+        self.z_sup.changed.connect(lambda ps: self._fill_sheets(self.cb_sup, ps))
+
+        layout.addWidget(self.z_list)
+        layout.addWidget(self._sheet_row("物料清单工作表", self.cb_list))
+        layout.addWidget(self.z_sup)
+        layout.addWidget(self._sheet_row("供应商明细工作表", self.cb_sup))
+        self.z_ref.changed.connect(self._refresh)
+        layout.addWidget(self.z_ref)
 
         layout.addWidget(self._order_card())
 
@@ -47,6 +57,35 @@ class DeliveryPage(BasePage):
         layout.addWidget(self.panel)
         self._out_dir = ""
         self._plan = ""
+        self._refresh()
+
+    def _sheet_combo(self):
+        cb = QComboBox()
+        cb.addItem("自动（默认第一个工作表）", None)
+        cb.setEnabled(False)
+        return cb
+
+    def _sheet_row(self, label, cb):
+        """把"工作表"标签+下拉包成一行,紧贴其上方的文件区。"""
+        row = QFrame()
+        h = QHBoxLayout(row)
+        h.setContentsMargins(14, 0, 14, 4); h.setSpacing(8)
+        lb = QLabel(label + "："); lb.setObjectName("Hint")
+        h.addWidget(lb); h.addWidget(cb, 1)
+        return row
+
+    def _fill_sheets(self, cb, paths):
+        """文件选定后填充其子表列表;单表或读失败则只留"自动"项并禁用。"""
+        cb.blockSignals(True)
+        cb.clear()
+        cb.addItem("自动（默认第一个工作表）", None)
+        names = delivery_core.list_sheets(paths[0]) if paths else []
+        for nm in names:
+            cb.addItem(nm, nm)
+        # 仅在有 2 个及以上子表时才让用户选;单表无需选
+        cb.setEnabled(len(names) >= 2)
+        cb.setCurrentIndex(0)
+        cb.blockSignals(False)
         self._refresh()
 
     def _order_card(self):
@@ -102,8 +141,10 @@ class DeliveryPage(BasePage):
         ot = self._order_type()
         self.btn_open.setEnabled(False)
         self.btn_plan.setEnabled(False)
+        sa = self.cb_list.currentData()      # None=自动(第一表);否则用户所选子表名
+        sb = self.cb_sup.currentData()
         self.launch(
-            lambda log: delivery_core.run(f1, f2, log=log,
+            lambda log: delivery_core.run(f1, f2, sheet_a=sa, sheet_b=sb, log=log,
                                           order_type=ot, ref_plan=ref_plan),
             self.panel, self._done)
 
