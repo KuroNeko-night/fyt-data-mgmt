@@ -32,7 +32,10 @@ STEPS = [
 ]
 
 
-class OnboardingDialog(QDialog):
+from ..animations import AnimatedDialog
+
+
+class OnboardingDialog(AnimatedDialog):
     def __init__(self, parent=None):
         super(OnboardingDialog, self).__init__(parent)
         self.setWindowTitle("欢迎")

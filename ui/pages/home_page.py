@@ -62,18 +62,25 @@ class HomePage(BasePage):
 
     def _hero(self):
         card = QFrame(); card.setObjectName("HeroCard")
-        h = QHBoxLayout(card); h.setContentsMargins(20, 18, 20, 18); h.setSpacing(16)
+        h = QHBoxLayout(card); h.setContentsMargins(24, 22, 24, 22); h.setSpacing(20)
         logo = QLabel()
         p = os.path.join(paths.assets_dir(), "logo_128.png")
         if os.path.exists(p):
-            logo.setPixmap(QPixmap(p).scaled(76, 76, Qt.KeepAspectRatio,
+            logo.setPixmap(QPixmap(p).scaled(84, 84, Qt.KeepAspectRatio,
                                              Qt.SmoothTransformation))
         h.addWidget(logo, 0, Qt.AlignTop)
-        col = QVBoxLayout(); col.setSpacing(4)
+        col = QVBoxLayout(); col.setSpacing(5)
+        top = QHBoxLayout(); top.setSpacing(10)
         name = QLabel(version.APP_NAME); name.setObjectName("HeroTitle")
-        col.addWidget(name)
-        ver = QLabel("版本 " + version.version_str()); ver.setObjectName("Hint")
-        col.addWidget(ver)
+        top.addWidget(name, 0, Qt.AlignVCenter)
+        ver = QLabel("v" + version.version_str()); ver.setObjectName("HeroPill")
+        ver.setAlignment(Qt.AlignCenter)
+        top.addWidget(ver, 0, Qt.AlignVCenter)
+        top.addStretch(1)
+        col.addLayout(top)
+        rule = QFrame(); rule.setObjectName("HeroRule"); rule.setFixedHeight(3)
+        rule.setFixedWidth(46)
+        col.addWidget(rule)
         intro = QLabel("面向峰运通业务打造：考勤填报、工时对账、到料明细、透视表、"
                        "采购对账、送货计划六大核心业务，另配实用工具箱；"
                        "输出统一归档，自带数据库自动分类管理各类表格。")

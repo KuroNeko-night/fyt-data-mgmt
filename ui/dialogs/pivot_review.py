@@ -9,29 +9,27 @@
 返回 choices，喂给 pivot_core.run。
 兼容 Windows 7 + Python 3.8 + PySide2。
 """
-from PySide2.QtCore import Qt
-from PySide2.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+from PySide2.QtCore import Qt, Signal
+from PySide2.QtWidgets import (QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
                                QTabWidget, QWidget, QTableWidget, QTableWidgetItem,
                                QHeaderView, QCheckBox, QAbstractItemView, QScrollArea,
                                QComboBox, QGridLayout)
 
-from .. import theme
 
+class PivotReviewPanel(QWidget):
+    """销售表透视人工复核 —— 右侧面板部件（原对话框正文）。
+    确认后 accepted 带回 choices；取消发 cancelled。"""
+    accepted = Signal(object)
+    cancelled = Signal()
 
-class PivotReviewDialog(QDialog):
     def __init__(self, plan, parent=None):
-        super(PivotReviewDialog, self).__init__(parent)
+        super(PivotReviewPanel, self).__init__(parent)
         self.plan = plan
-        self.setWindowTitle("人工复核 —— 销售表透视")
-        self.setModal(True)
-        self.setStyleSheet(theme.stylesheet())
-        self.setSizeGripEnabled(True)          # 右下角可拖拽缩放
         self._sheet_cbs = {}     # id -> QCheckBox
         self._held_cbs = {}      # (sid, ridx) -> QCheckBox
         self._unit_combos = {}   # gk -> (QComboBox, default)  单位人工改选
         self._spec_combos = {}   # gk -> (QComboBox, default)  规格人工改选
         self._build()
-        theme.fit_dialog(self, 760, 560)
 
     def _build(self):
         lay = QVBoxLayout(self)
@@ -49,8 +47,10 @@ class PivotReviewDialog(QDialog):
 
         row = QHBoxLayout()
         row.addStretch(1)
-        cancel = QPushButton("取消"); cancel.setObjectName("Ghost"); cancel.clicked.connect(self.reject)
-        ok = QPushButton("按此生成"); ok.setObjectName("Primary"); ok.clicked.connect(self.accept)
+        cancel = QPushButton("取消"); cancel.setObjectName("Ghost")
+        cancel.clicked.connect(self.cancelled.emit)
+        ok = QPushButton("按此生成"); ok.setObjectName("Primary")
+        ok.clicked.connect(lambda: self.accepted.emit(self.choices()))
         row.addWidget(cancel); row.addWidget(ok)
         lay.addLayout(row)
 

@@ -9,31 +9,30 @@
 确认后 result_rows() 返回写表用的行 dict 列表 + 最终月份。
 兼容 Windows 7 + Python 3.8 + PySide2。
 """
-from PySide2.QtCore import Qt
-from PySide2.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
+from PySide2.QtCore import Qt, Signal
+from PySide2.QtWidgets import (QVBoxLayout, QHBoxLayout, QLabel, QWidget,
                                QLineEdit, QCheckBox, QPushButton, QFrame,
                                QTableWidget, QTableWidgetItem, QHeaderView,
                                QAbstractItemView)
-
-from .. import theme
 
 COLS = ["✓", "发票号码", "开票日期", "销售方名称", "费用项目",
         "不含税金额", "税额", "价税合计", "税率/征收方式", "备注"]
 _READONLY = {1, 2, 5, 6, 7}       # 只读列索引（机器可靠字段）
 
 
-class InvoiceReviewDialog(QDialog):
+class InvoiceReviewPanel(QWidget):
+    """增值税发票统计人工复核 —— 右侧面板部件（原对话框正文）。
+    确认后 confirmed 带回 (rows, ym)；取消发 cancelled。"""
+    confirmed = Signal(object, object)
+    cancelled = Signal()
+
     def __init__(self, items, ym, parent=None):
-        super(InvoiceReviewDialog, self).__init__(parent)
-        self.setWindowTitle("人工复核 —— 增值税发票统计")
-        self.setModal(True)
-        self.setStyleSheet(theme.stylesheet())
+        super(InvoiceReviewPanel, self).__init__(parent)
         self._all = items
         self._ym = ym
         self._rows = []
         self._build()
         self._reload()
-        theme.fit_dialog(self, 1080, 600)
 
     def _build(self):
         lay = QVBoxLayout(self)
@@ -76,11 +75,15 @@ class InvoiceReviewDialog(QDialog):
         self.lbl_sum = QLabel(""); self.lbl_sum.setObjectName("Hint")
         row.addWidget(self.lbl_sum); row.addStretch(1)
         cancel = QPushButton("取消"); cancel.setObjectName("Ghost")
-        cancel.clicked.connect(self.reject)
+        cancel.clicked.connect(self.cancelled.emit)
         ok = QPushButton("生成汇总表"); ok.setObjectName("Primary")
-        ok.clicked.connect(self.accept)
+        ok.clicked.connect(self._on_ok)
         row.addWidget(cancel); row.addWidget(ok)
         lay.addLayout(row)
+
+    def _on_ok(self):
+        rows, ym = self.result_rows()
+        self.confirmed.emit(rows, ym)
 
     def _reload(self):
         """按当前月份/普通票开关，重新过滤并填表。"""

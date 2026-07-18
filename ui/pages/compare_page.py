@@ -14,7 +14,7 @@ from ..animations import AnimatedComboBox as QComboBox
 from .base_page import BasePage
 from ..widgets.file_zone import FileZone
 from ..widgets.run_panel import RunPanel
-from ..dialogs.compare_review import CompareReviewDialog
+from ..dialogs.compare_review import CompareResultPanel
 from core import compare_core as cc
 
 _XL_FILTER = "Excel 文件 (*.xlsx *.xlsm);;所有文件 (*.*)"
@@ -121,13 +121,15 @@ class ComparePage(BasePage):
             % (cn["diffs"], cn["only_a"], cn["only_b"]))
         self.btn_open.setEnabled(bool(self._out_dir))
         self.btn_report.setEnabled(bool(self._report))
-        # 弹窗展示明细
+        # 结果明细在右侧面板展示（不再弹窗打断）
         try:
-            CompareReviewDialog(res, self).exec_()
+            panel = CompareResultPanel(res)
+            panel.closed.connect(self.main.close_panel)
+            self.main.open_panel(panel, "比对结果")
         except Exception as e:
-            self.panel.log_line("结果弹窗打开失败(报告已生成):%s" % e)
+            self.panel.log_line("结果面板打开失败(报告已生成):%s" % e)
         self.notify_done(self._out_dir, "比对完成",
-                         "差异 %d 处。\n报告:%s" % (cn["diffs"], self._report))
+                         "差异 %d 处。报告：%s" % (cn["diffs"], self._report))
 
     def _open(self):
         self.open_folder(self._out_dir)

@@ -11,9 +11,10 @@ import traceback
 
 from PySide2.QtCore import Qt
 from PySide2.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-                               QScrollArea, QFrame, QMessageBox)
+                               QScrollArea, QFrame)
 
 from ..worker import Worker
+from ..widgets.notice_bar import NoticeBar
 from core import settings as settings_mod
 
 
@@ -51,6 +52,10 @@ class BasePage(QWidget):
         else:
             head_row.addWidget(head_col, 1)   # 不限宽：标题头铺满整行
         outer.addLayout(head_row)
+
+        # 页内通知条：结果/完成/错误在此就地显示,不再弹窗打断
+        self.notice = NoticeBar()
+        outer.addWidget(self.notice)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -131,14 +136,13 @@ class BasePage(QWidget):
         panel.busy(False)
         friendly = self._friendly_error(msg)
         panel.set_status("err", friendly)
-        # 技术细节写进折叠日志与崩溃日志文件，不在弹窗里堆给客户
-        panel.log_line("【错误】" + msg)
+        panel.log_line("[错误] " + msg)
         panel.log_line(tb)
-        panel.show_log(True)                 # 出错时自动展开详细信息
+        panel.show_log(True)
         self._save_crash(tb)
-        QMessageBox.warning(
-            self, "处理未完成",
-            "%s\n\n如需排查，可点面板上的“详细信息”查看，或联系技术支持。" % friendly)
+        # 不再弹窗打断：通知条就地显示错误摘要，详情在日志里
+        self.notice.show_notice("err",
+            "%s  (可点下方[详细信息]查看，或联系技术支持)" % friendly)
 
     def _friendly_error(self, msg):
         """把常见异常翻译成客户能懂的一句话。"""
@@ -179,10 +183,18 @@ class BasePage(QWidget):
         if st.get("auto_open_output", True):
             self.open_folder(out_dir)
         if st.get("show_done_dialog", True):
-            QMessageBox.information(self, title, text)
+            # 结果就地通知,附"打开输出文件夹"操作;不再弹窗打断
+            actions = None
+            if out_dir:
+                actions = [("打开输出文件夹", lambda d=out_dir: self.open_folder(d))]
+            self.notice.show_notice("ok", text, actions=actions)
 
     def info(self, title, text):
-        QMessageBox.information(self, title, text)
+        """页内信息提示（替代 information 弹窗）。title 并入正文一行显示。"""
+        body = ("%s：%s" % (title, text)) if title else text
+        self.notice.show_notice("info", body)
 
     def warn(self, title, text):
-        QMessageBox.warning(self, title, text)
+        """页内警告提示（替代 warning 弹窗）。"""
+        body = ("%s：%s" % (title, text)) if title else text
+        self.notice.show_notice("warn", body)

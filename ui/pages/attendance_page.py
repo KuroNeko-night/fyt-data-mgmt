@@ -59,12 +59,15 @@ class AttendancePage(BasePage):
             self.panel.set_status("idle", "还需选择：" + "、".join(need))
 
     def _run(self):
-        # 生成前弹人工确认：白/夜班标准工时、夜班判定、加班口径
-        from ..dialogs.attendance_review import AttendanceReviewDialog
-        dlg = AttendanceReviewDialog(self.opts, self)
-        if not dlg.exec_():
-            return                       # 用户取消，不生成
-        opts = dlg.apply_to_opts()
+        # 生成前在右侧面板确认计算口径（不再弹窗打断）
+        from ..panel_widgets.attendance_form import AttendanceFormWidget
+        form = AttendanceFormWidget(self.opts)
+        form.accepted.connect(self._do_run)
+        form.cancelled.connect(self.main.close_panel)
+        self.main.open_panel(form, "确认口径 · 考勤填报")
+
+    def _do_run(self, opts):
+        self.main.close_panel()
         self.panel.clear_log()
         targets = self.z_tgt.get()
         sources = self.z_src.get()

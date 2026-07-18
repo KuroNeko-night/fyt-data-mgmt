@@ -71,26 +71,33 @@ class ReconcilePage(BasePage):
                     self.panel, self._done)
 
     def _run_review(self):
-        """先只读分析，弹出人工确认对话框收集结构纠正与姓名配对，再对账。"""
-        from ..dialogs.reconcile_review import ReconcileReviewDialog
+        """先只读分析，在右侧面板收集结构纠正与姓名配对，再对账（不弹窗）。"""
+        from ..dialogs.reconcile_review import ReconcileReviewPanel
         tgt = self.z_tgt.get()[0]
         src = self.z_src.get()
         labor = self.z_labor.get()
-        opts = self.opts
         self.panel.clear_log()
         self.panel.log_line("正在分析文件以供人工确认…")
         try:
-            plan = reconcile_core.analyze(tgt, src, labor, opts=opts)
+            plan = reconcile_core.analyze(tgt, src, labor, opts=self.opts)
         except Exception as e:
             self.warn("分析失败", str(e))
             self.panel.set_status("err", "分析失败")
             return
-        dlg = ReconcileReviewDialog(plan, self)
-        if not dlg.exec_():
-            self.panel.log_line("已取消人工确认。")
-            return
-        choices = dlg.choices()
-        self.launch(lambda log: reconcile_core.run(tgt, src, labor, opts=opts,
+        self._review_ctx = (tgt, src, labor)
+        panel = ReconcileReviewPanel(plan)
+        panel.accepted.connect(self._do_review_run)
+        panel.cancelled.connect(self._cancel_review)
+        self.main.open_panel(panel, "人工确认 · 工时对账")
+
+    def _cancel_review(self):
+        self.main.close_panel()
+        self.panel.log_line("已取消人工确认。")
+
+    def _do_review_run(self, choices):
+        self.main.close_panel()
+        tgt, src, labor = self._review_ctx
+        self.launch(lambda log: reconcile_core.run(tgt, src, labor, opts=self.opts,
                                                     log=log, choices=choices),
                     self.panel, self._done)
 

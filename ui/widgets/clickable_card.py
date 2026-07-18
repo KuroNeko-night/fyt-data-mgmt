@@ -28,11 +28,22 @@ class ClickableCard(QFrame):
         v.addWidget(d, 1)
         self.refresh_icon()
 
-    def refresh_icon(self):
-        """按当前主题色重绘图标（主题切换时调用）。
+    def refresh_icon(self, hover=False):
+        """按当前主题色重绘图标（主题切换/悬停时调用）。
 
-        2× 物理分辨率 + setScaledContents 定尺 QLabel：高/低 DPI 都清晰不裁切。"""
-        self._ic.setPixmap(icons.pixmap(self._icon_name, 56, None, 1.0))
+        2× 物理分辨率 + setScaledContents 定尺 QLabel：高/低 DPI 都清晰不裁切。
+        悬停时用更亮的 accent_l,与 QSS 的描边+底色高亮一起构成微交互。"""
+        from .. import theme
+        color = theme.COLORS.get("accent_l") if hover else None
+        self._ic.setPixmap(icons.pixmap(self._icon_name, 56, color, 1.0))
+
+    def enterEvent(self, e):
+        self.refresh_icon(hover=True)
+        super(ClickableCard, self).enterEvent(e)
+
+    def leaveEvent(self, e):
+        self.refresh_icon(hover=False)
+        super(ClickableCard, self).leaveEvent(e)
 
     def mouseReleaseEvent(self, e):
         if e.button() == Qt.LeftButton and self.rect().contains(e.pos()):

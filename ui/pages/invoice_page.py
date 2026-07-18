@@ -98,15 +98,23 @@ class InvoicePage(BasePage):
 
     # ---------- 阶段二：复核 + 生成 ----------
     def _review(self, result, ym):
-        from ..dialogs.invoice_review import InvoiceReviewDialog
-        dlg = InvoiceReviewDialog(result.invoices, ym, self)
-        if not dlg.exec_():
-            self.panel.set_status("ready", "已取消复核，未生成")
-            return
-        rows, out_ym = dlg.result_rows()
+        from ..dialogs.invoice_review import InvoiceReviewPanel
+        self._scan_result = result
+        panel = InvoiceReviewPanel(result.invoices, ym)
+        panel.confirmed.connect(self._do_generate)
+        panel.cancelled.connect(self._cancel_review)
+        self.main.open_panel(panel, "人工复核 · 增值税发票统计")
+
+    def _cancel_review(self):
+        self.main.close_panel()
+        self.panel.set_status("ready", "已取消复核，未生成")
+
+    def _do_generate(self, rows, out_ym):
+        self.main.close_panel()
         if not rows:
             self.warn("提示", "没有勾选任何发票，未生成。")
             return
+        result = self._scan_result
         self.launch(
             lambda log: invoice_core.generate(result, rows, out_ym, log=log),
             self.panel, self._done)

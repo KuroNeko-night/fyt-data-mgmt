@@ -11,11 +11,13 @@ from PySide2.QtCore import (Qt, QEasingCurve, QTimer, QVariantAnimation, QSize,
 from PySide2.QtGui import QPixmap, QPainter, QColor, QIcon
 from PySide2.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
                                QLabel, QPushButton, QStackedWidget, QApplication,
-                               QButtonGroup, QScrollArea, QFrame,
+                               QButtonGroup, QScrollArea, QFrame, QSplitter,
                                QSystemTrayIcon, QMenu)
+from .widgets.side_panel import RightPanel
 
 from . import theme
 from . import icons
+from .animations import fade_window_in
 from .pages.home_page import HomePage
 from .pages.attendance_page import AttendancePage
 from .pages.reconcile_page import ReconcilePage
@@ -71,6 +73,7 @@ class _CrossFade(QWidget):
         self._new = None
         self._bg = QColor(bg)
         self._t = 0.0                       # 0→1: 旧页透明度 1→0
+        self._rise = 12                     # 新页上浮量(px):t=0 时下沉 rise,渐入归位
         self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         # 不透明绘制：告诉 Qt 本部件会铺满自身区域，切勿在绘制前把背景擦成
         # 调色板底色(默认浅色)。这是深色模式"白闪"的直接来源之一。
@@ -88,10 +91,11 @@ class _CrossFade(QWidget):
         p = QPainter(self)
         p.fillRect(self.rect(), self._bg)   # 先铺主题底色，任何缝隙都是深色不是白
         if self._new is not None:
-            p.drawPixmap(self.rect(), self._new)
+            dy = int((1.0 - self._t) * self._rise)     # 新页从下方 rise 处上浮归位
+            p.drawPixmap(self.rect().adjusted(0, dy, 0, dy), self._new)
         if self._old is not None and self._t < 1.0:
             p.setOpacity(1.0 - self._t)
-            p.drawPixmap(self.rect(), self._old)
+            p.drawPixmap(self.rect(), self._old)        # 旧页原位渐隐盖在上层
         p.end()
 
 
@@ -116,10 +120,22 @@ class MainWindow(QMainWindow):
         self._show_event = None     # 单实例唤醒事件句柄
         self._show_thread = None    # 等待唤醒的监听线程
         self._show_requested.connect(self._restore_from_tray)
+        self._launched = False       # 首次显示做一次淡入,后续从托盘还原不重放
+        self._launch_anims = []
+        self._nav_collapsed = bool(self.settings.get("nav_collapsed", False))
+        self._panel_w = int(self.settings.get("right_panel_w", 420))  # 上次面板宽
+        self._panel_anim = None      # 面板展开/收起 QVariantAnimation 防 GC
         self._build()
         self._build_tray()
         self.switch_to("home")
         QTimer.singleShot(300, self._maybe_onboard)
+
+    def showEvent(self, e):
+        super(MainWindow, self).showEvent(e)
+        if not self._launched:
+            self._launched = True
+            # 启动时整窗淡入(合成器级,文字不虚);上浮留 0 避免与最大化/居中打架
+            self._launch_anims = fade_window_in(self, duration=220, rise=0)
 
     def _build(self):
         root = QWidget()
@@ -129,22 +145,53 @@ class MainWindow(QMainWindow):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
         lay.addWidget(self._build_sidebar())
-        lay.addWidget(self._build_stack(), 1)
+
+        # 内容区与右侧面板放进可拖拽分隔条：用户可手动调二者占比
+        self._splitter = QSplitter(Qt.Horizontal)
+        self._splitter.setObjectName("ContentSplitter")
+        self._splitter.setChildrenCollapsible(False)
+        self._splitter.setHandleWidth(6)
+        self._splitter.addWidget(self._build_stack())          # index 0：主内容
+        self._right_panel = RightPanel()
+        self._right_panel.closed.connect(self.close_panel)
+        self._splitter.addWidget(self._right_panel)            # index 1：右侧面板
+        self._splitter.setStretchFactor(0, 1)
+        self._splitter.setStretchFactor(1, 0)
+        self._right_panel.hide()                                # 初始隐藏,按需展开
+        lay.addWidget(self._splitter, 1)
+        if self._nav_collapsed:                                 # 恢复上次收起状态
+            QTimer.singleShot(0, lambda: self._apply_nav_collapsed(True, animate=False))
 
     def _build_sidebar(self):
         bar = QWidget()
         bar.setObjectName("Sidebar")
         bar.setFixedWidth(210)
+        self._sidebar = bar
+        self._sidebar_anim = QPropertyAnimation(bar, b"maximumWidth", self)
+        self._sidebar_anim.setDuration(220)
+        self._sidebar_anim.setEasingCurve(QEasingCurve.OutCubic)
         v = QVBoxLayout(bar)
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(0)
 
-        # 品牌头固定在顶部
+        # 品牌头固定在顶部：品牌名 + 收起/展开切换钮同排
+        top = QWidget(); top.setObjectName("BrandRow")
+        tb = QHBoxLayout(top); tb.setContentsMargins(0, 0, 6, 0); tb.setSpacing(0)
         brand = QLabel("峰运通")
         brand.setObjectName("Brand")
-        v.addWidget(brand)
+        self._brand_lbl = brand
+        tb.addWidget(brand, 1)
+        self._nav_toggle = QPushButton("<")
+        self._nav_toggle.setObjectName("NavToggle")
+        self._nav_toggle.setCursor(Qt.PointingHandCursor)
+        self._nav_toggle.setFixedSize(26, 26)
+        self._nav_toggle.setToolTip("收起导航栏")
+        self._nav_toggle.clicked.connect(self.toggle_nav)
+        tb.addWidget(self._nav_toggle, 0, Qt.AlignTop)
+        v.addWidget(top)
         sub = QLabel("数据管理系统  " + version.version_str())
         sub.setObjectName("BrandSub")
+        self._brand_sub = sub
         v.addWidget(sub)
 
         # 导航项放进可滚动区：功能增多也不会挤爆或撑出窗口
@@ -183,6 +230,7 @@ class MainWindow(QMainWindow):
 
         self._grp = QButtonGroup(self)
         self._grp.setExclusive(True)
+        self._nav_groups = []                  # 分组标题,窄条模式隐藏
         last_group = None
         for group, title, key in NAV:
             if group != last_group:
@@ -190,6 +238,7 @@ class MainWindow(QMainWindow):
                     gl = QLabel(group)
                     gl.setObjectName("NavGroup")
                     nv.addWidget(gl)
+                    self._nav_groups.append(gl)
                 last_group = group
             b = self._make_nav_btn(title, key)
             self._grp.addButton(b)
@@ -207,6 +256,7 @@ class MainWindow(QMainWindow):
         # 底部提示固定在最下方
         tip = QLabel("兼容 Win7 · Python 3.8")
         tip.setObjectName("BrandSub")
+        self._brand_tip = tip
         v.addWidget(tip)
         return bar
 
@@ -240,20 +290,28 @@ class MainWindow(QMainWindow):
 
         图标按 2× 物理分辨率(dpr=1)渲染，交给 setScaledContents 的定尺 QLabel 缩放，
         高/低 DPI 都清晰且不裁切——避免把 dpr 烘进位图导致定尺标签只画左上角。"""
-        base = theme.COLORS.get("sidebar_fg", "#c7d2e8")
+        base = theme.COLORS.get("sidebar_fg", "#4b5768")
+        sel = theme.COLORS.get("accent", "#2f6bd8")
         for key, btn in self._nav_btns.items():
             on = btn.isChecked()
-            color = "#ffffff" if on else base
+            color = sel if on else base       # 浅侧栏：选中用强调色（不再硬编码白）
             btn._icon_lbl.setPixmap(icons.pixmap(key, 36, color, 1.0))
             btn._text_lbl.setStyleSheet(
                 "color:%s; font-size:13px; background:transparent;%s"
                 % (color, " font-weight:bold;" if on else ""))
+        # 选中指示改用圆角 tint 块后，需与按钮留出左右内边距，避免顶满边缘
+        self._nav_ind_inset = 8
 
     def _sync_nav_stripe(self, rect):
-        """把蓝色竖条对齐到填充块:左缘、3px 宽、同高。供动画每帧回调。"""
+        """把强调色短竖条放到最左缘、垂直居中于填充块。供动画每帧回调。
+
+        填充块现为内缩圆角 tint 块;竖条则是紧贴 nav_host 左边的一小段
+        强调色标记(经典 active 指示),不随填充内缩,视觉更利落。"""
         st = getattr(self, "_nav_stripe", None)
         if st is not None:
-            st.setGeometry(rect.x(), rect.y(), 3, rect.height())
+            sh = min(20, rect.height())
+            cy = rect.y() + (rect.height() - sh) // 2
+            st.setGeometry(0, cy, 3, sh)
 
     def _move_indicator(self, key, animate=True):
         """把选中指示(填充块+竖条)移到 key 对应按钮处;animate=True 时平滑滑动。
@@ -264,7 +322,10 @@ class MainWindow(QMainWindow):
         btn = self._nav_btns.get(key)
         if fill is None or btn is None:
             return
-        target = QRect(0, btn.y(), self._nav_host.width(), btn.height())
+        inx, iny = 8, 4                                      # 填充块左右/上下内缩,成悬浮圆角 tint 块
+        target = QRect(inx, btn.y() + iny,
+                       max(1, self._nav_host.width() - 2 * inx),
+                       max(1, btn.height() - 2 * iny))
         if target.height() <= 1 or target.width() <= 1:     # 布局尚未成形,稍后再落位
             QTimer.singleShot(16, lambda k=key: self._move_indicator(k, False)
                               if self._nav_btns.get(k) and self._nav_btns[k].isChecked()
@@ -291,6 +352,98 @@ class MainWindow(QMainWindow):
             if self._cur_key is not None:
                 self._move_indicator(self._cur_key, animate=False)
         return super(MainWindow, self).eventFilter(obj, ev)
+
+    # ---------------- 导航收起 / 展开（图标窄条） ----------------
+    NAV_FULL = 210
+    NAV_MINI = 56
+
+    def toggle_nav(self):
+        self._apply_nav_collapsed(not self._nav_collapsed, animate=True)
+        self.settings.set("nav_collapsed", self._nav_collapsed)
+        self.settings.save()
+
+    def _apply_nav_collapsed(self, collapsed, animate=True):
+        """展开(210)⇄图标窄条(56)。窄条模式隐藏文字/分组/副标题,只留图标居中。"""
+        self._nav_collapsed = collapsed
+        target = self.NAV_MINI if collapsed else self.NAV_FULL
+        self._nav_toggle.setText(">" if collapsed else "<")
+        self._nav_toggle.setToolTip("展开导航栏" if collapsed else "收起导航栏")
+        # 文字类元素立即随模式显隐（宽度动画同时进行）
+        for lb in self._nav_groups:
+            lb.setVisible(not collapsed)
+        self._brand_sub.setVisible(not collapsed)
+        self._brand_tip.setVisible(not collapsed)
+        self._brand_lbl.setVisible(not collapsed)
+        for key, btn in self._nav_btns.items():
+            btn._text_lbl.setVisible(not collapsed)
+            btn.setToolTip(btn._text_lbl.text() if collapsed else "")
+            btn.layout().setContentsMargins(*((19, 0, 15, 0) if collapsed else (17, 0, 12, 0)))
+        self._sidebar_anim.stop()
+        try:
+            self._sidebar_anim.finished.disconnect()
+        except Exception:
+            pass
+        if not animate:
+            self._sidebar.setMinimumWidth(target)
+            self._sidebar.setMaximumWidth(target)
+        else:
+            # 动画期间放开 min 到较小值,让 maximumWidth 自由伸缩;结束再钉死 min=max
+            self._sidebar.setMinimumWidth(min(self._sidebar.width(), target))
+            self._sidebar_anim.setStartValue(self._sidebar.width())
+            self._sidebar_anim.setEndValue(target)
+            self._sidebar_anim.finished.connect(
+                lambda t=target: self._sidebar.setMinimumWidth(t))
+            self._sidebar_anim.start()
+        QTimer.singleShot(0, lambda: self._move_indicator(self._cur_key, animate=False)
+                          if self._cur_key else None)
+
+    # ---------------- 右侧面板 open / close ----------------
+    _PANEL_ANIM_MS = 240
+
+    def open_panel(self, widget, title=""):
+        """展开右侧面板并载入内容。若面板已打开则直接替换内容。"""
+        self._right_panel.set_content(widget, title)
+        if not self._right_panel.isVisible():
+            self._right_panel.show()
+            total = self._splitter.width()
+            want = min(self._panel_w, int(total * 0.55))
+            stack_w = max(400, total - want)
+            self._animate_splitter(self._splitter.sizes()[0], stack_w)
+
+    def close_panel(self):
+        """关闭右侧面板，收起到宽度 0 后隐藏。"""
+        if not self._right_panel.isVisible():
+            return
+        current = self._splitter.sizes()[1]
+        if current > 0:
+            self._panel_w = current
+            self.settings.set("right_panel_w", current)
+            self.settings.save()
+        self._animate_splitter(self._splitter.sizes()[0], self._splitter.width(),
+                               on_done=self._right_panel.hide)
+        self._right_panel.clear_content()
+
+    def _animate_splitter(self, start_stack, end_stack, on_done=None):
+        """用 QVariantAnimation 逐帧调 setSizes，平滑展开/收起右侧面板。"""
+        if self._panel_anim is not None:
+            try:
+                self._panel_anim.stop()
+            except Exception:
+                pass
+        a = QVariantAnimation(self)
+        a.setDuration(self._PANEL_ANIM_MS)
+        a.setEasingCurve(QEasingCurve.OutCubic)
+        a.setStartValue(float(start_stack))
+        a.setEndValue(float(end_stack))
+        total = self._splitter.width()
+        def _step(v):
+            sv = int(v); rv = max(0, total - sv)
+            self._splitter.setSizes([sv, rv])
+        a.valueChanged.connect(_step)
+        if on_done:
+            a.finished.connect(on_done)
+        a.start()
+        self._panel_anim = a
 
     def _build_stack(self):
         self.stack = QStackedWidget()

@@ -10,30 +10,29 @@
 返回 choices，喂给 reconcile_core.run。
 沿用透视表复核对话框的外观与交互。兼容 Windows 7 + Python 3.8 + PySide2。
 """
-from PySide2.QtCore import Qt
-from PySide2.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+from PySide2.QtCore import Qt, Signal
+from PySide2.QtWidgets import (QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
                                QTabWidget, QWidget, QTableWidget, QTableWidgetItem,
                                QHeaderView, QAbstractItemView, QGridLayout)
 
-from .. import theme
 from ..animations import AnimatedComboBox as QComboBox   # 下拉抽屉式拉开
 
 _NOPAIR = "— 不配对 —"
 
 
-class ReconcileReviewDialog(QDialog):
+class ReconcileReviewPanel(QWidget):
+    """工时对账人工确认 —— 右侧面板部件（原对话框正文）。
+    确认后 accepted 带回 choices；取消发 cancelled。"""
+    accepted = Signal(object)
+    cancelled = Signal()
+
     def __init__(self, plan, parent=None):
-        super(ReconcileReviewDialog, self).__init__(parent)
+        super(ReconcileReviewPanel, self).__init__(parent)
         self.plan = plan
-        self.setWindowTitle("人工确认 —— 工时对账")
-        self.setModal(True)
-        self.setStyleSheet(theme.stylesheet())
-        self.setSizeGripEnabled(True)
         self._role_combos = {}     # role -> (QComboBox, 默认1based)  待对表列纠正
         self._sheet_combo = None   # 待对表工作表选择
         self._pair_combos = {}     # 劳务姓名 -> QComboBox(选我司姓名)
         self._build()
-        theme.fit_dialog(self, 780, 580)
 
     def _build(self):
         lay = QVBoxLayout(self)
@@ -52,9 +51,9 @@ class ReconcileReviewDialog(QDialog):
         row = QHBoxLayout()
         row.addStretch(1)
         cancel = QPushButton("取消"); cancel.setObjectName("Ghost")
-        cancel.clicked.connect(self.reject)
+        cancel.clicked.connect(self.cancelled.emit)
         ok = QPushButton("按此对账"); ok.setObjectName("Primary")
-        ok.clicked.connect(self.accept)
+        ok.clicked.connect(lambda: self.accepted.emit(self.choices()))
         row.addWidget(cancel); row.addWidget(ok)
         lay.addLayout(row)
 

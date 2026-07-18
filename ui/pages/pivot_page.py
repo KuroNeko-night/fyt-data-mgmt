@@ -54,8 +54,8 @@ class PivotPage(BasePage):
         self.launch(lambda log: pivot_core.run(files, log=log), self.panel, self._done)
 
     def _run_review(self):
-        """先分析，弹出复核对话框收集选择，再应用。"""
-        from ..dialogs.pivot_review import PivotReviewDialog
+        """先分析，在右侧面板收集复核选择，再应用（不弹窗打断）。"""
+        from ..dialogs.pivot_review import PivotReviewPanel
         files = self.zone.get()
         self.panel.clear_log()
         self.panel.log_line("正在分析文件以供复核…")
@@ -64,12 +64,19 @@ class PivotPage(BasePage):
         except Exception as e:
             self.warn("分析失败", str(e))
             return
-        dlg = PivotReviewDialog(plan, self)
-        if not dlg.exec_():
-            self.panel.log_line("已取消复核。")
-            return
-        choices = dlg.choices()
-        self.launch(lambda log: pivot_core.run(files, choices=choices, log=log),
+        self._review_files = files
+        panel = PivotReviewPanel(plan)
+        panel.accepted.connect(self._do_review_run)
+        panel.cancelled.connect(self._cancel_review)
+        self.main.open_panel(panel, "人工复核 · 销售表透视")
+
+    def _cancel_review(self):
+        self.main.close_panel()
+        self.panel.log_line("已取消复核。")
+
+    def _do_review_run(self, choices):
+        self.main.close_panel()
+        self.launch(lambda log: pivot_core.run(self._review_files, choices=choices, log=log),
                     self.panel, self._done)
 
     def _done(self, res):

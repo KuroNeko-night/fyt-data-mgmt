@@ -7,10 +7,10 @@
 两者纯几何/描绘动画，不走离屏缓冲，文字保持清晰。
 兼容 Windows 7 + Python 3.8 + PySide2(Qt5.15)。
 """
-from PySide2.QtCore import (Qt, QRect, QPoint, QPointF, QEasingCurve,
+from PySide2.QtCore import (Qt, QRect, QPoint, QPointF, QEasingCurve, QTimer,
                             QPropertyAnimation, QVariantAnimation)
 from PySide2.QtGui import QPainter, QColor, QPen, QPainterPath
-from PySide2.QtWidgets import QComboBox, QCheckBox
+from PySide2.QtWidgets import QComboBox, QCheckBox, QDialog
 
 from . import theme
 
@@ -110,3 +110,56 @@ class AnimatedCheckBox(QCheckBox):
             p.drawText(QRect(tx, 0, self.width() - tx, self.height()),
                        Qt.AlignVCenter | Qt.AlignLeft, self.text())
         p.end()
+
+
+def fade_window_in(win, duration=200, rise=0):
+    """顶层窗口整体淡入(可选轻微上浮)。走 setWindowOpacity —— 由 DWM 合成器
+    处理,不经离屏 ARGB 缓冲,文字保持 ClearType 清晰(区别于 QGraphicsOpacityEffect)。
+    返回动画列表(调用方存引用防 GC);失败即刻恢复不透明,绝不把窗口留在透明态。"""
+    try:
+        win.setWindowOpacity(0.0)
+        fade = QPropertyAnimation(win, b"windowOpacity", win)
+        fade.setDuration(duration)
+        fade.setStartValue(0.0)
+        fade.setEndValue(1.0)
+        fade.setEasingCurve(QEasingCurve.OutCubic)
+        anims = [fade]
+        if rise:
+            final = win.pos()
+            start = QPoint(final.x(), final.y() + rise)
+            win.move(start)
+            mv = QPropertyAnimation(win, b"pos", win)
+            mv.setDuration(int(duration * 1.15))
+            mv.setStartValue(start)
+            mv.setEndValue(final)
+            mv.setEasingCurve(QEasingCurve.OutCubic)
+            anims.append(mv)
+        for a in anims:
+            a.start()
+        # 兜底:无论动画成败,略过时长后强制不透明,杜绝卡在半透明/全透明
+        QTimer.singleShot(duration + 260, lambda: win.setWindowOpacity(1.0))
+        return anims
+    except Exception:
+        try:
+            win.setWindowOpacity(1.0)
+        except Exception:
+            pass
+        return []
+
+
+class AnimatedDialog(QDialog):
+    """对话框弹出微动画:首次显示时窗口淡入 + 轻微上浮。
+
+    位移/透明度均作用于顶层窗口本身(合成器级),不渲染到离屏缓冲,文字清晰。
+    exec_() 前几何未定,故在 showEvent(super 已完成居中)首帧再启动,只跑一次。"""
+    def __init__(self, *a, **kw):
+        super(AnimatedDialog, self).__init__(*a, **kw)
+        self._pop_done = False
+        self._pop_anims = []
+
+    def showEvent(self, e):
+        super(AnimatedDialog, self).showEvent(e)
+        if self._pop_done:
+            return
+        self._pop_done = True
+        self._pop_anims = fade_window_in(self, duration=180, rise=14)

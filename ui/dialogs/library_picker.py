@@ -16,7 +16,10 @@ from .. import theme
 from core import library
 
 
-class LibraryPicker(QDialog):
+from ..animations import AnimatedDialog
+
+
+class LibraryPicker(AnimatedDialog):
     def __init__(self, categories, multi=True, parent=None, title="从数据库选择"):
         super(LibraryPicker, self).__init__(parent)
         self.setWindowTitle(title)

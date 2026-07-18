@@ -7,31 +7,29 @@
   · 概要:各项计数一览。
 沿用工时对账/透视复核对话框的外观。兼容 Windows 7 + Python 3.8 + PySide2。
 """
+from PySide2.QtCore import Signal
 from PySide2.QtGui import QColor
-from PySide2.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+from PySide2.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
                                QTabWidget, QTableWidget, QTableWidgetItem,
                                QHeaderView, QAbstractItemView)
-
-from .. import theme
 
 _RED = QColor("#FFC7CE")
 _YELLOW = QColor("#FFEB9C")
 
 
-class CompareReviewDialog(QDialog):
+class CompareResultPanel(QWidget):
+    """表格比对结果 —— 右侧只读面板部件（原对话框正文）。
+    点关闭发 closed 信号。"""
+    closed = Signal()
+
     def __init__(self, result, parent=None):
-        super(CompareReviewDialog, self).__init__(parent)
+        super(CompareResultPanel, self).__init__(parent)
         self.result = result
-        self.setWindowTitle("比对结果")
-        self.setModal(True)
-        self.setStyleSheet(theme.stylesheet())
-        self.setSizeGripEnabled(True)
         self._build()
-        theme.fit_dialog(self, 820, 600)
 
     def _build(self):
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(20, 18, 20, 16)
+        lay.setContentsMargins(16, 14, 16, 14)
         lay.setSpacing(12)
         cn = self.result["counts"]
         head = QLabel("关键列「%s」· 差异 %d 处 · 只在A %d 行 · 只在B %d 行 · 配对 %d 行"
@@ -49,7 +47,7 @@ class CompareReviewDialog(QDialog):
 
         row = QHBoxLayout(); row.addStretch(1)
         close = QPushButton("关闭"); close.setObjectName("Primary")
-        close.clicked.connect(self.accept)
+        close.clicked.connect(self.closed.emit)
         row.addWidget(close)
         lay.addLayout(row)
 
