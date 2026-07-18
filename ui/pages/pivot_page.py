@@ -68,14 +68,14 @@ class PivotPage(BasePage):
         panel = PivotReviewPanel(plan)
         panel.accepted.connect(self._do_review_run)
         panel.cancelled.connect(self._cancel_review)
-        self.main.open_panel(panel, "人工复核 · 销售表透视")
+        self.main.open_panel(panel, "人工复核 · 销售表透视", key="review")
 
     def _cancel_review(self):
-        self.main.close_panel()
+        self.main.close_panel("review")
         self.panel.log_line("已取消复核。")
 
     def _do_review_run(self, choices):
-        self.main.close_panel()
+        self.main.close_panel("review")
         self.launch(lambda log: pivot_core.run(self._review_files, choices=choices, log=log),
                     self.panel, self._done)
 

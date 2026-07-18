@@ -469,7 +469,7 @@ QPushButton#NavToggle:pressed {{ background: {sidebar_a}; }}
 /* ---------- 右侧滑出面板 ---------- */
 QFrame#RightPanel {{ background: {surface}; border-left: 1px solid {line}; }}
 QFrame#PanelHeader {{
-    background: {surface2}; border-bottom: 1px solid {line}; min-height: 44px;
+    background: {surface2}; border-bottom: 1px solid {line};
 }}
 QLabel#PanelTitle {{ font-size: 13px; font-weight: bold; color: {heading}; background: transparent; }}
 QPushButton#PanelClose {{
@@ -477,6 +477,25 @@ QPushButton#PanelClose {{
 }}
 QPushButton#PanelClose:hover {{ background: {mini_hover}; color: {err}; }}
 QScrollArea#PanelScroll {{ background: {surface}; border: none; }}
+QFrame#PanelSection {{ background: {surface}; }}
+QWidget#PanelEmpty {{ background: {surface}; }}
+QLabel#PanelEmptyHint {{ color: {sub}; font-size: 12px; background: transparent; }}
+QPushButton#PanelFold {{
+    background: transparent; color: {sub}; border: none; font-size: 12px;
+}}
+QPushButton#PanelFold:hover {{ color: {accent}; }}
+QSplitter#PanelSplitter::handle {{ background: {line}; }}
+QSplitter#PanelSplitter::handle:vertical {{ height: 1px; }}
+QSplitter#PanelSplitter::handle:hover {{ background: {accent}; }}
+
+/* ---------- 文件预览 ---------- */
+QFrame#FilePreview {{ background: {surface}; }}
+QLabel#PreviewName {{ font-size: 12px; font-weight: bold; color: {heading}; background: transparent; }}
+QTableWidget#PreviewTable {{
+    background: {surface}; border: 1px solid {line}; gridline-color: {line};
+    font-size: 12px; color: {text};
+}}
+QTableWidget#PreviewTable::item {{ padding: 2px 6px; }}
 
 /* 分隔条：细、低调，悬停高亮 */
 QSplitter#ContentSplitter::handle {{ background: {line}; }}

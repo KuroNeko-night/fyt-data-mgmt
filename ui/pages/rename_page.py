@@ -14,8 +14,7 @@ from PySide2.QtGui import QColor, QBrush
 from PySide2.QtWidgets import (QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
                                QFrame, QPushButton, QLineEdit, QCheckBox,
                                QSpinBox, QComboBox, QFileDialog, QTableWidget,
-                               QTableWidgetItem, QHeaderView, QAbstractItemView,
-                               QMessageBox)
+                               QTableWidgetItem, QHeaderView, QAbstractItemView)
 from ..animations import (AnimatedCheckBox as QCheckBox,   # 勾选带打勾动画
                           AnimatedComboBox as QComboBox)   # 下拉抽屉式拉开
 
@@ -241,11 +240,10 @@ class RenamePage(BasePage):
             return
         ask = "确认重命名 %d 个文件？此操作会就地修改文件名。" % s["ok"]
         if s["blocked"]:
-            ask += "\n（%d 项存在冲突，将自动跳过）" % s["blocked"]
-        if QMessageBox.question(self, "确认应用", ask,
-                                QMessageBox.Yes | QMessageBox.No,
-                                QMessageBox.Yes) != QMessageBox.Yes:
-            return
+            ask += "（%d 项存在冲突，将自动跳过）" % s["blocked"]
+        self.confirm(ask, lambda p=plan: self._do_apply(p), yes_label="确认重命名")
+
+    def _do_apply(self, plan):
         # 执行期间禁用按钮防重复点击(量大时同步执行会卡顿);
         # 结束后由末尾 _refresh_preview→_update_apply_state 重算启用态,出错也恢复。
         self.btn_apply.setEnabled(False)

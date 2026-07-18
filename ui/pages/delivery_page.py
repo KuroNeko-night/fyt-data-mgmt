@@ -40,6 +40,7 @@ class DeliveryPage(BasePage):
         self.cb_sup = self._sheet_combo()
         self.z_list.changed.connect(lambda ps: self._fill_sheets(self.cb_list, ps))
         self.z_sup.changed.connect(lambda ps: self._fill_sheets(self.cb_sup, ps))
+        self.cb_list.currentIndexChanged.connect(lambda *_: self._scan_main())
 
         layout.addWidget(self.z_list)
         layout.addWidget(self._sheet_row("物料清单工作表", self.cb_list))
@@ -87,6 +88,8 @@ class DeliveryPage(BasePage):
         cb.setCurrentIndex(0)
         cb.blockSignals(False)
         self._refresh()
+        if cb is self.cb_list:               # 物料清单变化 -> 预检表头
+            self._scan_main()
 
     def _order_card(self):
         card = QFrame(); card.setObjectName("Card")
@@ -131,6 +134,32 @@ class DeliveryPage(BasePage):
             if not self.z_list.get(): need.append("物料清单")
             if not self.z_sup.get(): need.append("供应商明细")
             self.panel.set_status("idle", "还需选择：" + "、".join(need))
+
+    def _scan_main(self):
+        """物料清单选定/切表后预检其表头,提前提示识别情况(不写盘)。"""
+        paths = self.z_list.get()
+        if not paths:
+            self.cancel_scan()
+            return
+        sheet = self.cb_list.currentData()
+        self.scan_on_select(
+            paths[0], lambda p, log=None: delivery_core.analyze(p, sheet=sheet, log=log),
+            self._on_scan_ready)
+
+    def _on_scan_ready(self, res):
+        if not res:
+            return
+        if not res.get("ok"):
+            self.notice.show_notice("warn",
+                "物料清单未能识别表头(需含“物料号/编码”列):%s" % res.get("error", ""))
+        elif res.get("source") == "shape":
+            self.notice.show_notice("warn",
+                "物料清单靠数据形态猜出列(第 %d 行为表头),生成前请核对列是否对应正确。"
+                % res.get("header_row", 0))
+        else:
+            self.notice.show_notice("ok",
+                "物料清单识别成功:表头第 %d 行,共约 %d 行数据。"
+                % (res.get("header_row", 0), res.get("n_rows", 0)))
 
     def _run(self):
         self.panel.clear_log()

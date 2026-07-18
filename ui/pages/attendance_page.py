@@ -63,11 +63,11 @@ class AttendancePage(BasePage):
         from ..panel_widgets.attendance_form import AttendanceFormWidget
         form = AttendanceFormWidget(self.opts)
         form.accepted.connect(self._do_run)
-        form.cancelled.connect(self.main.close_panel)
-        self.main.open_panel(form, "确认口径 · 考勤填报")
+        form.cancelled.connect(lambda: self.main.close_panel("review"))
+        self.main.open_panel(form, "确认口径 · 考勤填报", key="review")
 
     def _do_run(self, opts):
-        self.main.close_panel()
+        self.main.close_panel("review")
         self.panel.clear_log()
         targets = self.z_tgt.get()
         sources = self.z_src.get()

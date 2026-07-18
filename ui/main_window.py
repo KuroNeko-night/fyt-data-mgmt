@@ -14,6 +14,8 @@ from PySide2.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
                                QButtonGroup, QScrollArea, QFrame, QSplitter,
                                QSystemTrayIcon, QMenu)
 from .widgets.side_panel import RightPanel
+from .widgets.file_preview import FilePreview
+from .widgets.file_zone import FileZone
 
 from . import theme
 from . import icons
@@ -36,6 +38,24 @@ from .pages.compare_page import ComparePage
 from .pages.settings_page import SettingsPage
 from .pages.about_page import AboutPage
 from core import version, settings as settings_mod
+
+
+def _qt_alive(obj):
+    """判断一个 Qt 对象的底层 C++ 实例是否仍存活(未被 deleteLater 销毁)。
+
+    PySide2 里 Python 包装对象可能悬垂在已删除的 C++ 对象上,再用它会抛
+    RuntimeError。用 shiboken2.isValid 判活;取不到 shiboken2 时退化为探测。"""
+    if obj is None:
+        return False
+    try:
+        import shiboken2
+        return shiboken2.isValid(obj)
+    except Exception:
+        try:
+            obj.objectName()
+            return True
+        except RuntimeError:
+            return False
 
 
 # 导航定义：(分组, 标题, 页面键)；分组为 None 表示单列在底部
@@ -124,6 +144,7 @@ class MainWindow(QMainWindow):
         self._launch_anims = []
         self._nav_collapsed = bool(self.settings.get("nav_collapsed", False))
         self._panel_w = int(self.settings.get("right_panel_w", 420))  # 上次面板宽
+        self._panel_hidden = bool(self.settings.get("right_panel_hidden", False))  # 用户手动隐藏
         self._panel_anim = None      # 面板展开/收起 QVariantAnimation 防 GC
         self._build()
         self._build_tray()
@@ -136,6 +157,20 @@ class MainWindow(QMainWindow):
             self._launched = True
             # 启动时整窗淡入(合成器级,文字不虚);上浮留 0 避免与最大化/居中打架
             self._launch_anims = fade_window_in(self, duration=220, rise=0)
+        if not self._panel_inited:
+            self._panel_inited = True
+            # 此刻窗口已有真实尺寸,据持久化状态定侧栏初始占比(默认展开)
+            QTimer.singleShot(0, self._init_panel_state)
+
+    def _init_panel_state(self):
+        """首次显示后设定侧栏初始展开/收起态:默认展开,除非用户上次手动隐藏。"""
+        if self._panel_hidden:
+            self._right_panel.hide()
+            self._splitter.setSizes([self._splitter.width(), 0])
+        else:
+            total = self._splitter.width()
+            want = min(self._panel_w, int(total * 0.55))
+            self._splitter.setSizes([max(400, total - want), want])
 
     def _build(self):
         root = QWidget()
@@ -153,11 +188,13 @@ class MainWindow(QMainWindow):
         self._splitter.setHandleWidth(6)
         self._splitter.addWidget(self._build_stack())          # index 0：主内容
         self._right_panel = RightPanel()
-        self._right_panel.closed.connect(self.close_panel)
         self._splitter.addWidget(self._right_panel)            # index 1：右侧面板
+        self._connect_file_zones()                             # 各页文件点击 -> 侧栏预览
         self._splitter.setStretchFactor(0, 1)
         self._splitter.setStretchFactor(1, 0)
-        self._right_panel.hide()                                # 初始隐藏,按需展开
+        # 侧栏默认可见(无内容时显示"暂无内容"占位);仅当用户上次手动隐藏才收起。
+        # 真正的初始宽度要等窗口有实际尺寸后设,放到首个 showEvent 里做。
+        self._panel_inited = False
         lay.addWidget(self._splitter, 1)
         if self._nav_collapsed:                                 # 恢复上次收起状态
             QTimer.singleShot(0, lambda: self._apply_nav_collapsed(True, animate=False))
@@ -188,6 +225,13 @@ class MainWindow(QMainWindow):
         self._nav_toggle.setToolTip("收起导航栏")
         self._nav_toggle.clicked.connect(self.toggle_nav)
         tb.addWidget(self._nav_toggle, 0, Qt.AlignTop)
+        self._panel_toggle = QPushButton("▤")
+        self._panel_toggle.setObjectName("NavToggle")
+        self._panel_toggle.setCursor(Qt.PointingHandCursor)
+        self._panel_toggle.setFixedSize(26, 26)
+        self._panel_toggle.setToolTip("显示侧栏" if self._panel_hidden else "隐藏侧栏")
+        self._panel_toggle.clicked.connect(self.toggle_panel)
+        tb.addWidget(self._panel_toggle, 0, Qt.AlignTop)
         v.addWidget(top)
         sub = QLabel("数据管理系统  " + version.version_str())
         sub.setObjectName("BrandSub")
@@ -400,18 +444,59 @@ class MainWindow(QMainWindow):
     # ---------------- 右侧面板 open / close ----------------
     _PANEL_ANIM_MS = 240
 
-    def open_panel(self, widget, title=""):
-        """展开右侧面板并载入内容。若面板已打开则直接替换内容。"""
-        self._right_panel.set_content(widget, title)
+    def open_panel(self, widget, title="", key="main"):
+        """展开右侧面板并载入一个业务分区(复核/结果)。同 key 替换内容。
+
+        业务分区与"文件预览"分区可同屏共存;此处只管业务分区,不动预览。
+        点"人工核对"等按钮属明确意图:即使用户之前手动隐藏过侧栏,也强制展开。"""
+        self._right_panel.add_section(key, title, widget, closable=True)
+        self._ensure_panel_visible(force=True)
+
+    def preview_file(self, path):
+        """在侧栏"文件预览"分区展示某文件。预览分区常驻、不带关闭钮:
+        只能随整块面板隐藏/显示(顶栏切换钮),不能单独叉掉。空路径则移除该分区。"""
+        if not path:
+            self._right_panel.remove_section("preview")
+            self._preview_widget = None        # 分区连同 FilePreview 已删,清引用防悬垂
+            return                              # 侧栏保持可见:无分区时显示"暂无内容"占位
+        prev = getattr(self, "_preview_widget", None)
+        if prev is None or not _qt_alive(prev):
+            prev = FilePreview()               # 首次或旧对象已被销毁 -> 重建
+            self._preview_widget = prev
+        # closable=False:预览分区不给关闭钮,避免用户叉掉后 C++ 对象被删导致悬垂
+        self._right_panel.add_section("preview", "文件预览", prev, closable=False)
+        prev.show_file(path)
+        self._ensure_panel_visible()
+
+    def close_panel(self, key=None):
+        """关闭右侧面板分区。侧栏本身保持可见(无分区时显示占位),
+        整块隐藏只由顶栏切换钮控制。不带 key:清空所有分区。"""
+        if key is not None:
+            self._right_panel.remove_section(key)
+        else:
+            self._right_panel.clear_content()
+
+    def _ensure_panel_visible(self, force=False):
+        """确保右侧面板区域展开。
+        force=True(如点"人工核对"):即使用户之前手动隐藏也强制展开并清隐藏态;
+        force=False(如被动预览):尊重用户手动隐藏的选择,不强开。"""
+        if getattr(self, "_panel_hidden", False):
+            if not force:
+                return
+            self._panel_hidden = False            # 明确意图 -> 解除隐藏并持久化
+            self.settings.set("right_panel_hidden", False); self.settings.save()
+            self._sync_panel_toggle_tip()
         if not self._right_panel.isVisible():
             self._right_panel.show()
+        cur = self._splitter.sizes()[1]
+        if cur <= 4:
             total = self._splitter.width()
             want = min(self._panel_w, int(total * 0.55))
             stack_w = max(400, total - want)
             self._animate_splitter(self._splitter.sizes()[0], stack_w)
 
-    def close_panel(self):
-        """关闭右侧面板，收起到宽度 0 后隐藏。"""
+    def _collapse_panel(self):
+        """收起整块面板到宽度 0 后隐藏(记住宽度供下次展开)。"""
         if not self._right_panel.isVisible():
             return
         current = self._splitter.sizes()[1]
@@ -421,7 +506,29 @@ class MainWindow(QMainWindow):
             self.settings.save()
         self._animate_splitter(self._splitter.sizes()[0], self._splitter.width(),
                                on_done=self._right_panel.hide)
-        self._right_panel.clear_content()
+
+    def _connect_file_zones(self):
+        """把每个页面里的 FileZone 单击信号接到侧栏预览(集中接线,页面无需各自处理)。"""
+        for page in self._pages.values():
+            for zone in page.findChildren(FileZone):
+                zone.file_clicked.connect(self.preview_file)
+
+    def toggle_panel(self):
+        """用户手动显示/隐藏右侧面板;记住状态到设置。
+        显示时即便无分区也展开(呈现"暂无内容"占位)。"""
+        self._panel_hidden = not getattr(self, "_panel_hidden", False)
+        self.settings.set("right_panel_hidden", self._panel_hidden)
+        self.settings.save()
+        if self._panel_hidden:
+            self._collapse_panel()
+        else:
+            self._ensure_panel_visible()      # force 默认 False,但此处已清隐藏态
+        self._sync_panel_toggle_tip()
+
+    def _sync_panel_toggle_tip(self):
+        if hasattr(self, "_panel_toggle"):
+            self._panel_toggle.setToolTip(
+                "显示侧栏" if self._panel_hidden else "隐藏侧栏")
 
     def _animate_splitter(self, start_stack, end_stack, on_done=None):
         """用 QVariantAnimation 逐帧调 setSizes，平滑展开/收起右侧面板。"""

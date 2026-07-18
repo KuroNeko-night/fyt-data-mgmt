@@ -124,8 +124,8 @@ class ComparePage(BasePage):
         # 结果明细在右侧面板展示（不再弹窗打断）
         try:
             panel = CompareResultPanel(res)
-            panel.closed.connect(self.main.close_panel)
-            self.main.open_panel(panel, "比对结果")
+            panel.closed.connect(lambda: self.main.close_panel("result"))
+            self.main.open_panel(panel, "比对结果", key="result")
         except Exception as e:
             self.panel.log_line("结果面板打开失败(报告已生成):%s" % e)
         self.notify_done(self._out_dir, "比对完成",

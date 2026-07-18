@@ -11,7 +11,7 @@ import os
 from PySide2.QtCore import Qt
 from PySide2.QtGui import QColor, QBrush, QFont
 from PySide2.QtWidgets import (QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-                               QTreeWidget, QTreeWidgetItem, QMessageBox,
+                               QTreeWidget, QTreeWidgetItem,
                                QInputDialog, QLineEdit, QAbstractItemView)
 
 from .base_page import BasePage
@@ -270,21 +270,23 @@ class LibraryPage(BasePage):
                 archived.add(os.path.normcase(os.path.abspath(org)))
         if not archived:
             return
-        ret = QMessageBox.question(
-            self, "删除原文件？",
-            "表格已复制进数据库。是否删除原始文件？\n（删除后原位置将不再保留，数据库中的副本不受影响）",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-        if ret == QMessageBox.Yes:
+
+        def _do_delete(fs=files, arch=archived):
             gone = 0
-            for f in files:
+            for f in fs:
                 # 只删成功归档的原件（按 origin 匹配），跳过归档失败的文件
-                if os.path.normcase(os.path.abspath(f)) not in archived:
+                if os.path.normcase(os.path.abspath(f)) not in arch:
                     continue
                 try:
                     os.remove(f); gone += 1
                 except Exception:
                     pass
             self.info("已删除", "已删除 %d 个原始文件。" % gone)
+
+        self.confirm(
+            "表格已复制进数据库。是否删除原始文件？"
+            "（删除后原位置将不再保留，数据库中的副本不受影响）",
+            _do_delete, yes_label="删除原文件")
 
     # ---------- 批量移除 / 改判 ----------
     def _remove(self):
@@ -295,13 +297,13 @@ class LibraryPage(BasePage):
             body = "确定从数据库移除「%s」？" % keys[0][1]
         else:
             body = "确定从数据库移除选中的 %d 张表？" % len(keys)
-        ret = QMessageBox.question(
-            self, "移除", body + "\n（归档副本将一并删除，不影响其他位置的文件）",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-        if ret == QMessageBox.Yes:
-            for cat, name in keys:
+        def _do_remove(ks=keys):
+            for cat, name in ks:
                 library.remove_item(cat, name, delete_file=True)
             self._refresh(); self._on_sel()
+
+        self.confirm(body + "（归档副本将一并删除，不影响其他位置的文件）",
+                     _do_remove, yes_label="移除")
 
     def _reclassify(self):
         keys = self._selected_leaves()

@@ -9,7 +9,7 @@ BasePage —— 功能页公共骨架
 import os
 import traceback
 
-from PySide2.QtCore import Qt
+from PySide2.QtCore import Qt, QTimer
 from PySide2.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                                QScrollArea, QFrame)
 
@@ -25,6 +25,10 @@ class BasePage(QWidget):
         super(BasePage, self).__init__()
         self.main = main
         self._worker = None
+        self._scan_worker = None        # 预扫描 Worker(与运行 Worker 分开,互不打断)
+        self._scan_gen = 0              # 代次守卫:丢弃过期扫描结果(相当于"取消")
+        self._scan_cache = {}           # path -> (mtime, result),按 mtime 失效
+        self._scan_timer = None         # 防抖定时器
         outer = QVBoxLayout(self)
         outer.setContentsMargins(28, 22, 28, 22)
         outer.setSpacing(14)
@@ -125,6 +129,74 @@ class BasePage(QWidget):
         self._worker = w
         w.start()
 
+    # ---------- 选择即扫描(预检,不写盘) ----------
+    _SCAN_DEBOUNCE_MS = 250
+
+    def scan_on_select(self, path, analyze_fn, on_ready, debounce_ms=None):
+        """用户选/切文件后调用:防抖 + 后台跑 analyze_fn(path,log=) + 按 mtime 缓存。
+
+        - analyze_fn: 只读预检函数(如 delivery_core.analyze),返回可缓存的结果对象。
+        - on_ready(result): 主线程回调,拿到预检结果(缓存命中则同步立即回调)。
+        - 快速连点/切换只跑最后一次(防抖);过期结果被代次守卫丢弃(可取消)。
+        - "生成"按钮不该依赖此扫描,仍各自写盘;此处只为提前反馈。"""
+        if not path:
+            return
+        # 缓存命中(且文件未变)直接回调,不起线程
+        cached = self._scan_cache.get(path)
+        try:
+            mtime = os.path.getmtime(path)
+        except OSError:
+            mtime = None
+        if cached and mtime is not None and cached[0] == mtime:
+            on_ready(cached[1])
+            return
+        # 防抖:重置定时器,只跑最后一次
+        if self._scan_timer is not None:
+            self._scan_timer.stop()
+        t = QTimer(self)
+        t.setSingleShot(True)
+        t.timeout.connect(lambda: self._start_scan(path, mtime, analyze_fn, on_ready))
+        t.start(self._SCAN_DEBOUNCE_MS if debounce_ms is None else debounce_ms)
+        self._scan_timer = t
+
+    def _start_scan(self, path, mtime, analyze_fn, on_ready):
+        self._scan_gen += 1
+        gen = self._scan_gen
+
+        def job(log):
+            return analyze_fn(path, log=log)
+
+        w = Worker(job)
+
+        def _ok(res, g=gen, p=path, mt=mtime):
+            if g != self._scan_gen:
+                return                          # 已被更晚的选择取代 -> 丢弃(取消)
+            if mt is not None:
+                self._scan_cache[p] = (mt, res)
+            try:
+                on_ready(res)
+            except Exception:
+                pass
+
+        def _err(msg, tb, g=gen):
+            if g != self._scan_gen:
+                return
+            try:
+                on_ready(None)                  # 预检失败不打断主流程,交回调决定
+            except Exception:
+                pass
+
+        w.sig_done.connect(_ok)
+        w.sig_error.connect(_err)
+        self._scan_worker = w                   # 存引用防 GC
+        w.start()
+
+    def cancel_scan(self):
+        """作废在途预扫描结果(如离开页面 / 清空文件时)。"""
+        self._scan_gen += 1
+        if self._scan_timer is not None:
+            self._scan_timer.stop()
+
     def _finish_ok(self, res, panel, on_done):
         panel.busy(False)
         try:
@@ -198,3 +270,10 @@ class BasePage(QWidget):
         """页内警告提示（替代 warning 弹窗）。"""
         body = ("%s：%s" % (title, text)) if title else text
         self.notice.show_notice("warn", body)
+
+    def confirm(self, text, on_yes, yes_label="确定", kind="warn"):
+        """页内确认(替代 QMessageBox.question 打断式弹窗)。
+
+        通知条右侧给一个确认按钮,点击才执行 on_yes;点关闭即取消。用于删除/覆盖
+        等破坏性操作前的二次确认——不打断、就地可见、默认不执行。"""
+        self.notice.show_notice(kind, text, actions=[(yes_label, on_yes)])

@@ -22,6 +22,7 @@ EXCEL_EXT = (".xlsx", ".xlsm", ".xls")
 
 class FileZone(QFrame):
     changed = Signal(list)     # 文件列表变化时发出当前路径列表
+    file_clicked = Signal(str) # 单击某个文件行时发出其路径(供侧栏预览)
 
     def __init__(self, index, title, hint, multi=True,
                  only_xlsx=False, detail="", library_cats=None, parent=None,
@@ -82,6 +83,7 @@ class FileZone(QFrame):
         self.listw = QListWidget()
         self.listw.setFixedHeight(78 if self._multi else 40)
         self.listw.itemDoubleClicked.connect(lambda *_: self._remove_selected())
+        self.listw.itemClicked.connect(self._on_item_clicked)
         lay.addWidget(self.listw)
 
         btns = QHBoxLayout()
@@ -169,6 +171,12 @@ class FileZone(QFrame):
     def _clean(self, raw):
         s = str(raw).strip().strip("{}").strip('"').strip("'")
         return s
+
+    def _on_item_clicked(self, item):
+        """单击文件行 -> 发路径,供主窗口在侧栏预览。行序与 self._paths 对齐。"""
+        r = self.listw.row(item)
+        if 0 <= r < len(self._paths):
+            self.file_clicked.emit(self._paths[r])
 
     def _remove_selected(self):
         rows = sorted(r for r in (self.listw.row(i) for i in self.listw.selectedItems())

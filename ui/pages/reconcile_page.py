@@ -88,14 +88,14 @@ class ReconcilePage(BasePage):
         panel = ReconcileReviewPanel(plan)
         panel.accepted.connect(self._do_review_run)
         panel.cancelled.connect(self._cancel_review)
-        self.main.open_panel(panel, "人工确认 · 工时对账")
+        self.main.open_panel(panel, "人工确认 · 工时对账", key="review")
 
     def _cancel_review(self):
-        self.main.close_panel()
+        self.main.close_panel("review")
         self.panel.log_line("已取消人工确认。")
 
     def _do_review_run(self, choices):
-        self.main.close_panel()
+        self.main.close_panel("review")
         tgt, src, labor = self._review_ctx
         self.launch(lambda log: reconcile_core.run(tgt, src, labor, opts=self.opts,
                                                     log=log, choices=choices),
