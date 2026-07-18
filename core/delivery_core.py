@@ -102,28 +102,31 @@ def load_sheet(path, sheet=None, log=None):
     已过滤空编码行与合计/小计行。
     """
     wb = openpyxl.load_workbook(path, data_only=True)
-    ws = wb[sheet] if sheet else wb[wb.sheetnames[0]]
-    header_row, col = detect_layout(ws, log=log)
-    if not header_row:
-        raise ValueError("未能在 %s / %s 中识别表头（需含“物料号/编码”列）"
-                         % (os.path.basename(path), ws.title))
-    rows = []
-    for r in range(header_row + 1, ws.max_row + 1):
-        code = ws.cell(r, col["code"]).value
-        if code is None or norm_code(code) == "":
-            continue
-        cn = ws.cell(r, col["cname"]).value if "cname" in col else None
-        if isinstance(cn, str) and ("合计" in cn or "小计" in cn or "总计" in cn):
-            continue
-        rows.append({
-            "r": r, "code": code, "cname": cn,
-            "ename": ws.cell(r, col["ename"]).value if "ename" in col else None,
-            "qty": ws.cell(r, col["qty"]).value if "qty" in col else None,
-            "sup_code": ws.cell(r, col["sup_code"]).value if "sup_code" in col else None,
-            "sup_name": ws.cell(r, col["sup_name"]).value if "sup_name" in col else None,
-            "attr": ws.cell(r, col["attr"]).value if "attr" in col else None,
-        })
-    return rows, {"sheet": ws.title, "header_row": header_row, "col": col}
+    try:
+        ws = wb[sheet] if sheet else wb[wb.sheetnames[0]]
+        header_row, col = detect_layout(ws, log=log)
+        if not header_row:
+            raise ValueError("未能在 %s / %s 中识别表头（需含“物料号/编码”列）"
+                             % (os.path.basename(path), ws.title))
+        rows = []
+        for r in range(header_row + 1, (ws.max_row or header_row) + 1):
+            code = ws.cell(r, col["code"]).value
+            if code is None or norm_code(code) == "":
+                continue
+            cn = ws.cell(r, col["cname"]).value if "cname" in col else None
+            if isinstance(cn, str) and ("合计" in cn or "小计" in cn or "总计" in cn):
+                continue
+            rows.append({
+                "r": r, "code": code, "cname": cn,
+                "ename": ws.cell(r, col["ename"]).value if "ename" in col else None,
+                "qty": ws.cell(r, col["qty"]).value if "qty" in col else None,
+                "sup_code": ws.cell(r, col["sup_code"]).value if "sup_code" in col else None,
+                "sup_name": ws.cell(r, col["sup_name"]).value if "sup_name" in col else None,
+                "attr": ws.cell(r, col["attr"]).value if "attr" in col else None,
+            })
+        return rows, {"sheet": ws.title, "header_row": header_row, "col": col}
+    finally:
+        wb.close()
 
 
 def _has_supplier(layout):
@@ -353,25 +356,28 @@ def build_case_map(path, log=None):
     except Exception as e:
         _lg("参考送货计划读取失败，已跳过 CASE/班组：%s" % e)
         return {}
-    for name in wb.sheetnames:
-        ws = wb[name]
-        hr, col = _match_ref_header(ws)
-        if not hr:
-            continue
-        m = {}
-        for r in range(hr + 1, ws.max_row + 1):
-            code = norm_code(ws.cell(r, col["code"]).value)
-            if not code or code in m:
+    try:
+        for name in wb.sheetnames:
+            ws = wb[name]
+            hr, col = _match_ref_header(ws)
+            if not hr:
                 continue
-            ca = cell_text(ws.cell(r, col["case"]).value) if "case" in col else ""
-            cq = ws.cell(r, col["case_qty"]).value if "case_qty" in col else None
-            tm = cell_text(ws.cell(r, col["team"]).value) if "team" in col else ""
-            if ca or cq is not None or tm:
-                m[code] = (ca or None, cq, tm or None)
-        _lg("参考送货计划：从工作表「%s」读到 %d 条 CASE/班组 记录。" % (name, len(m)))
-        return m
-    _lg("参考送货计划里未找到含「物料编码 + CASE/班组」的表，已跳过。")
-    return {}
+            m = {}
+            for r in range(hr + 1, (ws.max_row or hr) + 1):
+                code = norm_code(ws.cell(r, col["code"]).value)
+                if not code or code in m:
+                    continue
+                ca = cell_text(ws.cell(r, col["case"]).value) if "case" in col else ""
+                cq = ws.cell(r, col["case_qty"]).value if "case_qty" in col else None
+                tm = cell_text(ws.cell(r, col["team"]).value) if "team" in col else ""
+                if ca or cq is not None or tm:
+                    m[code] = (ca or None, cq, tm or None)
+            _lg("参考送货计划：从工作表「%s」读到 %d 条 CASE/班组 记录。" % (name, len(m)))
+            return m
+        _lg("参考送货计划里未找到含「物料编码 + CASE/班组」的表，已跳过。")
+        return {}
+    finally:
+        wb.close()
 
 
 def run(file_a, file_b, sheet_a=None, sheet_b=None, out_dir=None, log=None,
@@ -383,6 +389,12 @@ def run(file_a, file_b, sheet_a=None, sheet_b=None, out_dir=None, log=None,
     def _lg(msg):
         if log:
             log(msg)
+
+    # 物料清单"需求数/数量"若是未刷新的公式,data_only 读为 None → 送货计划需求数
+    # 静默留空。入口两份表都先查一遍(此刻还没辨识主表),把隐患变成可见提示。
+    from . import common_core
+    common_core.warn_if_uncached(file_a, _lg, sheet_a, what="需求数/数量")
+    common_core.warn_if_uncached(file_b, _lg, sheet_b, what="需求数/数量")
 
     rows_a, lay_a = load_sheet(file_a, sheet_a, log=_lg)
     rows_b, lay_b = load_sheet(file_b, sheet_b, log=_lg)

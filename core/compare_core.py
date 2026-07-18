@@ -49,6 +49,23 @@ def _eq(a, b):
     return a == b
 
 
+def _key_str(v):
+    """关键列键的归一化字符串。
+
+    数字与其整数/文本形态视为同键:公式算出的 10.0、手填的整数 10、文本 "10"
+    都归一到 "10"(否则同一行会被误判成"只在单边")。但纯文本编码保持原样,
+    不把 "001" 折成 "1"、不动 "1,234"——编码列的前导零/千分位有意义。
+    """
+    if v is None:
+        return ""
+    if isinstance(v, bool):
+        return str(v)
+    if isinstance(v, numbers.Number):
+        f = float(v)
+        return str(int(f)) if f.is_integer() else repr(f)
+    return str(v).strip()
+
+
 def _open_ws(path, sheet=None):
     wb = openpyxl.load_workbook(path, data_only=True)
     ws = wb[sheet] if sheet else wb[wb.sheetnames[0]]
@@ -59,7 +76,7 @@ def _detect_header_row(ws, scan_rows=15):
     """取前 scan_rows 行里"非空单元格最多"的一行作表头行(1-based)。
     通用启发式:不依赖具体字段名,适配任意表。空表返回 None。"""
     best_row, best_cnt = None, 0
-    for r in range(1, min(scan_rows, ws.max_row) + 1):
+    for r in range(1, min(scan_rows, ws.max_row or 0) + 1):   # 空表 max_row 可能为 None
         cnt = sum(1 for c in range(1, ws.max_column + 1)
                   if _norm_cell(ws.cell(r, c).value) != "")
         if cnt > best_cnt:
@@ -134,11 +151,15 @@ def common_columns(headers_a, headers_b):
 
 
 def _index_by_key(rows, key):
-    """按关键列建索引 {键: [行...]}。键归一化为字符串,空键行单独收集。"""
+    """按关键列建索引 {键: [行...]}。键归一化为字符串,空键行单独收集。
+
+    键用 _key_str 归一:数字 10 / 10.0 / 文本 "10" 视为同键,乱序两表仍能对上;
+    文本编码("001"、"1,234")保持原样不折叠。
+    """
     idx, blank = {}, []
     for row in rows:
         k = row.get(key)
-        ks = "" if k is None else str(k).strip()
+        ks = _key_str(k)
         if ks == "":
             blank.append(row)
             continue
@@ -256,6 +277,10 @@ def export_report(result, out_dir=None, out_name="差异报告.xlsx", log=None):
 def run(file_a, file_b, key, sheet_a=None, sheet_b=None, columns=None,
         out_dir=None, log=None):
     """完整流程:读两表 -> 比对 -> 导出报告。返回 result + report_path/out_dir。"""
+    if log:                       # 公式未刷新→读为空→误报差异,先给用户可见警告
+        from . import common_core
+        common_core.warn_if_uncached(file_a, log, sheet_a, what="比对数据")
+        common_core.warn_if_uncached(file_b, log, sheet_b, what="比对数据")
     ha, ra = read_table(file_a, sheet_a)
     hb, rb = read_table(file_b, sheet_b)
     if log:

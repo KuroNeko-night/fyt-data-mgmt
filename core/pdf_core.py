@@ -11,6 +11,7 @@ PDF 工具箱核心 —— 合并 / 拆分 / 提取·删除页,基于 pypdf(纯 
 兼容 Windows 7 + Python 3.8。pypdf==4.3.1。
 """
 import os
+import io
 
 from . import paths as _paths
 
@@ -67,9 +68,18 @@ def parse_pages(spec, total):
 
 
 def _open_reader(path):
-    """打开 PDF;加密的空密码尝试解密,失败则抛面向用户的异常。"""
+    """打开 PDF;加密的空密码尝试解密,失败则抛面向用户的异常。
+
+    先把整份文件读进内存 BytesIO 再交给 pypdf —— PdfReader(路径) 会持有底层
+    文件句柄直到 GC,Windows 上会锁住源文件(处理完删不掉/存不回)。读进内存后
+    OS 句柄当即释放,发票级 PDF 内存开销可忽略。
+    """
     try:
-        r = PdfReader(path)
+        with open(path, "rb") as fh:
+            data = fh.read()
+        r = PdfReader(io.BytesIO(data))
+    except PdfError:
+        raise
     except Exception as e:
         raise PdfError("无法读取「%s」:文件可能损坏或不是有效 PDF(%s)"
                        % (os.path.basename(path), e))

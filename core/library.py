@@ -429,8 +429,10 @@ def import_file(path, log=None):
                 os.remove(bak)
             shutil.copy2(dst, bak)
             replaced = True
-        except Exception:
-            pass
+        except Exception as e:
+            # 备份失败别静默:后面 os.replace 会覆盖旧归档,无 .bak 可退。
+            # 至少让用户看见"旧版本未备份",而不是以为一切正常。
+            _lg("⚠ 旧版本备份失败(将被新版覆盖,无法回退):%s" % e)
     items = [it for it in items
              if not (it.get("category") == cat and it.get("name") == fname)]
 
@@ -486,7 +488,8 @@ def remove_item(category, name, delete_file=True):
     idx = _load_index()
     keep, gone = [], []
     for it in idx["items"]:
-        if it.get("category") == category and it.get("name") == name:
+        # 按任一标签匹配:多标签文件在附加标签下也可见,须能从该标签删除
+        if category in _item_cats(it) and it.get("name") == name:
             gone.append(it)
         else:
             keep.append(it)
@@ -509,7 +512,8 @@ def reclassify(category, name, new_category):
         return False
     idx = _load_index()
     for it in idx["items"]:
-        if it.get("category") == category and it.get("name") == name:
+        # 按任一标签匹配:多标签文件在附加标签下也可见,须能从该标签改判
+        if category in _item_cats(it) and it.get("name") == name:
             src = it.get("path", "")
             dst = os.path.join(_cat_dir(new_category), name)
             try:

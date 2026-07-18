@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-更新检查（为 GitHub Releases 预留，仓库暂未创建）
-==================================================
-设计目标：仓库还没建时也不报错；日后在 version.py 填好 OWNER/REPO 或
-UPDATE_MANIFEST_URL 即可自动生效，无需改动本文件或界面。
+更新检查（GitHub Releases）
+============================
+更新源在 version.py 配置：填了 OWNER/REPO 或 UPDATE_MANIFEST_URL 即启用
+(当前已配置)；两者都留空时 check_update() 返回 None、界面不显示任何东西,
+不报错。改更新源只需动 version.py,无需改本文件或界面。
 
 更新清单(manifest) 约定为一个 JSON：
     {

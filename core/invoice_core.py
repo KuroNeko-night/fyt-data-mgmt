@@ -141,7 +141,7 @@ def _item_seed(raw):
     """费用项目种子：取开票人后那行 *类目*货物名 里的中文片段，去开票人姓名。"""
     for ln in raw.splitlines():
         s = ln.strip()
-        if s.count("*") >= 2 and "服务" not in s[:1]:
+        if s.count("*") >= 2:
             # 形如  葛亚茹*生产生活服务*设备租赁费徐工XCB35...
             parts = [p for p in s.split("*") if p.strip()]
             # 丢掉首段开票人姓名（2-4 个纯汉字），拼出“类目/品名”

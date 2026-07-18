@@ -682,9 +682,6 @@ def _esc(s):
     return (str(s).replace("&", "&amp;").replace("<", "&lt;")
             .replace(">", "&gt;").replace('"', "&quot;"))
 
-def _is_blank(v):
-    return v is None or str(v).strip() == ""
-
 def _num(v):
     # bool 是 int 子类, float(True)=1.0 会把 TRUE/FALSE 当 1/0 求和, 先排除
     if isinstance(v, bool):
@@ -728,6 +725,11 @@ def build_fields_meta(rows):
                     n = _num(v)
                     info["vmin"] = n if info["vmin"] is None else min(info["vmin"], n)
                     info["vmax"] = n if info["vmax"] is None else max(info["vmax"], n)
+                elif fi == DATA_FIELD:
+                    # 度量列(最终采购数量)混入的非数字文本(如"见附表")按空处理:
+                    # aggregate 也把它当 0 求和; 若因此把整个度量字段标成字符串,
+                    # Excel 透视刷新后该字段求和会归零, 与静态总计背离。故不置 has_str。
+                    info["has_blank"] = True
                 else:
                     info["has_str"] = True
         meta.append(info)
@@ -791,14 +793,17 @@ def cache_records_xml(rows, meta):
                 key = "" if _is_blank(v) else str(v).strip()
                 cells.append('<x v="%d"/>' % m["map"][key])
             else:
+                n = _num(v)
                 if _is_blank(v):
                     cells.append("<m/>")
+                elif n is not None and not m["has_str"]:
+                    cells.append('<n v="%s"/>' % n)
+                elif m["idx"] == DATA_FIELD:
+                    # 度量列的非数字文本按空(<m/>)缓存,与 has_str 不提升、
+                    # 与 aggregate 的"文本计 0"保持一致,避免刷新后求和归零。
+                    cells.append("<m/>")
                 else:
-                    n = _num(v)
-                    if n is not None and not m["has_str"]:
-                        cells.append('<n v="%s"/>' % n)
-                    else:
-                        cells.append('<s v="%s"/>' % _esc(v))
+                    cells.append('<s v="%s"/>' % _esc(v))
         parts.append("<r>%s</r>" % "".join(cells))
     parts.append('</pivotCacheRecords>')
     return "".join(parts)

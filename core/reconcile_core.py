@@ -1027,6 +1027,7 @@ def run(target_path, source_paths, labor_paths, out_dir=None, log=None, opts=Non
     labor_meta = []
     dup_count = 0
     for p in labor_paths:
+        cc.warn_if_uncached(p, _lg, what="工时")   # 劳务对账单工时列公式未刷新→静默丢数,先提示
         one = load_labor(p, log=_lg, meta=labor_meta, opts=opts)
         src_name = os.path.basename(p)
         for nm, info in one.items():

@@ -50,7 +50,8 @@ class RenameRule(object):
 def _new_filename(old_name, rule, index):
     """根据规则算出单个文件的新文件名(仅名字，不含目录)。index 从 0 起用于序号。
 
-    处理顺序：拆分主名/扩展名 → (整体替换)base_name → 查找替换 → 前后缀 → 序号 → 扩展名。
+    处理顺序：拆分主名/扩展名 → (整体替换)base_name → 查找替换 → 序号 → 前后缀 → 扩展名。
+    (序号先加在主名尾、再包前后缀,故结果为 前缀+主名+序号+后缀.扩展名,与页面提示一致)
     顺序固定且可预测，页面提示区会向用户说明。"""
     stem, ext = os.path.splitext(old_name)
     if rule.ext_lower:

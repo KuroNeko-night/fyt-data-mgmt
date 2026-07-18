@@ -26,7 +26,8 @@ def detect_layout(ws, header_keys, require, scan_rows=12, exclude_contains=None,
     """
     exclude_contains = exclude_contains or {}
     best_row, best_map = None, {}
-    for r in range(1, min(scan_rows, ws.max_row) + 1):
+    # 空表/只读表未迭代时 max_row 可能为 None,or 0 兜底避免 min() 抛 TypeError
+    for r in range(1, min(scan_rows, ws.max_row or 0) + 1):
         col_map = {}
         used = set()
         # 先精确后包含:避免"编码"抢占"供应商编码"、"编号"抢占"材料编号"等。

@@ -301,9 +301,13 @@ def build_batches(rows_data, top_label, log=None):
             continue
         materials = extract_unreceived(row["path"], log=log)
         bn = row.get("batch_no") or detect_batch(row["path"])
-        # 界面留空时 total 可能为 None/""; int(None) 会崩, 取值后判空再回退默认值
+        # 界面留空时 total 可能为 None/""/带小数或千分位的文本; int("566.0")、
+        # int("5,66") 都会抛 ValueError, 统一 float() 兜一层再取整, 失败回退默认值
         tv = row.get("total", DEFAULT_TOTAL)
-        total = int(tv) if tv not in (None, "") else DEFAULT_TOTAL
+        try:
+            total = DEFAULT_TOTAL if tv in (None, "") else int(float(str(tv).replace(",", "")))
+        except (ValueError, TypeError):
+            total = DEFAULT_TOTAL
         remark = row.get("remark", "")
         batches.append({"batch_no": bn, "materials": materials,
                         "total": total, "remark": remark})
