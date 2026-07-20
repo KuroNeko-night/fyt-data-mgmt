@@ -10,7 +10,6 @@
 import os
 import sys
 import traceback
-import datetime
 
 # 让 "from core ... / from ui ..." 在任意工作目录下都可导入
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -72,12 +71,7 @@ def _write_crash(exc_type, exc_value, tb):
     """全局异常兜底：写日志 + 弹窗，避免程序静默崩溃。"""
     from core import paths
     text = "".join(traceback.format_exception(exc_type, exc_value, tb))
-    stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    try:
-        with open(paths.crash_log_path(), "a", encoding="utf-8") as f:
-            f.write("\n===== %s =====\n%s\n" % (stamp, text))
-    except Exception:
-        pass
+    paths.append_crash_log(text)        # 统一写入,带体积轮转,内部静默失败
     try:
         from PySide2.QtWidgets import QMessageBox, QApplication
         if QApplication.instance():

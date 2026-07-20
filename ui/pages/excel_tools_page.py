@@ -22,13 +22,15 @@ class ExcelToolsPage(BasePage):
             "多张同结构表纵向合并。基于本机处理。")
 
     def build_body(self, layout):
-        layout.addWidget(self._mode_card())
+        self._mc = self._mode_card()
+        layout.addWidget(self._mc)
         self.zone = FileZone(1, "表格文件", "拖入或选择 .xlsx/.xlsm/.xls/.csv,可多选。",
                              multi=True, exts=_XL_EXTS, file_filter=_XL_FILTER,
                              detail="合并/纵向合并需≥2个;按Sheet拆分只处理第1个文件。")
         self.zone.changed.connect(self._refresh)
         layout.addWidget(self.zone)
-        layout.addWidget(self._param_card())
+        self._pc = self._param_card()
+        layout.addWidget(self._pc)
 
         self.panel = RunPanel("开始处理")
         self.panel.run_btn.clicked.connect(self._run)
@@ -139,3 +141,22 @@ class ExcelToolsPage(BasePage):
 
     def _open(self):
         self.open_folder(self._out_dir)
+
+    def guide_steps(self):
+        return [
+            (None, "欢迎使用 Excel 工具箱",
+             "多个工作簿合并、按工作表拆分、xls/xlsx/CSV 格式转换、\n"
+             "多张同结构表纵向合并。基于本机处理。"),
+            (self._mc, "① 选操作",
+             "先选要做什么:多簿合并、按 Sheet 拆分、格式转换、纵向合并同结构。\n"
+             "下方参数与需要的文件数会随之变化。"),
+            (self.zone, "② 放表格文件",
+             "拖入或选择 .xlsx/.xlsm/.xls/.csv。\n"
+             "合并/纵向合并需 ≥2 个文件;按 Sheet 拆分只处理第 1 个。"),
+            (self._pc, "③ 设选项",
+             "格式转换选目标格式;纵向合并可指定首行是否表头(会加「来源文件」列);\n"
+             "多簿合并可选是否保留公式。卡片下方有当前操作的说明。"),
+            (self.panel, "开始处理 · 看结果",
+             "点「开始处理」。完成后状态行显示生成了几个文件,\n"
+             "点「打开输出文件夹」查看。"),
+        ]

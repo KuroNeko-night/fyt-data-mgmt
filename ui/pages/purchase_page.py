@@ -35,7 +35,8 @@ class PurchasePage(BasePage):
             z.changed.connect(self._refresh)
             layout.addWidget(z)
 
-        layout.addWidget(self._name_card())
+        self._nm_card = self._name_card()
+        layout.addWidget(self._nm_card)
 
         self.panel = RunPanel("开始对账")
         self.panel.run_btn.clicked.connect(self._run)
@@ -118,3 +119,21 @@ class PurchasePage(BasePage):
                 os.startfile(self._report)
         except Exception:
             pass
+
+    def guide_steps(self):
+        return [
+            (None, "欢迎使用采购数对账",
+             "这个页面把我方对账单与供应商对单逐行核对,数量列上色(绿=对上、黄=没对上),\n"
+             "并生成一张并排汇报单标出未对上原因。跟着高亮走一遍即可。"),
+            (self.z_ours, "① 放我方对账单(单个)",
+             "我方导出的采购/对账明细,选 1 个。\n"
+             "程序在这张表的数量列上色,并作为汇报单的「我方」一侧。"),
+            (self.z_supp, "② 放供应商对单明细(单个)",
+             "供应商发来的对单,选 1 个。\n"
+             "与我方逐行比对,作为汇报单的「供方」一侧。"),
+            (self._nm_card, "③ 双方名称(可选)",
+             "填了就显示在汇报单里(如具体供应商名);留空则用通用的「我方/供方」。"),
+            (self.panel, "开始对账 · 看汇报单",
+             "点「开始对账」。完成后状态行给出配对数、双方未对上条数与数量疑点数;\n"
+             "点「打开汇报单」看并排核对结果,或「打开输出文件夹」看上色后的两张表。"),
+        ]

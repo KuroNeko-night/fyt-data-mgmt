@@ -26,6 +26,7 @@ class ArrivalPage(BasePage):
         tv.addWidget(QLabel("表头标签："))
         self.ed_label = QLineEdit(self.settings.arrival.get("top_label", "截止16点的数据"))
         tv.addWidget(self.ed_label, 1)
+        self._label_card = top
         layout.addWidget(top)
 
         self.zone = FileZone(1, "送货计划表", "含未收料数据的送货计划，可多选/拖拽。",
@@ -45,6 +46,7 @@ class ArrivalPage(BasePage):
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
         self.table.setMinimumHeight(140)
         cv.addWidget(self.table)
+        self._batch_card = card
         layout.addWidget(card)
 
         self.panel = RunPanel("生成到料明细")
@@ -129,3 +131,21 @@ class ArrivalPage(BasePage):
 
     def _open(self):
         self.open_folder(self._out_dir)
+
+    def guide_steps(self):
+        return [
+            (None, "欢迎使用到料明细表",
+             "这个页面扫描送货计划表,统计未收料物料,生成每日主料到料明细\n"
+             "(样式与示例一致)。跟着高亮走一遍即可上手。"),
+            (self.zone, "① 放送货计划表",
+             "把含未收料数据的送货计划拖到这里,可多选。\n"
+             "程序按表头文字自动识别列(物料编码/名称/供应商/需求数/剩余未收数),表头顺序不同也认得。"),
+            (self._batch_card, "② 核对批次设置",
+             "程序自动识别每个文件的批次号。这里可改「主料总共类」数与「备注」,\n"
+             "改过的值会被记住,下次同批次自动回填。"),
+            (self._label_card, "③ 表头标签(可选)",
+             "生成表顶部显示的说明文字,默认「截止16点的数据」,可按需要改。"),
+            (self.panel, "生成 · 看结果",
+             "点「生成到料明细」。完成后状态行汇报各批次未收料类数与到货数,\n"
+             "点「打开输出文件夹」查看生成的明细表。"),
+        ]

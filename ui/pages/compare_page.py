@@ -39,7 +39,8 @@ class ComparePage(BasePage):
             z.changed.connect(self._refresh)
             layout.addWidget(z)
 
-        layout.addWidget(self._key_card())
+        self._kc = self._key_card()
+        layout.addWidget(self._kc)
 
         self.panel = RunPanel("开始比对")
         self.panel.run_btn.clicked.connect(self._run)
@@ -140,3 +141,21 @@ class ComparePage(BasePage):
                 os.startfile(self._report)          # 直接打开报告文件
         except Exception:
             pass
+
+    def guide_steps(self):
+        return [
+            (None, "欢迎使用表格比对",
+             "这个页面把两份 Excel 按「关键列」配对核对,找出值差异与只在单边的行。\n"
+             "适合核对程序输出与手工结果、两版数据、交接复核。跟着高亮走一遍即可。"),
+            (self.z_a, "① 放 A 表(单个)",
+             "拖入或选择一个 .xlsx/.xlsm。通常放程序输出或新版。"),
+            (self.z_b, "② 放 B 表(单个)",
+             "再放另一个表。通常放手工结果或旧版。\n"
+             "两表选好后,程序自动读表头列出它们的公共列。"),
+            (self._kc, "③ 选关键列",
+             "从下拉里选一个两表都有的列(如「物料编码」)作为配对依据。\n"
+             "程序按这一列把两表的行一一对上,再逐列比对其余值。"),
+            (self.panel, "开始比对 · 看结果",
+             "点「开始比对」。完成后右侧面板展示明细(差异红、单边黄),\n"
+             "同时导出一份带高亮的 Excel 报告——点「打开报告」看,或「打开输出文件夹」。"),
+        ]

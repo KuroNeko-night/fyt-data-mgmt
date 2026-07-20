@@ -29,10 +29,28 @@ class TextPage(BasePage):
 
     def build_body(self, layout):
         top = QHBoxLayout(); top.setSpacing(14)
-        top.addWidget(self._editor_card("原文本", True), 1)
-        top.addWidget(self._editor_card("结果", False), 1)
+        self._src_card = self._editor_card("原文本", True)
+        self._dst_card = self._editor_card("结果", False)
+        top.addWidget(self._src_card, 1)
+        top.addWidget(self._dst_card, 1)
         layout.addLayout(top, 1)
-        layout.addWidget(self._ops_card())
+        self._ops = self._ops_card()
+        layout.addWidget(self._ops)
+
+    def guide_steps(self):
+        return [
+            (None, "欢迎使用文本工具箱",
+             "粘贴或输入文本,按需一键处理:去重、排序、去空行、加行号、\n"
+             "提取邮箱/手机号/网址等。纯本地处理,结果可复制或回填。"),
+            (self._src_card, "① 粘贴原文本",
+             "把要处理的文本粘到左边这块。底部实时显示行数与字符数。"),
+            (self._ops, "② 选操作",
+             "点上排复选框调整选项(忽略大小写、按数字排序、降序、行号补零),\n"
+             "再点下方任一操作按钮执行。结果立刻出现在右边。"),
+            (self._dst_card, "③ 取结果",
+             "处理结果显示在右边。点「复制结果」放进剪贴板,\n"
+             "或「← 回填到原文本」把结果送回左边继续叠加处理。"),
+        ]
 
     def _editor_card(self, title, is_src):
         card = QFrame(); card.setObjectName("Card")

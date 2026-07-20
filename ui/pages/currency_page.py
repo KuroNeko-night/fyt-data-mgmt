@@ -66,3 +66,15 @@ class CurrencyPage(BasePage):
 
     def on_theme_changed(self):
         super(CurrencyPage, self).on_theme_changed()
+
+    def guide_steps(self):
+        return [
+            (None, "欢迎使用金额大写",
+             "输入阿拉伯数字金额,自动转成规范的中文大写人民币,开票、合同、报销可直接用。"),
+            (self.ed, "① 输入金额",
+             "在这里输入数字,如 12345.6。支持负数与千分位逗号,边输边转。"),
+            (self.out, "② 看大写结果",
+             "转换结果实时显示在这里,如「壹万贰仟叁佰肆拾伍元陆角整」。可用鼠标选中复制。"),
+            (self.btn_copy, "③ 一键复制",
+             "点「复制大写」把结果放进剪贴板,直接粘到票据/合同里即可。"),
+        ]

@@ -335,6 +335,13 @@ QPushButton#Mini {{
 }}
 QPushButton#Mini:hover {{ background: {mini_hover}; color: {text}; }}
 
+/* 页面右上角「使用指引」浮动按钮:低调的强调色胶囊,带问号语气 */
+QPushButton#GuideBtn {{
+    background: {ghost_hover}; color: {accent}; border: 1px solid {accent};
+    border-radius: 13px; padding: 5px 14px; font-size: 12px;
+}}
+QPushButton#GuideBtn:hover {{ background: {accent}; color: #ffffff; }}
+
 /* 折叠"详细信息"链接式按钮 */
 QPushButton#Link {{
     background: transparent; color: {sub}; border: none; padding: 3px 2px;
@@ -466,27 +473,25 @@ QPushButton#NavToggle {{
 QPushButton#NavToggle:hover {{ background: {sidebar_h}; color: {brand_fg}; }}
 QPushButton#NavToggle:pressed {{ background: {sidebar_a}; }}
 
-/* ---------- 右侧滑出面板 ---------- */
+/* ---------- 右侧选项卡面板 ---------- */
 QFrame#RightPanel {{ background: {surface}; border-left: 1px solid {line}; }}
-QFrame#PanelHeader {{
-    background: {surface2}; border-bottom: 1px solid {line};
-}}
-QLabel#PanelTitle {{ font-size: 13px; font-weight: bold; color: {heading}; background: transparent; }}
-QPushButton#PanelClose {{
-    background: transparent; color: {sub}; border: none; border-radius: 14px; font-size: 14px;
-}}
-QPushButton#PanelClose:hover {{ background: {mini_hover}; color: {err}; }}
 QScrollArea#PanelScroll {{ background: {surface}; border: none; }}
-QFrame#PanelSection {{ background: {surface}; }}
-QWidget#PanelEmpty {{ background: {surface}; }}
-QLabel#PanelEmptyHint {{ color: {sub}; font-size: 12px; background: transparent; }}
-QPushButton#PanelFold {{
-    background: transparent; color: {sub}; border: none; font-size: 12px;
+QTabWidget#PanelTabs::pane {{ border: none; background: {surface}; }}
+QTabWidget#PanelTabs > QTabBar {{ background: {surface2}; }}
+QTabWidget#PanelTabs QTabBar::tab {{
+    background: transparent; color: {sub};
+    border: none; border-bottom: 2px solid transparent;
+    padding: 8px 12px; margin: 0; font-size: 12px; min-height: 24px;
 }}
-QPushButton#PanelFold:hover {{ color: {accent}; }}
-QSplitter#PanelSplitter::handle {{ background: {line}; }}
-QSplitter#PanelSplitter::handle:vertical {{ height: 1px; }}
-QSplitter#PanelSplitter::handle:hover {{ background: {accent}; }}
+QTabWidget#PanelTabs QTabBar::tab:hover {{ color: {heading}; }}
+QTabWidget#PanelTabs QTabBar::tab:selected {{
+    color: {heading}; font-weight: bold;
+    background: {surface}; border-bottom: 2px solid {accent};
+}}
+QTabWidget#PanelTabs QTabBar::close-button {{
+    subcontrol-position: right; border-radius: 7px; margin-left: 4px; padding: 1px;
+}}
+QTabWidget#PanelTabs QTabBar::close-button:hover {{ background: {mini_hover}; }}
 
 /* ---------- 文件预览 ---------- */
 QFrame#FilePreview {{ background: {surface}; }}

@@ -91,12 +91,58 @@ class BasePage(QWidget):
         else:
             row.addWidget(column, 1)          # 不限宽：内容列铺满整行
         scroll.setWidget(body_host)
+        self._scroll = scroll                         # 供引导层滚动定位目标控件
         outer.addWidget(scroll, 1)
         from .. import smooth_scroll
         self._smooth = smooth_scroll.enable(scroll)   # 平滑滚动(防 GC 存引用)
 
         self.build_body(self.body)
         self._apply_shadows()
+        self._guide = None
+        self._init_guide_button()
+
+    # ---------- 使用指引 ----------
+    def guide_steps(self):
+        """子类可覆盖,返回 [(控件或None, 标题, 说明), ...];返回空则不显示指引按钮。"""
+        return []
+
+    def _init_guide_button(self):
+        """有引导步骤的页,右上角浮一个「使用指引」按钮(不占布局,resize 时定位)。"""
+        try:
+            steps = self.guide_steps()
+        except Exception:
+            steps = []
+        if not steps:
+            self._guide_btn = None
+            return
+        from PySide2.QtWidgets import QPushButton
+        b = QPushButton("使用指引", self)
+        b.setObjectName("GuideBtn")
+        b.setCursor(Qt.PointingHandCursor)
+        b.setToolTip("分步演示这个页面怎么用、结果在哪看")
+        b.clicked.connect(self.start_guide)
+        b.adjustSize()
+        self._guide_btn = b
+        b.show()
+        self._place_guide_btn()
+
+    def _place_guide_btn(self):
+        b = getattr(self, "_guide_btn", None)
+        if b is not None:
+            b.move(max(0, self.width() - b.width() - 30), 20)
+            b.raise_()
+
+    def start_guide(self):
+        steps = self.guide_steps()
+        if not steps:
+            return
+        from ..guide import GuideOverlay
+        self._guide = GuideOverlay(self, steps, scroll=self._scroll)
+        self._guide.start()
+
+    def resizeEvent(self, e):
+        super(BasePage, self).resizeEvent(e)
+        self._place_guide_btn()
 
     def build_body(self, layout):
         """子类实现。"""
@@ -217,25 +263,31 @@ class BasePage(QWidget):
             "%s  (可点下方[详细信息]查看，或联系技术支持)" % friendly)
 
     def _friendly_error(self, msg):
-        """把常见异常翻译成客户能懂的一句话。"""
-        m = (msg or "").lower()
+        """把常见异常翻译成客户能懂的一句话。
+
+        core 抛的业务异常本身多已是友好中文(如"未能识别表头"),走默认分支加前缀即可;
+        这里主要拦截会显示成天书英文的底层系统异常(占用/找不到/损坏/磁盘满/内存不足)。"""
+        msg = msg or ""                 # None 兜底:下面用 msg 做中文子串判断,不能是 None
+        m = msg.lower()
         if "permission" in m or "拒绝访问" in msg or "being used" in m or "使用" in msg:
             return "文件正被占用或无写入权限，请关闭正在打开的表格后重试。"
         if "no such file" in m or "cannot find" in m or "找不到" in msg:
             return "找不到某个文件，可能已被移动或删除，请重新选择。"
         if "not a zip" in m or "corrupt" in m or "badzip" in m:
             return "有文件已损坏或不是有效的 Excel，请检查后重试。"
+        # 磁盘空间不足:Windows 中英文 + errno 28。存大表/大 PDF 时常见。
+        if ("no space" in m or "errno 28" in m or "空间不足" in msg
+                or "磁盘已满" in msg or "not enough space" in m):
+            return "磁盘空间不足，无法保存结果，请清理磁盘后重试。"
+        # 内存不足:超大文件一次性读入时可能触发。
+        if "memoryerror" in m or "memory" in m or "内存" in msg:
+            return "内存不足，文件可能过大，请关闭其他程序或拆分后重试。"
         return "处理时遇到问题：" + (msg or "未知错误")
 
     def _save_crash(self, tb):
-        try:
-            from core import paths
-            import datetime
-            stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            with open(paths.crash_log_path(), "a", encoding="utf-8") as f:
-                f.write("\n===== %s (处理错误) =====\n%s\n" % (stamp, tb))
-        except Exception:
-            pass
+        # 统一走 paths.append_crash_log(带体积轮转);标注"处理错误"以区别于全局崩溃
+        from core import paths
+        paths.append_crash_log("(处理错误)\n" + tb)
 
     def open_folder(self, path):
         try:

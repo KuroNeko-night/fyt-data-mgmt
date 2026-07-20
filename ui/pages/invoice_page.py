@@ -25,7 +25,8 @@ class InvoicePage(BasePage):
             "生成前可逐张人工复核。同时把专用发票单独归档，供二次核对。")
 
     def build_body(self, layout):
-        layout.addWidget(self._folder_card())
+        self._fc = self._folder_card()
+        layout.addWidget(self._fc)
         self.panel = RunPanel("扫描识别发票")
         self.panel.run_btn.clicked.connect(self._scan)
         self.btn_open = self.panel.add_action("打开输出文件夹", self._open)
@@ -132,3 +133,16 @@ class InvoicePage(BasePage):
 
     def _open(self):
         self.open_folder(self._out.get("out_dir", ""))
+
+    def guide_steps(self):
+        return [
+            (None, "欢迎使用增值税发票统计",
+             "这个页面自动识别一个文件夹里的增值税专用发票,汇总成月度台账,\n"
+             "并把专用发票单独归档供二次核对。分「扫描 → 复核 → 生成」两步。"),
+            (self._fc, "① 选资料文件夹",
+             "点「浏览…」选一个含发票 PDF 的文件夹。\n"
+             "程序会递归扫描该文件夹下所有 PDF,自动挑出增值税专用发票。"),
+            (self.panel, "② 扫描 → 复核 → 生成",
+             "点「扫描识别发票」。识别完成后右侧弹出复核面板,可逐张核对、勾选;\n"
+             "确认后自动生成月度汇总表。完成后点「打开输出文件夹」看台账与归档的发票。"),
+        ]

@@ -19,13 +19,15 @@ class PdfPage(BasePage):
             "合并多个 PDF、按页拆分、提取或删除指定页。纯本地处理,不上传。")
 
     def build_body(self, layout):
-        layout.addWidget(self._mode_card())
+        self._mc = self._mode_card()
+        layout.addWidget(self._mc)
         self.zone = FileZone(1, "PDF 文件", "拖入或选择 PDF,可多选;合并时按此顺序。",
                              multi=True, exts=[".pdf"], file_filter=_PDF_FILTER,
                              detail="合并需要 2 个及以上;拆分/提取/删除只处理第 1 个文件。")
         self.zone.changed.connect(self._refresh)
         layout.addWidget(self.zone)
-        layout.addWidget(self._param_card())
+        self._pc = self._param_card()
+        layout.addWidget(self._pc)
 
         self.panel = RunPanel("开始处理")
         self.panel.run_btn.clicked.connect(self._run)
@@ -160,3 +162,21 @@ class PdfPage(BasePage):
 
     def _open(self):
         self.open_folder(self._out_dir)
+
+    def guide_steps(self):
+        return [
+            (None, "欢迎使用 PDF 工具箱",
+             "合并多个 PDF、按页拆分、提取或删除指定页。纯本地处理,不上传。"),
+            (self._mc, "① 选操作",
+             "先选要做什么:合并、拆分、提取指定页、删除指定页。\n"
+             "选择会决定下方需要几个文件、要不要填页码。"),
+            (self.zone, "② 放 PDF 文件",
+             "拖入或选择 PDF。合并需要 2 个及以上(按列表顺序合并);\n"
+             "拆分/提取/删除只处理第 1 个文件。"),
+            (self._pc, "③ 填参数",
+             "拆分可选「每页一个」或「按范围分段」;提取/删除需填页码范围,\n"
+             "如 1,3,5-8,12-(看到的页码从 1 起)。下方会提示第 1 个文件共几页。"),
+            (self.panel, "开始处理 · 看结果",
+             "点「开始处理」。完成后状态行显示生成了几个文件,\n"
+             "点「打开输出文件夹」查看。"),
+        ]

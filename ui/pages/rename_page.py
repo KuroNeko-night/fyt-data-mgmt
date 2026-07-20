@@ -43,10 +43,29 @@ class RenamePage(BasePage):
         self.setAcceptDrops(True)
 
     def build_body(self, layout):
-        layout.addWidget(self._files_card(), 1)
-        layout.addWidget(self._rules_card())
-        layout.addWidget(self._apply_card())
+        self._fcard = self._files_card()
+        self._rcard = self._rules_card()
+        self._acard = self._apply_card()
+        layout.addWidget(self._fcard, 1)
+        layout.addWidget(self._rcard)
+        layout.addWidget(self._acard)
         self._refresh_preview()
+
+    def guide_steps(self):
+        return [
+            (None, "欢迎使用批量重命名",
+             "把文件拖进来,按规则批量改名:查找替换、加前后缀、统一基名+序号。\n"
+             "全程先预览再应用,支持一键撤销,纯本地不上传。"),
+            (self._fcard, "① 加文件、排顺序",
+             "把文件从资源管理器拖到本页任意位置,或点「＋ 添加文件」。\n"
+             "列表顺序就是序号顺序,用「上移/下移」调整;「新文件名」列即时预览。"),
+            (self._rcard, "② 设置规则",
+             "查找替换、前后缀、统一基名、追加序号、扩展名转小写,可组合。\n"
+             "执行顺序:统一基名 → 查找替换 → 序号 → 前后缀 → 扩展名,改动即时刷新预览。"),
+            (self._acard, "③ 应用 · 可撤销",
+             "预览无误后点「应用重命名」就地改名;冲突/重名的项会自动跳过并在状态里说明。\n"
+             "改错了别慌,点「撤销上次」一键还原。"),
+        ]
 
     # ---------- 文件区 ----------
     def _files_card(self):

@@ -143,9 +143,12 @@ class MainWindow(QMainWindow):
         self._launched = False       # 首次显示做一次淡入,后续从托盘还原不重放
         self._launch_anims = []
         self._nav_collapsed = bool(self.settings.get("nav_collapsed", False))
-        self._panel_w = int(self.settings.get("right_panel_w", 420))  # 上次面板宽
-        self._panel_hidden = bool(self.settings.get("right_panel_hidden", False))  # 用户手动隐藏
-        self._panel_anim = None      # 面板展开/收起 QVariantAnimation 防 GC
+        # 上次面板宽;夹到合理下限,防历史脏值(如动画中途存进的小值)把面板压扁
+        self._panel_w = max(320, int(self.settings.get("right_panel_w", 420)))
+        # 顶栏切换钮只管"文件预览"分区的显隐(不影响业务分区);记忆上次状态
+        self._preview_hidden = bool(self.settings.get("preview_hidden", False))
+        self._last_preview_path = ""     # 预览分区被隐藏后重开时恢复上次文件
+        self._panel_anim = None          # 面板展开/收起动画,防 GC
         self._build()
         self._build_tray()
         self.switch_to("home")
@@ -163,14 +166,13 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(0, self._init_panel_state)
 
     def _init_panel_state(self):
-        """首次显示后设定侧栏初始展开/收起态:默认展开,除非用户上次手动隐藏。"""
-        if self._panel_hidden:
-            self._right_panel.hide()
-            self._splitter.setSizes([self._splitter.width(), 0])
+        """首次显示后建立初始分区:默认带一个"文件预览"分区(除非上次手动隐藏了预览)。
+        面板有分区即展开,无分区即收起。"""
+        if not self._preview_hidden:
+            self._add_preview_tab()             # 建预览分区(空态提示)
+            self._expand_panel(animate=False)
         else:
-            total = self._splitter.width()
-            want = min(self._panel_w, int(total * 0.55))
-            self._splitter.setSizes([max(400, total - want), want])
+            self._collapse_panel(animate=False)
 
     def _build(self):
         root = QWidget()
@@ -188,12 +190,13 @@ class MainWindow(QMainWindow):
         self._splitter.setHandleWidth(6)
         self._splitter.addWidget(self._build_stack())          # index 0：主内容
         self._right_panel = RightPanel()
+        self._right_panel.setMinimumWidth(0)                   # 允许收起动画缩到 0
+        self._right_panel.closed.connect(self._collapse_panel) # 无分区 -> 收起整块
         self._splitter.addWidget(self._right_panel)            # index 1：右侧面板
         self._connect_file_zones()                             # 各页文件点击 -> 侧栏预览
         self._splitter.setStretchFactor(0, 1)
         self._splitter.setStretchFactor(1, 0)
-        # 侧栏默认可见(无内容时显示"暂无内容"占位);仅当用户上次手动隐藏才收起。
-        # 真正的初始宽度要等窗口有实际尺寸后设,放到首个 showEvent 里做。
+        # 面板"有分区就展开、无分区就收起";初始宽度等窗口有真实尺寸后设(首个 showEvent)。
         self._panel_inited = False
         lay.addWidget(self._splitter, 1)
         if self._nav_collapsed:                                 # 恢复上次收起状态
@@ -229,7 +232,8 @@ class MainWindow(QMainWindow):
         self._panel_toggle.setObjectName("NavToggle")
         self._panel_toggle.setCursor(Qt.PointingHandCursor)
         self._panel_toggle.setFixedSize(26, 26)
-        self._panel_toggle.setToolTip("显示侧栏" if self._panel_hidden else "隐藏侧栏")
+        self._panel_toggle.setToolTip(
+            "显示文件预览" if self._preview_hidden else "隐藏文件预览")
         self._panel_toggle.clicked.connect(self.toggle_panel)
         tb.addWidget(self._panel_toggle, 0, Qt.AlignTop)
         v.addWidget(top)
@@ -442,69 +446,69 @@ class MainWindow(QMainWindow):
                           if self._cur_key else None)
 
     # ---------------- 右侧面板 open / close ----------------
-    _PANEL_ANIM_MS = 240
+    _PANEL_ANIM_MS = 200
 
     def open_panel(self, widget, title="", key="main"):
-        """展开右侧面板并载入一个业务分区(复核/结果)。同 key 替换内容。
+        """新增/替换一个业务分区(复核/结果)作为**可独立关闭的选项卡**,并展开面板。
 
-        业务分区与"文件预览"分区可同屏共存;此处只管业务分区,不动预览。
-        点"人工核对"等按钮属明确意图:即使用户之前手动隐藏过侧栏,也强制展开。"""
+        业务分区与"文件预览"分区以选项卡并列共存,互不影响;此处只管业务分区。"""
         self._right_panel.add_section(key, title, widget, closable=True)
-        self._ensure_panel_visible(force=True)
+        self._expand_panel()
 
     def preview_file(self, path):
-        """在侧栏"文件预览"分区展示某文件。预览分区常驻、不带关闭钮:
-        只能随整块面板隐藏/显示(顶栏切换钮),不能单独叉掉。空路径则移除该分区。"""
+        """在"文件预览"选项卡展示某文件。该选项卡不带关闭钮,只由顶栏切换钮显隐。
+        点文件属明确意图:即便之前隐藏过预览,也重新亮出预览分区。"""
         if not path:
-            self._right_panel.remove_section("preview")
-            self._preview_widget = None        # 分区连同 FilePreview 已删,清引用防悬垂
-            return                              # 侧栏保持可见:无分区时显示"暂无内容"占位
+            return                              # 空路径不动预览(清空由 FilePreview 自理)
+        self._last_preview_path = path
+        if self._preview_hidden:                # 用户之前隐了预览,现在点文件 -> 恢复
+            self._preview_hidden = False
+            self.settings.set("preview_hidden", False); self.settings.save()
+            self._sync_panel_toggle_tip()
+        prev = self._add_preview_tab()
+        prev.show_file(path)
+        self._expand_panel()
+
+    def _add_preview_tab(self):
+        """确保存在"文件预览"选项卡并返回其 FilePreview(不可关闭)。"""
         prev = getattr(self, "_preview_widget", None)
         if prev is None or not _qt_alive(prev):
-            prev = FilePreview()               # 首次或旧对象已被销毁 -> 重建
+            prev = FilePreview()                # 首次或旧对象已销毁 -> 重建
             self._preview_widget = prev
-        # closable=False:预览分区不给关闭钮,避免用户叉掉后 C++ 对象被删导致悬垂
         self._right_panel.add_section("preview", "文件预览", prev, closable=False)
-        prev.show_file(path)
-        self._ensure_panel_visible()
+        return prev
 
     def close_panel(self, key=None):
-        """关闭右侧面板分区。侧栏本身保持可见(无分区时显示占位),
-        整块隐藏只由顶栏切换钮控制。不带 key:清空所有分区。"""
+        """关闭右侧面板分区。不带 key:清空所有分区(随后面板自动收起)。"""
         if key is not None:
             self._right_panel.remove_section(key)
         else:
             self._right_panel.clear_content()
 
-    def _ensure_panel_visible(self, force=False):
-        """确保右侧面板区域展开。
-        force=True(如点"人工核对"):即使用户之前手动隐藏也强制展开并清隐藏态;
-        force=False(如被动预览):尊重用户手动隐藏的选择,不强开。"""
-        if getattr(self, "_panel_hidden", False):
-            if not force:
-                return
-            self._panel_hidden = False            # 明确意图 -> 解除隐藏并持久化
-            self.settings.set("right_panel_hidden", False); self.settings.save()
-            self._sync_panel_toggle_tip()
+    def _expand_panel(self, animate=True):
+        """展开整块面板(有分区时)。无分区则不展开。"""
+        if not self._right_panel.has_sections():
+            return
         if not self._right_panel.isVisible():
             self._right_panel.show()
+        total = self._splitter.width()
+        # 目标面板宽:记忆值,但给主内容至少留 400px,且不超过总宽的 55%
+        want = min(self._panel_w, int(total * 0.55), max(0, total - 400))
         cur = self._splitter.sizes()[1]
-        if cur <= 4:
-            total = self._splitter.width()
-            want = min(self._panel_w, int(total * 0.55))
-            stack_w = max(400, total - want)
-            self._animate_splitter(self._splitter.sizes()[0], stack_w)
+        if cur >= want - 8:
+            return                              # 已达/超目标宽,别重复动画
+        self._animate_splitter(want, animate=animate)
 
-    def _collapse_panel(self):
-        """收起整块面板到宽度 0 后隐藏(记住宽度供下次展开)。"""
+    def _collapse_panel(self, animate=True):
+        """收起整块面板到宽度 0 后隐藏(记住上次宽度供下次展开)。"""
         if not self._right_panel.isVisible():
             return
         current = self._splitter.sizes()[1]
-        if current > 0:
+        if current >= 320:                       # 只记住"像样"的展开宽,忽略半路小值
             self._panel_w = current
             self.settings.set("right_panel_w", current)
             self.settings.save()
-        self._animate_splitter(self._splitter.sizes()[0], self._splitter.width(),
+        self._animate_splitter(0, animate=animate,
                                on_done=self._right_panel.hide)
 
     def _connect_file_zones(self):
@@ -514,41 +518,71 @@ class MainWindow(QMainWindow):
                 zone.file_clicked.connect(self.preview_file)
 
     def toggle_panel(self):
-        """用户手动显示/隐藏右侧面板;记住状态到设置。
-        显示时即便无分区也展开(呈现"暂无内容"占位)。"""
-        self._panel_hidden = not getattr(self, "_panel_hidden", False)
-        self.settings.set("right_panel_hidden", self._panel_hidden)
+        """顶栏切换钮:只显隐"文件预览"选项卡,不影响业务分区。
+        - 隐藏:移除预览分区(若还有业务分区,面板保持展开;否则自动收起);
+        - 显示:重建预览分区并恢复上次文件,展开面板。"""
+        self._preview_hidden = not self._preview_hidden
+        self.settings.set("preview_hidden", self._preview_hidden)
         self.settings.save()
-        if self._panel_hidden:
-            self._collapse_panel()
+        if self._preview_hidden:
+            self._right_panel.remove_section("preview")   # 只撤预览;空了会自动收起
+            self._preview_widget = None                   # 随 scroll 已删,清引用防悬垂重用
         else:
-            self._ensure_panel_visible()      # force 默认 False,但此处已清隐藏态
+            prev = self._add_preview_tab()
+            if self._last_preview_path:
+                prev.show_file(self._last_preview_path)
+            self._expand_panel()
         self._sync_panel_toggle_tip()
 
     def _sync_panel_toggle_tip(self):
         if hasattr(self, "_panel_toggle"):
             self._panel_toggle.setToolTip(
-                "显示侧栏" if self._panel_hidden else "隐藏侧栏")
+                "显示文件预览" if self._preview_hidden else "隐藏文件预览")
 
-    def _animate_splitter(self, start_stack, end_stack, on_done=None):
-        """用 QVariantAnimation 逐帧调 setSizes，平滑展开/收起右侧面板。"""
+    def _animate_splitter(self, end_panel_w, animate=True, on_done=None):
+        """平滑地把右侧面板宽度动到 end_panel_w(px)。收起传 0。
+
+        展开:只逐帧 setSizes(设过的尺寸会保持,不会被 sizeHint 抢回)。
+        收起到 0:面板 sizeHint 有下限,单靠 setSizes 缩不到 0,故收起时逐帧
+        钉住 maximumWidth 强制缩到底,动画结束后隐藏并复位以恢复可拖拽。"""
         if self._panel_anim is not None:
             try:
                 self._panel_anim.stop()
             except Exception:
                 pass
+            self._panel_anim = None
+        total = self._splitter.width()
+        start_w = self._splitter.sizes()[1]
+        end_panel_w = max(0, min(int(end_panel_w), total))
+        collapsing = end_panel_w <= 0
+        self._right_panel.setMaximumWidth(16777215)   # 展开前先解开可能残留的宽度上限
+        if not animate:
+            self._splitter.setSizes([max(0, total - end_panel_w), end_panel_w])
+            if collapsing:
+                self._right_panel.setMaximumWidth(0)
+            if on_done:
+                on_done()
+            if collapsing:
+                self._right_panel.setMaximumWidth(16777215)
+            return
         a = QVariantAnimation(self)
         a.setDuration(self._PANEL_ANIM_MS)
-        a.setEasingCurve(QEasingCurve.OutCubic)
-        a.setStartValue(float(start_stack))
-        a.setEndValue(float(end_stack))
-        total = self._splitter.width()
+        a.setEasingCurve(QEasingCurve.InOutCubic)
+        a.setStartValue(float(start_w))
+        a.setEndValue(float(end_panel_w))
+
         def _step(v):
-            sv = int(v); rv = max(0, total - sv)
-            self._splitter.setSizes([sv, rv])
+            pw = int(v)
+            if collapsing:
+                self._right_panel.setMaximumWidth(max(0, pw))  # 收起才钉上限
+            self._splitter.setSizes([max(0, total - pw), pw])
         a.valueChanged.connect(_step)
-        if on_done:
-            a.finished.connect(on_done)
+
+        def _fin():
+            if on_done:
+                on_done()
+            self._right_panel.setMaximumWidth(16777215)        # 复位,恢复可拖拽
+        a.finished.connect(_fin)
         a.start()
         self._panel_anim = a
 

@@ -18,7 +18,7 @@ class DeliveryPage(BasePage):
     def __init__(self, main):
         super(DeliveryPage, self).__init__(
             main, "送货计划表制作",
-            "上传物料清单与供应商明细，选择订单类型(SUB/KD)，自动生成送货计划：按物料号"
+            "上传物料清单(供应商明细可选)，选择订单类型(SUB/KD)，自动生成送货计划：按物料号"
             "带出供应商、统一填 KD/SUB；可再传一张往期送货计划，按物料编码带出 CASE/班组。")
 
     def build_body(self, layout):
@@ -26,10 +26,11 @@ class DeliveryPage(BasePage):
                                "含物料号与数量的清单，选 1 个。", multi=False,
                                library_cats=["deliv_bom"],
                                detail="决定送货计划的行与需求数（物料编码/名称/需求数取此表）。")
-        self.z_sup = FileZone(2, "供应商明细（单个）",
-                              "含零部件代码与供应商的明细，选 1 个。", multi=False,
-                              library_cats=["deliv_supp"],
-                              detail="按物料号查供应商代码与名称。两份文件顺序可随意，程序自动辨识。")
+        self.z_sup = FileZone(2, "供应商明细（可选）",
+                              "含零部件代码与供应商的明细，选 1 个；不传则供应商列留空。",
+                              multi=False, library_cats=["deliv_supp"],
+                              detail="按物料号查供应商代码与名称。两份文件顺序可随意，程序自动辨识。"
+                                     "不提供时供应商代码/名称留空，可稍后人工补填。")
         self.z_ref = FileZone(3, "参考送货计划（可选）",
                               "一张往期做好的送货计划，选 1 个；不传则 CASE/班组 留空。",
                               multi=False, library_cats=["arrival_plan"],
@@ -49,7 +50,8 @@ class DeliveryPage(BasePage):
         self.z_ref.changed.connect(self._refresh)
         layout.addWidget(self.z_ref)
 
-        layout.addWidget(self._order_card())
+        self._ot_card = self._order_card()
+        layout.addWidget(self._ot_card)
 
         self.panel = RunPanel("生成送货计划")
         self.panel.run_btn.clicked.connect(self._run)
@@ -120,20 +122,46 @@ class DeliveryPage(BasePage):
     def _order_type(self):
         return "KD" if self.rb_kd.isChecked() else "SUB"
 
+    def guide_steps(self):
+        """使用指引:按①②③④→生成→看结果的顺序,聚光灯带走一遍。"""
+        return [
+            (None, "欢迎使用送货计划表制作",
+             "这个页面把「物料清单 + 供应商明细」自动合成一张 16 列的送货计划。\n"
+             "跟着高亮走一遍,大概 30 秒就能上手。点「下一步」开始。"),
+            (self.z_list, "① 放物料清单",
+             "把含物料号与需求数的清单拖到这里,或点「＋ 添加文件」选择。\n"
+             "这张表决定送货计划有哪些行、每行要多少——是主表。"),
+            (self.z_sup, "② 放供应商明细(可选)",
+             "有含零部件代码与供应商的明细就放这里,程序按物料号自动带出供应商代码/名称;\n"
+             "两张表拖入顺序随便,会自己认主表与供应商来源。不放也行——供应商两列会留空,\n"
+             "可稍后在表里人工补填,不影响其余列的生成。"),
+            (self.z_ref, "③ 参考送货计划(可选)",
+             "有往期做好的送货计划就放这里,能按物料编码带出 CASE/班组;\n"
+             "没有就跳过,这两列留空即可,不影响生成。"),
+            (self._ot_card, "④ 选订单类型",
+             "选 SUB 还是 KD。生成表的「KD/SUB」列会整列统一填这个值。"),
+            (self.panel, "生成 + 看状态",
+             "点「生成送货计划」。处理时这里显示进度,完成后状态行会告诉你共几行、\n"
+             "供应商匹配了多少、有没有没匹配上的(未匹配的会留空供人工补填)。"),
+            (self.panel, "结果在哪 · 怎么看",
+             "完成后程序会自动弹开结果所在文件夹。也可点这里的「打开送货计划」直接看表、\n"
+             "或「打开输出文件夹」。文件统一存在 文档/峰运通数据管理系统/输出/ 下,按时间戳归档。"),
+        ]
+
     def refresh_view(self):
         for z in (self.z_list, self.z_sup, self.z_ref):
             z.refresh_lib_count()
 
     def _refresh(self, *_):
-        ok = bool(self.z_list.get()) and bool(self.z_sup.get())
+        # 供应商明细已是可选：只要有物料清单即可生成。
+        ok = bool(self.z_list.get())
         self.panel.run_btn.setEnabled(ok)
         if ok:
-            self.panel.set_status("ready", "准备就绪 · 订单类型 %s" % self._order_type())
+            tail = "" if self.z_sup.get() else " · 未选供应商明细(供应商列将留空)"
+            self.panel.set_status(
+                "ready", "准备就绪 · 订单类型 %s%s" % (self._order_type(), tail))
         else:
-            need = []
-            if not self.z_list.get(): need.append("物料清单")
-            if not self.z_sup.get(): need.append("供应商明细")
-            self.panel.set_status("idle", "还需选择：" + "、".join(need))
+            self.panel.set_status("idle", "还需选择：物料清单")
 
     def _scan_main(self):
         """物料清单选定/切表后预检其表头,提前提示识别情况(不写盘)。"""
@@ -164,14 +192,15 @@ class DeliveryPage(BasePage):
     def _run(self):
         self.panel.clear_log()
         f1 = self.z_list.get()[0]
-        f2 = self.z_sup.get()[0]
+        sup = self.z_sup.get()
+        f2 = sup[0] if sup else None         # 供应商明细可选:未选则传 None
         ref = self.z_ref.get()
         ref_plan = ref[0] if ref else None
         ot = self._order_type()
         self.btn_open.setEnabled(False)
         self.btn_plan.setEnabled(False)
         sa = self.cb_list.currentData()      # None=自动(第一表);否则用户所选子表名
-        sb = self.cb_sup.currentData()
+        sb = self.cb_sup.currentData() if f2 else None
         self.launch(
             lambda log: delivery_core.run(f1, f2, sheet_a=sa, sheet_b=sb, log=log,
                                           order_type=ot, ref_plan=ref_plan),
@@ -183,13 +212,28 @@ class DeliveryPage(BasePage):
         n = res.get("rows", 0)
         miss = len(res.get("missing", []))
         ot = res.get("order_type") or "未指定"
+        sup_used = res.get("supplier_used", True)
+        self.btn_open.setEnabled(bool(self._out_dir))
+        self.btn_plan.setEnabled(bool(self._plan))
+        if not sup_used:
+            # 未提供供应商明细:供应商两列按设计留空,不算异常。
+            st = "完成 · %s · %d 行 · 供应商列留空(未提供明细)" % (ot, n)
+            if res.get("case_used"):
+                st += " · CASE/班组 %d" % res.get("case_hit", 0)
+            self.panel.set_status("ok", st)
+            tail = "未提供供应商明细，供应商代码/名称两列已留空，可稍后人工补填。\n"
+            if res.get("case_used"):
+                tail += ("CASE/班组 已按物料编码匹配 %d / %d 行。\n"
+                         % (res.get("case_hit", 0), n))
+            self.notify_done(
+                self._out_dir, "送货计划已生成",
+                "订单类型 %s，共 %d 行。\n%s输出：%s" % (ot, n, tail, self._out_dir))
+            return
         kind = "ok" if miss == 0 else "warn"
         st = "完成 · %s · %d 行 · 供应商匹配 %d · 未匹配 %d" % (ot, n, n - miss, miss)
         if res.get("case_used"):
             st += " · CASE/班组 %d" % res.get("case_hit", 0)
         self.panel.set_status(kind, st)
-        self.btn_open.setEnabled(bool(self._out_dir))
-        self.btn_plan.setEnabled(bool(self._plan))
         tail = ("有 %d 个物料未匹配到供应商，已留空，请人工补填。\n" % miss) if miss else ""
         if res.get("case_used"):
             tail += ("CASE/班组 已按物料编码匹配 %d / %d 行。\n"
