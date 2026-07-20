@@ -8,6 +8,22 @@
 使"先精确后包含""排除干扰列"等修复只维护一处,并自动惠及所有调用方。
 """
 
+import re
+
+# 表头文本内部空白(空格/制表/换行/全角空格)统一折叠的正则。
+# Excel 表头常见手动换行("供应商\n编码")或对齐空格("物料 名称"),
+# 而各 core 的关键词表都是无空格精确串——不折叠会导致精确匹配失配、
+# 退化到包含匹配后被别的列抢占,识别率下降。折叠只会让真实表头多命中。
+_WS = re.compile(r"\s+")
+
+
+def _norm_header(cell):
+    """表头单元格文本归一:转字符串、去掉内部所有空白(含全角空格 　)。
+    \\s 在 Python3 str 模式下已覆盖 　,这里再显式替换一次以防万一。"""
+    if cell is None:
+        return ""
+    return _WS.sub("", str(cell)).replace("　", "")
+
 
 def detect_layout(ws, header_keys, require, scan_rows=12, exclude_contains=None,
                   log=None):
@@ -38,7 +54,9 @@ def detect_layout(ws, header_keys, require, scan_rows=12, exclude_contains=None,
                 cell = ws.cell(r, c).value
                 if cell is None:
                     continue
-                text = str(cell).strip()
+                text = _norm_header(cell)   # 折叠内部空白,让含换行/空格的表头也能精确命中
+                if not text:
+                    continue                 # 纯空白单元格不参与匹配
                 for role, keys in header_keys.items():
                     if role in col_map:
                         continue

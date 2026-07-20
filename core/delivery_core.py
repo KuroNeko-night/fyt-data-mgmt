@@ -6,9 +6,10 @@
 代码与名称；KD/SUB 列按用户选择统一填写；CASE/CASE托数/班组 可从一张已做好的
 往期送货计划(参考表)按物料编码带出；到货/收货等跟单列留空供后续人工填写。
 
-输入（顺序任意，程序自动辨识）：
+输入（物料清单必需，其余可选；两份主/供表顺序任意，程序自动辨识）：
   · 物料清单：含 物料号 + 数量（可再含中/英文描述）——决定输出的行与需求数；
-  · 供应商明细：含 零部件代码 + 供应商代码 + 供应商名称——供按编码查供应商；
+  · 供应商明细（可选）：含 零部件代码 + 供应商代码 + 供应商名称——供按编码查供应商；
+    不提供时，供应商两列留空供人工补填；若物料清单自带供应商列则就地取用。
   · 参考送货计划（可选）：往期做好的送货计划，按物料编码带出 CASE/CASE托数/班组。
 
 输出 16 列送货计划，样式与客户新模板一致（标题行合并留空、微软雅黑、全边框，
@@ -276,12 +277,14 @@ def _sup_sort_key(sc):
 
 
 def build_plan_sheet(ws, master_rows, sup_map, order_type=None,
-                     case_map=None, log=None):
+                     case_map=None, log=None, report_missing=True):
     """把主表行写成送货计划（新模板样式）。
 
     sup_map    : 归一编码 -> (供应商代码, 供应商名称)。
     order_type : "SUB" / "KD"，统一填入 KD/SUB 列；None 则留空。
     case_map   : 归一编码 -> (CASE, CASE托数, 班组)，来自参考送货计划；None 则不填。
+    report_missing : 是否在日志里汇报"未匹配供应商"的编码。未提供供应商来源时
+                     每行都会记入 missing，此时应传 False 以免刷无意义警告。
 
     版式：第 1 行合并 A1:P1 作标题（留空，仅套样式）；第 2 行表头；数据自第 3 行起。
     数据行按供应商代码升序排序后再从 1 编号；每行统一行高（与参考送货计划一致）。
@@ -339,7 +342,7 @@ def build_plan_sheet(ws, master_rows, sup_map, order_type=None,
 
     for c, w in enumerate(_WIDTHS, 1):
         ws.column_dimensions[get_column_letter(c)].width = w
-    if log and missing:
+    if log and missing and report_missing:
         log("有 %d 个物料在供应商明细中未找到供应商，已留空：%s%s"
             % (len(missing), "、".join(missing[:8]), " 等" if len(missing) > 8 else ""))
     return r - 3, missing, hit_case
@@ -445,32 +448,50 @@ def build_case_map(path, log=None):
         wb.close()
 
 
-def run(file_a, file_b, sheet_a=None, sheet_b=None, out_dir=None, log=None,
+def run(file_a, file_b=None, sheet_a=None, sheet_b=None, out_dir=None, log=None,
         order_type=None, ref_plan=None):
-    """送货计划表制作主流程。两份输入顺序任意，自动辨识主表/供应商来源。
+    """送货计划表制作主流程。
 
-    返回 dict：{plan_path, out_dir, rows, matched, missing, master_file, supplier_file}。
+    供应商明细为可选：
+      · 传了 file_b —— 两份输入顺序任意，自动辨识主表/供应商来源（原行为）；
+      · 未传 file_b —— file_a 即物料清单主表；若它自带供应商列则就地取用，
+        否则供应商代码/名称两列留空供人工补填（不视为"未匹配"报警）。
+
+    返回 dict：{plan_path, out_dir, rows, matched, missing, supplier_used,
+                master_file, supplier_file}。supplier_file 无供应商来源时为 ""。
     """
     def _lg(msg):
         if log:
             log(msg)
 
     # 物料清单"需求数/数量"若是未刷新的公式,data_only 读为 None → 送货计划需求数
-    # 静默留空。入口两份表都先查一遍(此刻还没辨识主表),把隐患变成可见提示。
+    # 静默留空。入口先查主表(此刻还没辨识),把隐患变成可见提示;有第二份也一起查。
     from . import common_core
     common_core.warn_if_uncached(file_a, _lg, sheet_a, what="需求数/数量")
-    common_core.warn_if_uncached(file_b, _lg, sheet_b, what="需求数/数量")
+    if file_b:
+        common_core.warn_if_uncached(file_b, _lg, sheet_b, what="需求数/数量")
 
     rows_a, lay_a = load_sheet(file_a, sheet_a, log=_lg)
-    rows_b, lay_b = load_sheet(file_b, sheet_b, log=_lg)
-    master_key, sup_key = classify(lay_a, lay_b, len(rows_a), len(rows_b), log=_lg)
-    pack = {"a": (rows_a, lay_a, file_a), "b": (rows_b, lay_b, file_b)}
-    master_rows, _lm, master_file = pack[master_key]
-    sup_rows, _ls, sup_file = pack[sup_key]
-    _lg("主表(物料清单)：%s —— %d 行" % (os.path.basename(master_file), len(master_rows)))
-    _lg("供应商来源：%s —— %d 行" % (os.path.basename(sup_file), len(sup_rows)))
-
-    sup_map = build_supplier_map(sup_rows, log=_lg)
+    if file_b:
+        rows_b, lay_b = load_sheet(file_b, sheet_b, log=_lg)
+        master_key, sup_key = classify(lay_a, lay_b, len(rows_a), len(rows_b), log=_lg)
+        pack = {"a": (rows_a, lay_a, file_a), "b": (rows_b, lay_b, file_b)}
+        master_rows, _lm, master_file = pack[master_key]
+        sup_rows, _ls, sup_file = pack[sup_key]
+        _lg("主表(物料清单)：%s —— %d 行" % (os.path.basename(master_file), len(master_rows)))
+        _lg("供应商来源：%s —— %d 行" % (os.path.basename(sup_file), len(sup_rows)))
+        sup_map = build_supplier_map(sup_rows, log=_lg)
+    else:
+        # 未提供供应商明细：物料清单即主表。它若自带供应商列，就地取用；否则留空。
+        master_rows, master_file, sup_file = rows_a, file_a, ""
+        _lg("主表(物料清单)：%s —— %d 行" % (os.path.basename(master_file), len(master_rows)))
+        if _has_supplier(lay_a):
+            sup_map = build_supplier_map(rows_a, log=_lg)
+            _lg("未单独提供供应商明细，已从物料清单自带的供应商列带出。")
+        else:
+            sup_map = {}
+            _lg("未提供供应商明细，供应商代码/名称两列留空，可稍后人工补填。")
+    supplier_used = bool(sup_map)
 
     ot = (order_type or "").strip().upper() or None
     if ot:
@@ -487,9 +508,15 @@ def run(file_a, file_b, sheet_a=None, sheet_b=None, out_dir=None, log=None,
     ws = wb.active
     ws.title = "Sheet1"
     n, missing, hit_case = build_plan_sheet(
-        ws, master_rows, sup_map, order_type=ot, case_map=case_map, log=_lg)
-    matched = n - len(missing)
-    _lg("已生成 %d 行，供应商匹配 %d / %d。" % (n, matched, n))
+        ws, master_rows, sup_map, order_type=ot, case_map=case_map, log=_lg,
+        report_missing=supplier_used)
+    if supplier_used:
+        matched = n - len(missing)
+        _lg("已生成 %d 行，供应商匹配 %d / %d。" % (n, matched, n))
+    else:
+        # 无供应商来源：不把每行都算作"未匹配",两列本就按设计留空。
+        missing, matched = [], 0
+        _lg("已生成 %d 行（供应商两列留空）。" % n)
     if case_map:
         _lg("CASE/班组 按物料编码匹配 %d / %d 行。" % (hit_case, n))
 
@@ -502,4 +529,5 @@ def run(file_a, file_b, sheet_a=None, sheet_b=None, out_dir=None, log=None,
     return {"plan_path": plan_path, "out_dir": out_dir, "rows": n,
             "matched": matched, "missing": missing, "order_type": ot,
             "case_hit": hit_case, "case_used": bool(case_map),
+            "supplier_used": supplier_used,
             "master_file": master_file, "supplier_file": sup_file}

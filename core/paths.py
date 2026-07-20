@@ -105,6 +105,34 @@ def crash_log_path():
     return os.path.join(app_data_dir(), "错误日志.txt")
 
 
+# 崩溃日志单文件上限(字节)。超过则把当前日志转存为 .old(只留一份历史),
+# 重开新文件。长期使用下日志有界(最多 ~2×上限),不会无限增长撑爆磁盘。
+_CRASH_LOG_MAX = 512 * 1024      # 512 KB
+
+
+def append_crash_log(text):
+    """向崩溃日志追加一段(带时间戳头),超限自动轮转。全程静默失败。
+
+    main.py 的全局兜底与 BasePage 的处理错误都经由此写入,轮转逻辑只此一处。
+    text 已是格式化好的正文(不含时间戳);本函数补统一的 "===== 时间 =====" 头。"""
+    try:
+        p = crash_log_path()
+        # 超限轮转:现有文件转 .old(覆盖旧的),再从空文件写起
+        try:
+            if os.path.isfile(p) and os.path.getsize(p) >= _CRASH_LOG_MAX:
+                old = p + ".old"
+                if os.path.isfile(old):
+                    os.remove(old)
+                os.replace(p, old)
+        except OSError:
+            pass                 # 轮转失败不影响本次写入(大不了继续追加)
+        stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open(p, "a", encoding="utf-8") as f:
+            f.write("\n===== %s =====\n%s\n" % (stamp, text))
+    except Exception:
+        pass                     # 写日志本身绝不能再抛异常
+
+
 def timestamp():
     """时间戳 YYYYMMDD_HHMM，用于输出子文件夹与文件名。"""
     return datetime.datetime.now().strftime("%Y%m%d_%H%M")
@@ -129,9 +157,26 @@ def resolve_output_dir(feature, mode="unified", src_path=None,
         base = os.path.join(custom_root, feat_cn)
     else:  # unified
         base = os.path.join(default_output_root(), feat_cn)
-    out = os.path.join(base, ts)
+    # 时间戳精确到分钟：同一分钟内多次生成会落到同名文件夹、内部同名文件被覆盖。
+    # 故做唯一化：目标文件夹已存在(上次同分钟运行留下的)则追加 _2/_3…。每次运行
+    # 只解析一次输出目录，故不会把同一次运行的多个文件拆散到不同文件夹。
+    out = _unique_dir(os.path.join(base, ts))
     _ensure(out)
     return out
+
+
+def _unique_dir(path):
+    """返回一个尚不存在的目录路径：path 不存在则原样返回；否则追加 _2/_3…。
+
+    仅做命名，不创建目录(交由调用方 _ensure)。用 os.path.exists 判存在。"""
+    if not os.path.exists(path):
+        return path
+    i = 2
+    while True:
+        cand = "%s_%d" % (path, i)
+        if not os.path.exists(cand):
+            return cand
+        i += 1
 
 
 def _ensure(d):

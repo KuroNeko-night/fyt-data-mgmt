@@ -3,7 +3,7 @@
  False,
  True,
  ['C:\\Users\\mai\\Desktop\\程序重构\\峰运通数据管理系统\\assets\\icon.ico'],
- versioninfo.VSVersionInfo(ffi=versioninfo.FixedFileInfo(filevers=(1, 2, 0, 0), prodvers=(1, 2, 0, 0), mask=0x3f, flags=0x0, OS=0x40004, fileType=1, subtype=0x0, date=(0, 0)), kids=[versioninfo.StringFileInfo([versioninfo.StringTable('080404b0', [versioninfo.StringStruct('CompanyName', 'KuroNeko-night'), versioninfo.StringStruct('FileDescription', '峰运通数据管理系统'), versioninfo.StringStruct('FileVersion', '1.2.0'), versioninfo.StringStruct('InternalName', 'FYTDataMgmt'), versioninfo.StringStruct('LegalCopyright', 'Copyright (c) 2026 KuroNeko-night'), versioninfo.StringStruct('OriginalFilename', 'FYTDataMgmt.exe'), versioninfo.StringStruct('ProductName', '峰运通数据管理系统'), versioninfo.StringStruct('ProductVersion', '1.2.0')])]), versioninfo.VarFileInfo([versioninfo.VarStruct('Translation', [2052, 1200])])]),
+ versioninfo.VSVersionInfo(ffi=versioninfo.FixedFileInfo(filevers=(1, 2, 1, 0), prodvers=(1, 2, 1, 0), mask=0x3f, flags=0x0, OS=0x40004, fileType=1, subtype=0x0, date=(0, 0)), kids=[versioninfo.StringFileInfo([versioninfo.StringTable('080404b0', [versioninfo.StringStruct('CompanyName', 'KuroNeko-night'), versioninfo.StringStruct('FileDescription', '峰运通数据管理系统'), versioninfo.StringStruct('FileVersion', '1.2.1'), versioninfo.StringStruct('InternalName', 'FYTDataMgmt'), versioninfo.StringStruct('LegalCopyright', 'Copyright (c) 2026 KuroNeko-night'), versioninfo.StringStruct('OriginalFilename', 'FYTDataMgmt.exe'), versioninfo.StringStruct('ProductName', '峰运通数据管理系统'), versioninfo.StringStruct('ProductVersion', '1.2.1')])]), versioninfo.VarFileInfo([versioninfo.VarStruct('Translation', [2052, 1200])])]),
  False,
  False,
  b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<assembly xmlns='
@@ -68,7 +68,7 @@
  [],
  False,
  False,
- 1784366144,
+ 1784526334,
  [('runw.exe',
    'C:\\Users\\mai\\AppData\\Local\\Programs\\Python\\Python38\\lib\\site-packages\\PyInstaller\\bootloader\\Windows-64bit-intel\\runw.exe',
    'EXECUTABLE')],
