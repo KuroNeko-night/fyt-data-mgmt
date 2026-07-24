@@ -1,0 +1,23 @@
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+
+export default defineConfig({
+  plugins: [react()],
+  clearScreen: false,
+  server: {
+    strictPort: true,
+    host: "127.0.0.1",
+    port: 1420,
+    watch: {
+      ignored: (filePath) => {
+        const normalized = filePath.replaceAll("\\", "/");
+        return normalized.endsWith("/src-tauri") || normalized.includes("/src-tauri/");
+      },
+    },
+  },
+  envPrefix: ["VITE_", "TAURI_"],
+  build: {
+    target: "es2022",
+    sourcemap: true,
+  },
+});
