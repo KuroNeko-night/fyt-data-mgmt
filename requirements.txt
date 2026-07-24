@@ -1,8 +1,9 @@
-# 峰运通数据管理系统 —— 运行/打包依赖
-# 兼容 Windows 7 + Python 3.8。版本已锁定为在 Win7 上可用的最后系列。
-PySide2==5.15.2.1
+# 峰运通数据管理系统 —— 现代运行/打包依赖
+# 基准环境：Windows 10/11 + Python 3.13。
+PySide6==6.11.1
+QtPy==2.4.3
 openpyxl==3.1.5
-xlrd==1.2.0          # 读老式 .xls（Excel 工具箱）
-pypdf==4.3.1         # PDF 工具箱（纯 Python，Win7 兼容）
+xlrd==2.0.2          # 只读老式 .xls（Excel 工具箱）
+pypdf==6.14.2        # PDF 工具箱
 # 打包工具（仅开发机需要，运行时不依赖）
 pyinstaller==6.21.0
