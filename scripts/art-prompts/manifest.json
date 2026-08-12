@@ -1,0 +1,105 @@
+{
+  "version": "v1.0",
+  "assets": [
+    {
+      "id": "A01",
+      "name": "auth-data-ribbon",
+      "promptFile": "auth-data-ribbon.md",
+      "sourceSize": "1536x1024",
+      "output": "webp",
+      "chromaKey": false,
+      "usage": ["web-auth", "web-register"],
+      "alt": ""
+    },
+    {
+      "id": "A02",
+      "name": "workbench-data-ribbon",
+      "promptFile": "workbench-data-ribbon.md",
+      "sourceSize": "1536x1024",
+      "output": "png",
+      "chromaKey": true,
+      "usage": ["web-workbench", "tauri-home"],
+      "alt": ""
+    },
+    {
+      "id": "A03",
+      "name": "remote-bridge",
+      "promptFile": "remote-bridge.md",
+      "sourceSize": "1024x1024",
+      "output": "png",
+      "chromaKey": true,
+      "usage": ["tauri-mode-picker"],
+      "alt": "本地资料与服务器工作台之间的连接示意"
+    },
+    {
+      "id": "A04",
+      "name": "empty-task-archive",
+      "promptFile": "empty-task-archive.md",
+      "sourceSize": "1024x1024",
+      "output": "png",
+      "chromaKey": true,
+      "usage": ["web-task-center", "tauri-task-center"],
+      "alt": "尚未开始的任务记录示意"
+    },
+    {
+      "id": "A05",
+      "name": "empty-library-shelf",
+      "promptFile": "empty-library-shelf.md",
+      "sourceSize": "1024x1024",
+      "output": "png",
+      "chromaKey": true,
+      "usage": ["web-library"],
+      "alt": "尚无可见数据库文件的档案架示意"
+    },
+    {
+      "id": "A06",
+      "name": "empty-workshop-note",
+      "promptFile": "empty-workshop-note.md",
+      "sourceSize": "1024x1024",
+      "output": "png",
+      "chromaKey": true,
+      "usage": ["web-workshop"],
+      "alt": "可以开始记录现场问题的示意"
+    },
+    {
+      "id": "A07",
+      "name": "empty-review-check",
+      "promptFile": "empty-review-check.md",
+      "sourceSize": "1024x1024",
+      "output": "png",
+      "chromaKey": true,
+      "usage": ["web-review-empty", "web-task-review-filter"],
+      "alt": "当前没有待人工确认事项的示意"
+    },
+    {
+      "id": "A08",
+      "name": "admin-network-map",
+      "promptFile": "admin-network-map.md",
+      "sourceSize": "1536x1024",
+      "output": "png",
+      "chromaKey": true,
+      "usage": ["web-admin"],
+      "alt": "系统管理与权限关系示意"
+    },
+    {
+      "id": "A09",
+      "name": "success-result-fold",
+      "promptFile": "success-result-fold.md",
+      "sourceSize": "1024x1024",
+      "output": "png",
+      "chromaKey": true,
+      "usage": ["web-result", "tauri-result"],
+      "alt": "结果文件已生成的纸带示意"
+    },
+    {
+      "id": "A10",
+      "name": "failure-recovery-path",
+      "promptFile": "failure-recovery-path.md",
+      "sourceSize": "1024x1024",
+      "output": "png",
+      "chromaKey": true,
+      "usage": ["web-recoverable-error", "tauri-recoverable-error"],
+      "alt": "失败任务仍有下一步处理路径的示意"
+    }
+  ]
+}

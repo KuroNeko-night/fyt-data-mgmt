@@ -6,6 +6,8 @@ from core import text_core as tc
 
 
 class TestDedup(unittest.TestCase):
+    """验证文本去重顺序和大小写策略。"""
+
     def test_keep_order(self):
         self.assertEqual(tc.dedup_lines("a\nb\na\nc"), "a\nb\nc")
 
@@ -15,6 +17,8 @@ class TestDedup(unittest.TestCase):
 
 
 class TestSort(unittest.TestCase):
+    """验证字典序、数值排序和非数字位置。"""
+
     def test_lexical(self):
         self.assertEqual(tc.sort_lines("c\na\nb"), "a\nb\nc")
         self.assertEqual(tc.sort_lines("c\na\nb", reverse=True), "c\nb\na")
@@ -29,6 +33,8 @@ class TestSort(unittest.TestCase):
 
 
 class TestLineOps(unittest.TestCase):
+    """验证空行、首尾空白、连续空格、大小写和反转操作。"""
+
     def test_remove_empty(self):
         self.assertEqual(tc.remove_empty_lines("a\n\n  \nb"), "a\nb")
 
@@ -47,6 +53,8 @@ class TestLineOps(unittest.TestCase):
 
 
 class TestLineNumbers(unittest.TestCase):
+    """验证行号起点、分隔符和补零格式。"""
+
     def test_basic(self):
         self.assertEqual(tc.add_line_numbers("a\nb"), "1. a\n2. b")
 
@@ -61,6 +69,8 @@ class TestLineNumbers(unittest.TestCase):
 
 
 class TestExtract(unittest.TestCase):
+    """验证邮箱、电话、网址提取和未知类型拒绝。"""
+
     def test_email(self):
         out = tc.extract("foo@a.com bar baz@b.cn foo@a.com", "email")
         self.assertEqual(out.split("\n"), ["foo@a.com", "baz@b.cn"])
@@ -82,6 +92,8 @@ class TestExtract(unittest.TestCase):
 
 
 class TestStats(unittest.TestCase):
+    """验证文本行数、字符数和非空统计。"""
+
     def test_counts(self):
         s = tc.stats("ab cd\n\nef")
         self.assertEqual(s["lines"], 3)

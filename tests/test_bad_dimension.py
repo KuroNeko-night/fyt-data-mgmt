@@ -17,12 +17,18 @@ warnings.filterwarnings("ignore", message=".*no default style.*")
 
 
 class TestBadDimension(unittest.TestCase):
+    """用真实坏 dimension 样本保护四条工作簿读取入口。"""
+
     def setUp(self):
+        """定位历史问题样本；外部样本不存在时不让 CI 误失败。"""
+
         self.p = sd.attendance_source()
         if not self.p:
             self.skipTest("缺少考勤样本(坏 dimension 文件)")
 
     def _truth_rows(self):
+        """用非只读加载取得不受 dimension 限制的真实总行数。"""
+
         # 常规(非 read_only)模式的真实总行数,作为基准
         import openpyxl
         wb = openpyxl.load_workbook(self.p, data_only=True)
@@ -31,23 +37,31 @@ class TestBadDimension(unittest.TestCase):
         return n
 
     def test_common_read_sheets_full(self):
+        """公共工作表读取器应返回全部真实行。"""
+
         from core import common_core as cc
         got = sum(len(rows) for _, rows in cc.read_sheets(self.p))
         self.assertEqual(got, self._truth_rows())
         self.assertGreater(got, 1)
 
     def test_excel_tools_read_sheets_full(self):
+        """Excel 文件工具的内部读取器也应修复错误范围。"""
+
         from core import excel_tools_core as et
         got = sum(len(rows) for _, rows in et._read_sheets(self.p))
         self.assertEqual(got, self._truth_rows())
         self.assertGreater(got, 1)
 
     def test_preview_reads_beyond_first_row(self):
+        """前端预览不得因错误 dimension 只显示首行。"""
+
         from core import preview_core as pv
         d = pv._read_xlsx(self.p, None, 200, 40)
         self.assertGreaterEqual(len(d.rows), 200)   # 修复前只有 1
 
     def test_compare_headers_find_real_row(self):
+        """表格对比表头检测应进入真实数据区而不是停在首行说明。"""
+
         from core import compare_core as cmp
         hs = cmp.read_headers(self.p)
         # 真表头在数据区(含"姓名"),坏 dimension 下修复前只能看到首行"基本信息"

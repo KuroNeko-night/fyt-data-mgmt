@@ -23,7 +23,7 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self' 'unsafe-inline' data:; img-src 'self' data: http: https:; style-src 'self' 'unsafe-inline'; frame-src http: https:; connect-src ipc: http://ipc.localhost"
     }
   },
   "bundle": {

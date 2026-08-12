@@ -17,20 +17,38 @@ warnings.filterwarnings("ignore", message="Workbook contains no default style")
 
 
 class _TmpOut(unittest.TestCase):
+    """为真实样本集成测试提供隔离输出和主数据库目录。"""
+
     def setUp(self):
+        """创建临时输出根并覆盖主数据库路径。"""
+
         self._tmp = tempfile.mkdtemp(prefix="fyt_it_")
+        self._old_catalog = os.environ.get("FYT_CATALOG_PATH")
+        os.environ["FYT_CATALOG_PATH"] = os.path.join(self._tmp, "catalog.json")
 
     def tearDown(self):
+        """恢复环境并删除业务输出。"""
+
+        if self._old_catalog is None:
+            os.environ.pop("FYT_CATALOG_PATH", None)
+        else:
+            os.environ["FYT_CATALOG_PATH"] = self._old_catalog
         shutil.rmtree(self._tmp, ignore_errors=True)
 
     def out(self, name):
+        """返回按业务名称划分的临时输出目录。"""
+
         d = os.path.join(self._tmp, name)
         os.makedirs(d, exist_ok=True)
         return d
 
 
 class TestAttendance(_TmpOut):
+    """在样本存在时验证考勤填报完整链路。"""
+
     def test_run(self):
+        """真实考勤样本应生成文件，且填充数量不超过成功匹配的人日。"""
+
         tgt, src = sd.attendance_target(), sd.attendance_source()
         if not (tgt and src):
             self.skipTest("缺少考勤填报样本")
@@ -46,7 +64,11 @@ class TestAttendance(_TmpOut):
 
 
 class TestReconcile(_TmpOut):
+    """在样本存在时验证工时对账完整链路。"""
+
     def test_run(self):
+        """真实工时对账应同时生成填充表、汇总表和可信度结果。"""
+
         tgt = sd.reconcile_target()
         src = sd.reconcile_sources()
         labor = sd.reconcile_labor()
@@ -60,7 +82,11 @@ class TestReconcile(_TmpOut):
 
 
 class TestPurchase(_TmpOut):
+    """在样本存在时验证采购数量对账完整链路。"""
+
     def test_run(self):
+        """真实采购对账应生成双方副本、报告和长度一致的匹配标记。"""
+
         f1, f2 = sd.purchase_ours(), sd.purchase_supplier()
         if not (f1 and f2):
             self.skipTest("缺少采购数对账样本")
@@ -76,7 +102,11 @@ class TestPurchase(_TmpOut):
 
 
 class TestDelivery(_TmpOut):
+    """在样本存在时验证送货计划制作与供应商补全。"""
+
     def test_run(self):
+        """真实 BOM 与供应商资料应正确辨识角色并生成 SUB 送货计划。"""
+
         bom, sup = sd.delivery_bom(), sd.delivery_supplier()
         if not (bom and sup):
             self.skipTest("缺少送货计划样本")
@@ -109,7 +139,11 @@ class TestDelivery(_TmpOut):
 
 
 class TestArrival(_TmpOut):
+    """在样本存在时验证每日到料提取与输出。"""
+
     def test_run(self):
+        """全部真实到料样本应逐批进入同一输出报告。"""
+
         plans = sd.arrival_plans()
         if not plans:
             self.skipTest("缺少到料明细样本")
@@ -135,6 +169,8 @@ class TestPivotMeasureText(unittest.TestCase):
     否则 Excel 刷新透视后该字段求和归零,与静态总计背离。"""
 
     def test_stray_text_in_measure_stays_numeric(self):
+        """度量列混入说明文本时，缓存仍应保持数值口径并忽略该文本。"""
+
         from core import pivot_core as P
         rows = [
             ["", "A1", "甲", "S", 1, "个", 10],
@@ -154,7 +190,11 @@ class TestPivotMeasureText(unittest.TestCase):
 
 
 class TestPivot(_TmpOut):
+    """在样本存在时验证销售表制作完整链路。"""
+
     def test_run(self):
+        """真实销售表样本应生成结果、可信度和不超过清洗行数的分组。"""
+
         srcs = sd.pivot_sources()
         if not srcs:
             self.skipTest("缺少透视表样本")
@@ -172,7 +212,11 @@ class TestPivot(_TmpOut):
 
 
 class TestInvoice(_TmpOut):
+    """在样本存在时验证发票扫描与报表生成。"""
+
     def test_scan_and_generate(self):
+        """真实发票目录应完成扫描、月份筛选、台账生成和复核目录输出。"""
+
         folder = sd.invoice_folder()
         if not folder:
             self.skipTest("缺少发票样本")

@@ -6,7 +6,11 @@ from core.currency_core import to_capital
 
 
 class TestToCapital(unittest.TestCase):
+    """验证人民币大写转换、分角舍入和非法金额边界。"""
+
     def _cap(self, amount):
+        """断言转换成功并返回大写文本。"""
+
         ok, s = to_capital(amount)
         self.assertTrue(ok, "expected success for %r, got %r" % (amount, s))
         return s

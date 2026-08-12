@@ -1,14 +1,17 @@
 # -*- coding: utf-8 -*-
 """
-PDF 工具箱核心 —— 合并 / 拆分 / 提取·删除页,基于 pypdf(纯 Python)
-====================================================================
-只做"页级"操作,不涉及渲染成图片或转 Excel(那些需带原生库,旧版 Windows 风险高)。
-所有函数接受 log 回调(与各核心功能同构),输出写入统一 paths 目录。
+PDF 页级文件工具核心
+====================
+基于纯 Python 的 pypdf 提供合并、逐页/按范围拆分、提取指定页和删除指定页。模块只
+复制 PDF 页面对象，不进行渲染、OCR、图片转换或转 Excel，避免引入额外原生运行库。
+输出目录统一由 ``core.paths`` 管理，错误统一包装为面向用户的 ``PdfError``。
 
-页码范围文本(供提取/删除): 用户按"看到的页码"从 1 数起,如
-    "1,3,5-8,12-"   ->  第1、3、5~8、12到末页
-内部转成 0-based 索引集合。
-兼容 Windows 10/11 + Python 3.13。pypdf==6.14.2。
+页码范围使用用户看到的 1 基页码，例如 ``1,3,5-8,12-``；内部转换为有序去重的
+0 基索引。越界页码忽略，反向范围自动交换端点，开口范围默认延伸到首页或末页；
+完全无效时明确报错，不静默选择全部页面。
+
+读取时先把源 PDF 放入内存 BytesIO，再交给 pypdf，确保 Windows 文件句柄立即释放，
+处理完成后用户可以移动或删除源文件。只尝试空密码解密；需要真实密码的文件暂不处理。
 """
 import os
 import io
@@ -19,23 +22,27 @@ try:
     from pypdf import PdfReader, PdfWriter
     _HAS_PYPDF = True
 except Exception:
+    # PDF 工具是可选模块；缺少依赖时应用其他业务仍可正常启动。
     _HAS_PYPDF = False
 
 
 class PdfError(Exception):
-    """PDF 操作的业务异常(缺库/加密/损坏等),消息面向用户。"""
+    """缺少组件、文件损坏、加密或页码错误等可直接展示的业务异常。"""
 
 
 def _ensure_lib():
+    """确认 pypdf 可用，否则抛出带安装建议的业务异常。"""
     if not _HAS_PYPDF:
         raise PdfError("未安装 PDF 组件(pypdf),无法处理 PDF。请联系管理员或重新安装程序。")
 
 
 def parse_pages(spec, total):
-    """把页码范围文本解析成有序、去重的 0-based 索引列表。
+    """把用户页码表达式解析为有序、去重的 0 基索引列表。
 
-    spec 例: "1,3,5-8,12-"; total 为总页数。越界的页码被裁剪/忽略。
-    解析失败(空/全非法)抛 PdfError。"""
+    同时接受中文逗号和全角减号。范围缺少左端时从第一页开始，缺少右端时延伸到
+    ``total``；起点大于终点时自动交换。越界页逐个忽略，重复页只保留首次出现位置，
+    因此输出顺序遵循用户各段的书写顺序。空表达式或最终无有效页抛 ``PdfError``。
+    """
     if not spec or not spec.strip():
         raise PdfError("请填写页码范围,例如 1,3,5-8")
     out = []
@@ -47,12 +54,13 @@ def parse_pages(spec, total):
         if "-" in part:
             a, _, b = part.partition("-")
             a = a.strip(); b = b.strip()
-            # 两端都不是数字(如 "-"、"a-b")视为非法段,跳过,避免回退成静默全选
+            # 两端都非数字时不能把“-”误解释成全选，直接忽略该非法片段。
             if not a.isdigit() and not b.isdigit():
                 continue
             start = int(a) if a.isdigit() else 1
             end = int(b) if b.isdigit() else total
             if start > end:
+                # 允许用户写 8-5，按 5-8 处理比直接拒绝更符合办公工具预期。
                 start, end = end, start
             for p in range(start, end + 1):
                 i = p - 1
@@ -68,14 +76,15 @@ def parse_pages(spec, total):
 
 
 def _open_reader(path):
-    """打开 PDF;加密的空密码尝试解密,失败则抛面向用户的异常。
+    """将 PDF 读入内存并返回已可访问页面的 ``PdfReader``。
 
-    先把整份文件读进内存 BytesIO 再交给 pypdf —— PdfReader(路径) 会持有底层
-    文件句柄直到 GC,Windows 上会锁住源文件(处理完删不掉/存不回)。读进内存后
-    OS 句柄当即释放,发票级 PDF 内存开销可忽略。
+    ``PdfReader(path)`` 可能持有底层句柄直到垃圾回收，在 Windows 上锁住源文件；
+    BytesIO 方案在读完字节后立即关闭系统句柄。加密文件只尝试空密码，失败则给出
+    明确提示，不向调用层泄漏 pypdf 的底层异常类型。
     """
     try:
         with open(path, "rb") as fh:
+            # 页级办公 PDF 规模可接受整文件入内存，以换取可靠释放 Windows 文件锁。
             data = fh.read()
         r = PdfReader(io.BytesIO(data))
     except PdfError:
@@ -96,13 +105,17 @@ def _open_reader(path):
 
 
 def page_count(path):
-    """返回 PDF 页数;失败抛 PdfError。供页面预览页码范围用。"""
+    """返回 PDF 页数，供界面校验和提示页码范围。"""
     _ensure_lib()
     return len(_open_reader(path).pages)
 
 
 def merge(files, out_dir=None, out_name="合并结果.pdf", log=None):
-    """按顺序合并多个 PDF。返回 {out_file, out_dir}。"""
+    """按输入文件与原页顺序合并至少两份 PDF。
+
+    每份源文件先独立验证并读取，所有页面追加到一个 ``PdfWriter``；输出完成后返回
+    单文件路径、目录和统一 ``out_files`` 列表。函数不覆盖或修改任何源文件。
+    """
     _ensure_lib()
     log = log or (lambda *_: None)
     if len(files) < 2:
@@ -125,7 +138,7 @@ def merge(files, out_dir=None, out_name="合并结果.pdf", log=None):
 
 
 def _write_pages(reader, indices, out_file):
-    """把 reader 的若干页(0-based)写成一个新 PDF。"""
+    """按给定 0 基索引顺序把页面复制到一个新 PDF。"""
     w = PdfWriter()
     for i in indices:
         w.add_page(reader.pages[i])
@@ -134,11 +147,12 @@ def _write_pages(reader, indices, out_file):
 
 
 def split(file, mode="each", spec="", out_dir=None, log=None):
-    """拆分单个 PDF。
+    """把单个 PDF 逐页或按多个用户范围拆成独立文件。
 
-    mode="each"  : 每页导出成单独 PDF
-    mode="ranges": 按 spec(如 "1-3,4-6")每个范围导出一个 PDF
-    返回 {out_files, out_dir}。"""
+    ``mode="each"`` 每页输出一份，页码按总页数宽度补零；其他模式按逗号先拆成范围
+    组，每组再交给 ``parse_pages``，一个范围对应一个“第 N 段”文件。返回所有输出，
+    ``out_file`` 兼容指向第一份结果。
+    """
     _ensure_lib()
     log = log or (lambda *_: None)
     r = _open_reader(file)
@@ -147,6 +161,7 @@ def split(file, mode="each", spec="", out_dir=None, log=None):
     stem = os.path.splitext(os.path.basename(file))[0]
     outs = []
     if mode == "each":
+        # 补零保证文件管理器按名称排序时仍保持自然页序。
         width = len(str(total))
         for i in range(total):
             name = "%s_第%s页.pdf" % (stem, str(i + 1).rjust(width, "0"))
@@ -155,6 +170,7 @@ def split(file, mode="each", spec="", out_dir=None, log=None):
             outs.append(of)
         log("已按单页拆分为 %d 个文件" % total)
     else:  # ranges
+        # 外层逗号决定输出文件数量，组内仍可使用 parse_pages 支持单页和范围。
         groups = [g.strip() for g in spec.replace("，", ",").split(",") if g.strip()]
         if not groups:
             raise PdfError("请填写拆分范围,例如 1-3,4-6")
@@ -170,7 +186,7 @@ def split(file, mode="each", spec="", out_dir=None, log=None):
 
 
 def extract_pages(file, spec, out_dir=None, log=None):
-    """提取指定页到一个新 PDF。返回 {out_file, out_dir}。"""
+    """按用户书写顺序提取指定页到一份新 PDF。"""
     _ensure_lib()
     log = log or (lambda *_: None)
     r = _open_reader(file)
@@ -184,12 +200,16 @@ def extract_pages(file, spec, out_dir=None, log=None):
 
 
 def delete_pages(file, spec, out_dir=None, log=None):
-    """删除指定页,保留其余页导出新 PDF。返回 {out_file, out_dir}。"""
+    """删除指定页并按原顺序导出所有剩余页面。
+
+    如果用户选择了全部页面则取消操作并报错，避免生成结构无意义或无法打开的空 PDF。
+    """
     _ensure_lib()
     log = log or (lambda *_: None)
     r = _open_reader(file)
     total = len(r.pages)
     drop = set(parse_pages(spec, total))
+    # 删除只关心成员关系，转集合后按原页顺序构造 keep。
     keep = [i for i in range(total) if i not in drop]
     if not keep:
         raise PdfError("删除后没有剩余页面,已取消")

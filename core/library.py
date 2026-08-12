@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-数据库（自带存储）—— 自动分类 + 归档 + 索引
-==============================================
+桌面端本机文件库核心：自动分类、归档与索引
+========================================
 用户把各处来的 Excel 拖进来，程序据"文件名 + 表头"双阶段评分自动判定用途，
 复制归档到 <文档>/峰运通数据管理系统/数据库/<类别>/，记录最后更新日期等元信息；
 未能识别的表统一进"未识别"文件夹。各功能页可据类别自动取到所需的表。
@@ -19,22 +19,28 @@
   deliv_supp   送货·供应商明细（含供应商代码/名称）
   unknown      未识别
 
-兼容 Windows 10/11 + Python 3.13。
+分类结果允许一个文件带多个业务标签，但物理文件只归档到主类别目录；索引读改写使用
+文件锁和临时文件原子替换，防止多个任务并发导入时丢失条目。本模块是桌面端本机文件库，
+Web 数据库的按用户权限与存储隔离由服务端实现，不能直接复用这里的绝对路径索引。
 """
 import os
-import re
 import json
 import shutil
 import datetime
 
-from . import paths
+from . import library_scan, library_storage, paths
+from .library_classification import SCORERS, score_sheet
 from .storage_lock import file_lock
 
-# 类别顺序（也用于页面展示顺序）
+# 类别顺序同时决定桌面端展示顺序；新增业务分类必须同步标题、目录和评分规则。
 CATEGORIES = ["att_source", "att_target", "rec_source", "rec_zong",
               "rec_labor", "pivot_src", "arrival_plan",
               "purchase_stmt", "deliv_bom", "deliv_supp"]
 UNKNOWN = "unknown"
+
+# ``CATEGORIES`` 仍是对外单一事实源；启动时校验规则注册顺序，防止新增类别只改一处。
+if [category for category, _scorer in SCORERS] != CATEGORIES:
+    raise RuntimeError("文件库类别与分类评分规则未同步")
 
 CATEGORY_TITLES = {
     "att_source": "填报 · 系统数据表",
@@ -49,7 +55,7 @@ CATEGORY_TITLES = {
     "deliv_supp": "送货 · 供应商明细",
     "unknown": "未识别",
 }
-# 类别 → 归档子文件夹名（中文，便于用户直接翻看）
+# 归档目录使用中文业务名称，方便管理员脱离程序直接检查本机文件库。
 CATEGORY_DIRS = dict(CATEGORY_TITLES)
 CATEGORY_DIRS["unknown"] = "未识别"
 
@@ -57,250 +63,53 @@ CATEGORY_DIRS["unknown"] = "未识别"
 EXCEL_EXT = (".xlsx", ".xlsm", ".xls")
 
 
-def _norm(s):
-    """去空白/制表符，便于表头匹配。"""
-    return re.sub(r"\s+", "", str(s)) if s is not None else ""
-
-
 def scan_headers(path, max_rows=15, max_cells=60, log=None):
-    """轻量读取：只取每个子表前若干行的单元格文本，用于表头识别。
-    返回 {sheet_name: set(归一化文本)}。尽量快、低内存。
-    传 log 时，整表打不开(损坏/加密/被占用)会记一条告警而非静默返回空
-    ——否则文件读不出会被当成"无法识别"归入 unknown，用户无从分辨。"""
-    ext = os.path.splitext(path)[1].lower()
-    out = {}
-    try:
-        if ext in (".xlsx", ".xlsm"):
-            import openpyxl
-            wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
-            try:
-                for ws in wb.worksheets:
-                    # 有些文件声明的 <dimension> 不准，read_only 会漏读；
-                    # reset_dimensions 让 openpyxl 按实际内容重算范围。
-                    try:
-                        ws.reset_dimensions()
-                    except Exception:
-                        pass
-                    toks = set()
-                    for i, row in enumerate(ws.iter_rows(values_only=True)):
-                        if i >= max_rows:
-                            break
-                        for v in row[:max_cells]:
-                            t = _norm(v)
-                            if t:
-                                toks.add(t)
-                    out[ws.title] = toks
-            finally:
-                wb.close()
-        elif ext == ".xls":
-            import xlrd
-            book = xlrd.open_workbook(path)
-            for sh in book.sheets():
-                toks = set()
-                for r in range(min(max_rows, sh.nrows)):
-                    for c in range(min(max_cells, sh.ncols)):
-                        t = _norm(sh.cell(r, c).value)
-                        if t:
-                            toks.add(t)
-                out[sh.name] = toks
-    except Exception as e:
-        # 整表读取失败:记告警(带异常类型),让"读不出"区别于"识别不了"。
-        if log:
-            try:
-                log("⚠ 无法读取 %s(%s: %s),将按未识别处理"
-                    % (os.path.basename(path), type(e).__name__, e))
-            except Exception:
-                pass
-    return out
+    """保留原扫描入口，具体格式分支由独立模块维护。"""
 
-
-def _any_tok(tokens, needles):
-    """tokens 中是否有任一包含 needle 子串。"""
-    for tk in tokens:
-        for nd in needles:
-            if nd in tk:
-                return True
-    return False
+    return library_scan.scan_headers(path, max_rows, max_cells, log)
 
 
 def _score_sheet(fname, tokens, ext):
-    """对单个子表(tokens)结合文件名给各类别打分。返回 {cat: (score, [signals])}。"""
-    fn = _norm(fname)
-    res = {}
+    """委托独立规则模块计算单页签分数，保留原有内部调用接口。"""
+    return score_sheet(fname, tokens, ext)
 
-    def has(*needles):
-        return _any_tok(tokens, needles)
-
-    def fnhas(*needles):
-        return any(nd in fn for nd in needles)
-
-    # att_source —— 唯一强特征"上班1打卡"
-    s, sig = 0, []
-    if has("上班1打卡"):
-        s += 70; sig.append("含“上班1打卡”列")
-    if has("姓名"):
-        s += 12; sig.append("含“姓名”")
-    if fnhas("打卡", "考勤机", "每日统计", "系统导出"):
-        s += 15; sig.append("文件名含打卡/统计")
-    res["att_source"] = (s, sig)
-
-    # att_target —— 休息时间 + 系统/实际 列(且非 att_source)
-    s, sig = 0, []
-    if not has("上班1打卡"):
-        if has("休息时间"):
-            s += 42; sig.append("含“休息时间”列")
-        if has("实际工作时间", "实际工时"):
-            s += 22; sig.append("含“实际工作时间”")
-        if has("上班时间", "下班时间"):
-            s += 16; sig.append("含上/下班时间列")
-        if has("姓名") and has("日期"):
-            s += 12; sig.append("含姓名+日期")
-        if fnhas("考勤表", "待填", "考勤"):
-            s += 12; sig.append("文件名含考勤表")
-    res["att_target"] = (s, sig)
-
-    # rec_source —— 姓名/日期/实际工时 明细,但无 att_target 富特征;
-    # 文件名含"对账单/劳务/结算"的是劳务方账单(rec_labor),不是本方来源,排除。
-    s, sig = 0, []
-    if (not has("上班1打卡") and not has("休息时间") and not has("所属劳务公司")
-            and not fnhas("对账单", "劳务", "结算")):
-        if has("实际工作时间", "实际工时"):
-            s += 46; sig.append("含“实际工作时间”明细")
-        if has("姓名") and has("日期"):
-            s += 22; sig.append("含姓名+日期")
-        if fnhas("明细", "工时", "已填写"):
-            s += 10; sig.append("文件名含明细/工时")
-    res["rec_source"] = (s, sig)
-
-    # rec_zong —— 待对总表
-    s, sig = 0, []
-    if has("所属劳务公司"):
-        s += 55; sig.append("含“所属劳务公司”")
-    if has("出勤工时"):
-        s += 30; sig.append("含“出勤工时”")
-    if has("对账时间"):
-        s += 28; sig.append("含“对账时间”")
-    if s and has("姓名"):
-        s += 10
-    if fnhas("总表", "待对"):
-        s += 10; sig.append("文件名含总表/待对")
-    res["rec_zong"] = (s, sig)
-
-    # rec_labor —— 劳务对账单(格式各异,弱特征)
-    s, sig = 0, []
-    if fnhas("劳务", "对账单", "工时单", "结算"):
-        s += 42; sig.append("文件名含劳务/对账单")
-    if has("姓名"):
-        s += 18; sig.append("含“姓名”")
-    if has("合计", "小计"):
-        s += 14; sig.append("含合计列")
-    if ext == ".xls":
-        s += 8
-    res["rec_labor"] = (s, sig)
-
-    # pivot_src —— 采购数据表
-    s, sig = 0, []
-    if has("最终采购数量"):
-        s += 45; sig.append("含“最终采购数量”")
-    if has("材料编号", "物料编号", "物料号", "料号", "物料编码"):
-        s += 30; sig.append("含材料/物料编号")
-    if fnhas("采购量核算", "pfep", "包装方案", "组托辅材", "包材用量", "组托"):
-        s += 35; sig.append("文件名含采购/PFEP/组托")
-    if has("规格") and has("单位"):
-        s += 10; sig.append("含规格+单位")
-    res["pivot_src"] = (s, sig)
-
-    # arrival_plan —— 送货计划表
-    s, sig = 0, []
-    if fnhas("送货计划"):
-        s += 55; sig.append("文件名含“送货计划”")
-    if has("剩余未收", "未收数", "未收货", "未收料"):
-        s += 30; sig.append("含未收料列")
-    if has("供应商"):
-        s += 14; sig.append("含“供应商”")
-    if has("编码", "物料编码", "物料编号"):
-        s += 10
-    res["arrival_plan"] = (s, sig)
-
-    # purchase_stmt —— 采购对账单(我方/供方通用)。
-    # 强特征:批次号+采购数量+材料编号三件套;排除透视表(有"最终采购数量")与
-    # 含姓名/工时的劳务账单,避免抢 pivot_src / rec_labor。
-    s, sig = 0, []
-    if (has("批次号") and has("采购数量") and not has("最终采购数量")
-            and not has("姓名") and not has("实际工时", "出勤工时")):
-        s += 55; sig.append("含批次号+采购数量")
-        if has("材料编号", "物料编号", "材料号", "物料号"):
-            s += 25; sig.append("含材料编号")
-        if has("材料名称", "物料名称"):
-            s += 10; sig.append("含材料名称")
-        if fnhas("对账单", "对单", "结算单"):
-            s += 12; sig.append("文件名含对账/对单")
-    res["purchase_stmt"] = (s, sig)
-
-    # deliv_bom —— 送货·物料清单。以"物料中文/英文描述"为唯一强特征(透视表只有物料号)。
-    s, sig = 0, []
-    if has("物料中文描述", "物料英文描述", "中文描述", "英文描述"):
-        s += 55; sig.append("含物料中/英文描述")
-        if (has("物料号", "物料编码") and has("数量")):
-            s += 25; sig.append("含物料号+数量")
-        if fnhas("物料清单", "bom", "kd", "sub"):
-            s += 12; sig.append("文件名含物料清单/KD")
-    res["deliv_bom"] = (s, sig)
-
-    # deliv_supp —— 送货·供应商明细。两条判据(取高者):
-    #   A) 经典表:唯一强特征"零部件代码";
-    #   B) SAP KD 表:用"下阶物料/物料"作编码,靠 供应商代码+供应商名称 双列定性,
-    #      并要求带 库区/结算/科室 等供应商表特征列。排除到料"送货计划"(文件名)与
-    #      劳务单(姓名),避免抢 arrival_plan / rec_labor。
-    s, sig = 0, []
-    if has("零部件代码"):
-        s += 50; sig.append("含零部件代码")
-        if has("供应商代码", "供应商名称", "供应商"):
-            s += 25; sig.append("含供应商代码/名称")
-        if has("库区", "结算方式", "属性", "订单情况"):
-            s += 12; sig.append("含库区/结算/属性列")
-    elif (has("供应商代码") and has("供应商名称") and not has("姓名")
-          and not fnhas("送货计划")):
-        # 供应商代码+名称双列同现,基本只出现在供应商明细/缺账表
-        s += 55; sig.append("含供应商代码+供应商名称双列")
-        if has("下阶物料", "下阶物料描述", "物料", "料号"):
-            s += 12; sig.append("含物料/下阶物料列")
-        if has("库区", "结算方式", "科室", "订单情况", "发货数量", "签收数量", "批次号"):
-            s += 12; sig.append("含库区/结算/发签数等供应商表列")
-    res["deliv_supp"] = (s, sig)
-
-    return res
-
-
-ACCEPT_THRESHOLD = 50          # 最高分低于此值 → 未识别
+# 分类分数达到 50 才自动归档到业务类别；较低结果保留原始分但进入“未识别”。
+ACCEPT_THRESHOLD = 50
 
 
 def classify(path, log=None):
-    """对一个文件分类。返回 dict：category / confidence / signals / sheet。
-    传 log 时，文件整体读取失败会记告警(见 scan_headers)。"""
+    """
+    对一个文件的全部页签评分，返回主类别、多标签、可信度、信号和页签映射。
+
+    每个类别分别保留得分最高的页签，因此一个工作簿可以同时作为多个业务模块的数据源；
+    物理主类别取全局最高分，用于决定归档目录。最高分低于阈值时归为未识别，仍返回
+    原始分和信号供管理员判断是否需要手动改类或完善规则。
+    """
     ext = os.path.splitext(path)[1].lower()
     fname = os.path.basename(path)
     sheets = scan_headers(path, log=log)
     if not sheets:
+        # 文件名信号仍可能提供有限评分；使用一个空页签占位而不是直接跳过分类。
         sheets = {"": set()}
     best = {"category": UNKNOWN, "score": 0, "signals": [], "sheet": ""}
-    # 每个类别记录其"最高分子表"——支持一个文件多子表分属不同功能(多标签)。
-    per_cat = {}          # cat -> {"score", "signals", "sheet"}
+    # 每类别保留最佳页签，支持同一工作簿的不同页签服务不同业务功能。
+    per_cat = {}  # category -> {score, signals, sheet}。
     for sname, tokens in sheets.items():
         scored = _score_sheet(fname, tokens, ext)
         for cat, (sc, sig) in scored.items():
             if sc > best["score"]:
+                # 同分时保留更早遍历的页签和类别，保证分类结果稳定可复现。
                 best = {"category": cat, "score": sc, "signals": sig, "sheet": sname}
             if cat not in per_cat or sc > per_cat[cat]["score"]:
                 per_cat[cat] = {"score": sc, "signals": sig, "sheet": sname}
     if best["score"] < ACCEPT_THRESHOLD:
-        conf = int(best["score"])          # 记录原始分供参考
+        conf = int(best["score"])  # 未过阈值仍保留原始分，方便人工分析接近程度。
         return {"category": UNKNOWN, "confidence": conf, "categories": [],
                 "signals": best["signals"], "sheet": best["sheet"], "sheets": {}}
-    # 所有达到阈值的类别都作为标签,按分数降序;主类别 = 最高分(=best,首位)。
+    # 所有过阈值类别作为标签按分数降序；主类别仍由全局最高分决定。
     labels = sorted((c for c, v in per_cat.items() if v["score"] >= ACCEPT_THRESHOLD),
                     key=lambda c: per_cat[c]["score"], reverse=True)
-    # 各标签命中的子表名(供多子表分属不同功能时,读取器定位用)。
+    # 保存“类别 -> 最佳页签”，业务模块从数据库选文件后可直接定位正确数据页。
     sheet_map = {c: per_cat[c]["sheet"] for c in labels}
     return {"category": best["category"], "confidence": min(100, int(best["score"])),
             "signals": best["signals"], "sheet": best["sheet"],
@@ -309,20 +118,32 @@ def classify(path, log=None):
 
 # ---------------- 索引读写 ----------------
 def _load_index():
+    """
+    读取本机文件库 JSON 索引；缺失、损坏或根结构不合法时返回空索引。
+
+    此函数是底层读取助手，不自动删除或重建归档文件。损坏索引回落空值可保持界面可用，
+    但正式写操作都在文件锁内进行，降低正常运行中产生损坏的概率。
+    """
     p = paths.library_index_path()
+    if not os.path.isfile(p):
+        return {"items": []}
     try:
         with open(p, "r", encoding="utf-8") as f:
             data = json.load(f)
-        if isinstance(data, dict) and "items" in data:
+        if isinstance(data, dict) and isinstance(data.get("items"), list):
             return data
-    except Exception:
-        pass
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        return {"items": []}
     return {"items": []}
 
 
 def _save_index(idx):
-    """原子写索引：临时文件 + os.replace，避免写一半坏掉索引。
-    失败返回 False 上报调用方（不再静默吞异常导致孤立文件）。"""
+    """
+    使用同目录临时文件、刷新落盘和 ``os.replace`` 原子更新索引，成功返回真值。
+
+    临时文件与正式索引位于同一文件系统，替换不会暴露半写 JSON。失败时尽力清理临时
+    文件并返回假值，由调用方联动回滚归档文件，避免索引和磁盘状态分离。
+    """
     p = paths.library_index_path()
     tmp = p + ".tmp"
     try:
@@ -330,12 +151,15 @@ def _save_index(idx):
             json.dump(idx, f, ensure_ascii=False, indent=2)
             f.flush()
             try:
+                # 尽力把 JSON 刷到磁盘再替换，减少断电后只存在目录项但内容未落盘的风险。
                 os.fsync(f.fileno())
             except OSError:
+                # 某些文件系统不支持 fsync，原子替换仍可继续，不能因此完全禁止导入。
                 pass
         os.replace(tmp, p)
         return True
     except Exception:
+        # 保存错误由调用方转成业务错误；此处只负责不残留临时索引。
         try:
             if os.path.exists(tmp):
                 os.remove(tmp)
@@ -345,33 +169,39 @@ def _save_index(idx):
 
 
 def _cat_dir(category):
+    """解析分类对应的中文归档目录并确保它存在。"""
     d = os.path.join(paths.library_dir(), CATEGORY_DIRS.get(category, category))
     paths._ensure(d)
     return d
 
 
 def _now_str():
+    """返回本地分钟级更新时间文本，用于索引排序与界面展示。"""
     return datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
 
 
 def list_items(category=None):
-    """列出库中条目（可按类别过滤）。返回列表，每项含 name/category/path/updated/size/confidence/signals。"""
+    """
+    返回全部索引条目，或筛选主类别及附加标签中命中指定类别的条目。
+
+    旧索引只有单个 ``category`` 字段，筛选时兼容回退；返回顺序保持索引顺序，由需要
+    时间排序的调用方显式处理，避免基础函数暗中改变界面稳定性。
+    """
     items = _load_index()["items"]
     if category:
-        # 多标签:命中主类别或任一附加标签都算(旧条目无 categories 时回退到 category)。
+        # 多标签文件在任一相关业务选择器中都应可见，物理归档位置不影响逻辑可见性。
         items = [it for it in items
                  if category in (it.get("categories") or [it.get("category")])]
     return items
 
 
 def _item_cats(it):
-    """条目的全部类别标签(兼容旧索引:无 categories 时用单个 category)。"""
+    """返回条目全部类别标签；旧索引没有多标签字段时退回主类别。"""
     return it.get("categories") or [it.get("category", UNKNOWN)]
 
 
 def counts():
-    """各类别条目数量 {category: n}，含 unknown。多标签文件在其每个标签下各计一次
-    (与"从数据库选择"里的可见性一致)。"""
+    """统计每个类别的可见条目数；多标签文件在每个标签下各计一次。"""
     c = {cat: 0 for cat in CATEGORIES}
     c[UNKNOWN] = 0
     for it in _load_index()["items"]:
@@ -381,7 +211,7 @@ def counts():
 
 
 def storage_stats():
-    """归档存储概况：返回 (条目数, 占用字节数)。
+    """返回索引在册条目数及其当前真实文件大小总和。
 
     只统计索引在册的归档表（count 与 size 始终一致）；孤立残留文件不计入，
     避免出现"0 张表却占用 X MB"这类自相矛盾的展示。"""
@@ -393,12 +223,13 @@ def storage_stats():
             if p and os.path.isfile(p):
                 total += os.path.getsize(p)
         except OSError:
+            # 单个文件暂时不可访问时跳过大小，不影响其他条目和文件数量展示。
             pass
     return len(items), total
 
 
 def human_size(nbytes):
-    """把字节数格式化成 B/KB/MB/GB 便于展示。"""
+    """按 1024 进位把字节数格式化为 B、KB、MB 或 GB 的简短界面文本。"""
     n = float(nbytes)
     for unit in ("B", "KB", "MB", "GB"):
         if n < 1024 or unit == "GB":
@@ -408,139 +239,121 @@ def human_size(nbytes):
 
 
 def import_file(path, log=None):
-    """分类并复制归档一个文件。同类同名→新版替换旧版(旧的存 .bak)。
-    返回条目 dict（含 category/confidence 等）。不删除源文件（由调用方决定）。"""
-    def _lg(m):
-        if log:
-            log(m)
-    info = classify(path, log=_lg)
+    """
+    分类并复制归档单个文件，返回含分类、可信度、页签和来源信息的索引条目。
+
+    同一主类别下同名文件视为新版：覆盖前先复制为 ``.bak``；新内容先写 ``.part``，
+    再原子替换正式归档。归档与索引更新均在同一文件锁内，任一步失败都会恢复旧文件
+    或删除本次新文件。源文件从不删除，是否清理上传临时文件由调用方决定。
+    """
+    info = classify(path, log=lambda message: library_storage.safe_log(log, message))
     cat = info["category"]
     fname = os.path.basename(path)
     dst_dir = _cat_dir(cat)
     dst = os.path.join(dst_dir, fname)
 
+    # 文件锁覆盖索引读改写和归档替换，避免并发任务互相覆盖 items 列表或同名文件。
     with file_lock(paths.library_index_path()):
         idx = _load_index()
-        items = idx["items"]
-        replaced = False
-        bak = dst + ".bak"
-        if os.path.exists(dst):
-            if os.path.exists(bak):
-                os.remove(bak)
-            # 只有备份成功才允许覆盖，保证任何失败路径都可恢复旧版本。
-            shutil.copy2(dst, bak)
-            replaced = True
-        items = [it for it in items
-                 if not (it.get("category") == cat and it.get("name") == fname)]
-
+        replaced, bak = library_storage.prepare_import_backup(dst)
+        items = library_storage.without_same_primary_item(idx["items"], cat, fname)
         part = dst + ".part"
         try:
+            # 临时文件与目标同目录，os.replace 才能提供同文件系统内的原子提交。
             shutil.copy2(path, part)
             os.replace(part, dst)
-            size = os.path.getsize(dst)
-            cats = info.get("categories") or [cat]
-            item = {
-                "name": fname, "category": cat, "categories": cats, "path": dst,
-                "updated": _now_str(), "size": size,
-                "confidence": info["confidence"], "signals": info["signals"],
-                "sheet": info.get("sheet", ""), "sheets": info.get("sheets", {}),
-                "origin": os.path.abspath(path),
-            }
+            item = library_storage.build_library_item(path, dst, info, _now_str())
             items.append(item)
             idx["items"] = items
             if _save_index(idx) is False:
                 raise IOError("索引保存失败")
         except Exception:
-            try:
-                if os.path.exists(part):
-                    os.remove(part)
-                if replaced and os.path.exists(bak):
-                    os.replace(bak, dst)
-                elif os.path.exists(dst):
-                    os.remove(dst)
-            except OSError:
-                pass
+            library_storage.rollback_import(part, dst, bak, replaced)
             raise IOError("索引或归档保存失败，已回滚：%s" % fname)
-    _lg("%s → 【%s】可信度 %d%s"
-        % (fname, CATEGORY_TITLES.get(cat, cat), info["confidence"],
-           "（替换旧版）" if replaced else ""))
+    library_storage.safe_log(
+        log,
+        "%s → 【%s】可信度 %d%s"
+        % (
+            fname,
+            CATEGORY_TITLES.get(cat, cat),
+            info["confidence"],
+            "（替换旧版）" if replaced else "",
+        ),
+    )
     return item
 
 
 def import_many(pathlist, log=None):
-    """批量导入。返回 [item,...]。"""
+    """逐个导入文件并返回成功条目；单个失败记录日志后继续处理其余文件。"""
     out = []
     for p in pathlist:
         try:
             out.append(import_file(p, log=log))
         except Exception as e:
-            if log:
-                log("导入失败 %s：%s" % (os.path.basename(p), e))
+            # 文件之间相互独立，一个损坏文件不应阻止同批其他有效资料进入数据库。
+            library_storage.safe_log(log, "导入失败 %s：%s" % (os.path.basename(p), e))
     return out
 
 
 def remove_item(category, name, delete_file=True):
-    """从索引移除一项；delete_file 时连同归档文件与 .bak 一起删。"""
+    """
+    从索引移除指定类别可见且名称匹配的条目，并按需删除归档及其备份。
+
+    先在锁内保存新索引，成功后才删除文件；若索引保存失败，磁盘文件保持不动，避免
+    出现无法通过界面恢复的孤立删除。多标签条目在任一标签下执行删除都会移除整个条目，
+    因为它在磁盘上只有一份物理归档。
+    """
     with file_lock(paths.library_index_path()):
         idx = _load_index()
-        keep, gone = [], []
-        for it in idx["items"]:
-            if category in _item_cats(it) and it.get("name") == name:
-                gone.append(it)
-            else:
-                keep.append(it)
+        keep, gone = library_storage.partition_items(idx["items"], category, name)
         idx["items"] = keep
         if gone and _save_index(idx) is False:
             raise IOError("数据库索引保存失败，未删除归档文件")
         if delete_file:
-            for it in gone:
-                for p in (it.get("path"), (it.get("path") or "") + ".bak"):
-                    try:
-                        if p and os.path.exists(p):
-                            os.remove(p)
-                    except OSError:
-                        pass
+            # 必须先原子提交索引，再处理可失败的物理文件清理。
+            library_storage.delete_item_files(gone)
         return len(gone)
 
 
 def reclassify(category, name, new_category):
-    """手动把一项改判到另一类别：移动归档文件并更新索引。"""
+    """
+    把一个索引条目人工改判为单一新类别，同时移动物理归档并原子更新索引。
+
+    人工指定会清除旧的自动多标签，将可信度设为 100 并记录人工信号。目标目录存在同名
+    文件时先改名备份，索引保存成功后才删除该备份；任一步失败则把新文件移回源位置，
+    并恢复目标原文件，尽量保持改类前状态。
+    """
     if new_category not in CATEGORIES and new_category != UNKNOWN:
         return False
     with file_lock(paths.library_index_path()):
         idx = _load_index()
-        for it in idx["items"]:
-            if category in _item_cats(it) and it.get("name") == name:
-                src = it.get("path", "")
-                dst = os.path.join(_cat_dir(new_category), name)
-                moved = False
-                try:
-                    # 源文件已丢失时不能只改索引，否则会产生“看得见但打不开”的条目。
-                    if not src or not os.path.isfile(src):
-                        return False
-                    if os.path.abspath(src) != os.path.abspath(dst):
-                        shutil.move(src, dst)
-                        moved = True
-                    it["category"] = new_category
-                    it["categories"] = [new_category]
-                    it["path"] = dst
-                    it["updated"] = _now_str()
-                    it["confidence"] = 100
-                    it["signals"] = ["人工指定类别"]
-                    if _save_index(idx) is False:
-                        raise IOError("索引保存失败")
-                    return True
-                except Exception:
-                    if moved:
-                        try:
-                            shutil.move(dst, src)
-                        except OSError:
-                            pass
-                    return False
-    return False
+        item = library_storage.matching_item(idx["items"], category, name)
+        if item is None:
+            return False
+        source = item.get("path", "")
+        if not source or not os.path.isfile(source):
+            # 缺失源文件时拒绝只改索引，防止产生界面可见但无法打开的幽灵条目。
+            return False
+        destination = os.path.join(_cat_dir(new_category), name)
+        original_item = dict(item)
+        moved = False
+        backup = None
+        try:
+            moved, backup = library_storage.move_for_reclassification(source, destination)
+            library_storage.set_manual_category(item, new_category, destination, _now_str())
+            if _save_index(idx) is False:
+                raise IOError("索引保存失败")
+            library_storage.discard_reclassify_backup(backup)
+            return True
+        except Exception:
+            library_storage.rollback_reclassification(source, destination, moved, backup)
+            # 即使索引尚未落盘，也恢复当前内存对象，避免同一调用链继续看到半更新字段。
+            item.clear()
+            item.update(original_item)
+            return False
 
 
 def latest_in(category):
-    """取某类别中最近更新的一项 path（供功能页"载入最新"）。无则 None。"""
+    """按索引更新时间降序返回指定类别最新归档路径；没有条目时返回 ``None``。"""
     items = sorted(list_items(category), key=lambda x: x.get("updated", ""), reverse=True)
     return items[0]["path"] if items else None

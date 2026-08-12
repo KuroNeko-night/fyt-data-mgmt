@@ -7,6 +7,8 @@ from core import common_core as cc
 
 
 class TestNormName(unittest.TestCase):
+    """验证姓名和普通文本键的空白规范化。"""
+
     def test_removes_all_spaces(self):
         self.assertEqual(cc.norm_name("张 三"), "张三")
         self.assertEqual(cc.norm_name("  李四  "), "李四")
@@ -18,6 +20,8 @@ class TestNormName(unittest.TestCase):
 
 
 class TestNormDate(unittest.TestCase):
+    """验证日期对象与常见日期字符串统一格式。"""
+
     def test_datetime_and_date(self):
         self.assertEqual(cc.norm_date(datetime.datetime(2026, 5, 1, 8, 0)), (2026, 5, 1))
         self.assertEqual(cc.norm_date(datetime.date(2026, 12, 31)), (2026, 12, 31))
@@ -36,6 +40,8 @@ class TestNormDate(unittest.TestCase):
 
 
 class TestDayOf(unittest.TestCase):
+    """验证从日期表示中提取有效月内日号。"""
+
     def test_various(self):
         self.assertEqual(cc.day_of(datetime.date(2026, 5, 17)), 17)
         self.assertEqual(cc.day_of(5), 5)
@@ -49,6 +55,8 @@ class TestDayOf(unittest.TestCase):
 
 
 class TestParseTime(unittest.TestCase):
+    """验证时间对象和文本打卡时间解析。"""
+
     def test_time_and_datetime(self):
         self.assertEqual(cc.parse_time(datetime.time(8, 30)), datetime.time(8, 30))
         self.assertEqual(cc.parse_time(datetime.datetime(2026, 5, 1, 9, 15)),
@@ -66,6 +74,8 @@ class TestParseTime(unittest.TestCase):
 
 
 class TestRoundHalfHour(unittest.TestCase):
+    """验证工时上下取整到半小时的边界规则。"""
+
     def test_up(self):
         self.assertEqual(cc.round_half_hour(datetime.time(7, 56), "up"), datetime.time(8, 0))
         self.assertEqual(cc.round_half_hour(datetime.time(7, 31), "up"), datetime.time(8, 0))
@@ -83,6 +93,8 @@ class TestRoundHalfHour(unittest.TestCase):
 
 
 class TestHoursHelpers(unittest.TestCase):
+    """验证时间换算、显示和休息区间解析助手。"""
+
     def test_to_hours(self):
         self.assertAlmostEqual(cc.to_hours(datetime.time(8, 30)), 8.5)
         self.assertAlmostEqual(cc.to_hours(datetime.time(9, 15, 36)), 9.26, places=2)
@@ -101,6 +113,8 @@ class TestHoursHelpers(unittest.TestCase):
 
 
 class TestToNum(unittest.TestCase):
+    """验证业务数字、占位符和自定义跳过标记转换。"""
+
     def test_numbers(self):
         self.assertEqual(cc.to_num(9), 9.0)
         self.assertEqual(cc.to_num("8.5"), 8.5)
@@ -119,9 +133,12 @@ class TestToNum(unittest.TestCase):
 
 
 class TestOptions(unittest.TestCase):
+    """验证考勤选项默认值、冲突策略、文件覆盖和摘要。"""
+
     def test_defaults(self):
         o = cc.Options()
         self.assertEqual(o.workday_hours, 9.0)
+        self.assertEqual(o.day_max_hours, 16.0)
         self.assertTrue(o.overtime)
         self.assertEqual(o.conflict, "last")
         self.assertIn("休", o.skip_set())
@@ -129,6 +146,11 @@ class TestOptions(unittest.TestCase):
     def test_conflict_normalized(self):
         self.assertEqual(cc.Options(conflict="bogus").conflict, "last")
         self.assertEqual(cc.Options(conflict="first").conflict, "first")
+
+    def test_day_max_hours_is_configurable_and_in_summary(self):
+        o = cc.Options(day_max_hours=14.5)
+        self.assertEqual(o.day_max_hours, 14.5)
+        self.assertIn("白班上限=14.5h", o.summary())
 
     def test_per_file_map(self):
         o = cc.Options(columns={"a.xlsx": {"sheet": "总表",
@@ -147,6 +169,8 @@ class TestLoadDataOnly(unittest.TestCase):
     额外防回归:openpyxl 若升级改了内部结构,monkeypatch 应安全退化而非报错/丢数。"""
 
     def test_values_match_plain_data_only(self):
+        """修复 dimension 后的流式读取值必须与普通 data_only 加载完全一致。"""
+
         import os
         import shutil
         import tempfile
@@ -162,6 +186,8 @@ class TestLoadDataOnly(unittest.TestCase):
         wb.close()
         try:
             def cells(wb):
+                """把工作簿所有单元格读取为可比较的嵌套列表。"""
+
                 return [[list(r) for r in ws.iter_rows(values_only=True)]
                         for ws in wb.worksheets]
             w1 = openpyxl.load_workbook(p, data_only=True)

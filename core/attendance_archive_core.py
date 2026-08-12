@@ -1,0 +1,298 @@
+# -*- coding: utf-8 -*-
+"""
+考勤月度归档核心
+================
+读取一份或多份已经填写完成的考勤表，自动识别姓名、日期、工时、加班和异常列，
+按姓名聚合出勤天数、总工时、加班、异常次数和日均工时，并生成“月度汇总 + 每日
+明细”两页报告。双端只负责选择文件和展示结果，归档口径集中在本模块维护。
+
+日期支持 Excel datetime、带年份的年月日文本以及不带年份的月日文本；无年份时使用
+服务器当前年份。归档月份取全部有效记录中出现次数最多的年月，因此混入少量跨月行
+时仍按主体月份命名，但每日明细不会丢弃其他月份。出勤天数按姓名下不同日期去重，
+工时、加班和异常则按每条输入记录累计；调用方应避免重复上传同一考勤文件。
+
+本功能读取公式缓存值，执行前会提示未刷新的公式。它不重新计算班次或加班，输入表
+中的工时结果是唯一依据；如需纠正打卡，应先通过考勤填表功能生成正确结果后再归档。
+"""
+from __future__ import annotations
+
+import os
+import re
+from collections import defaultdict
+from datetime import datetime
+
+import openpyxl
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+
+from . import common_core, paths, settings
+
+EXCEL_SUFFIXES = {".xlsx", ".xlsm"}
+
+_ROLE_ALIASES = {
+    # 别名从业务中最常见的短名称到具体名称排列；每个角色只接受首个命中列。
+    "name": ("姓名", "员工姓名", "姓名/工号"),
+    "date": ("日期", "考勤日期", "出勤日期"),
+    "hours": ("工时", "实际工时", "工作时间", "算出工时"),
+    "ot": ("加班", "加班工时", "加班时长"),
+    "abnormal": ("异常", "异常原因", "备注"),
+}
+
+
+def _text(value) -> str:
+    """将单元格值转为去首尾空白的文本，空值统一为空串。"""
+    return "" if value is None else str(value).strip()
+
+
+def _number(value) -> float | None:
+    """解析普通数值和带千分位文本，无法作为工时时返回 ``None``。
+
+    布尔值不参与数值转换，避免 ``True`` 被统计为一小时。调用方把 ``None`` 按零
+    处理，以保留日期和人员记录，同时不凭空增加工时。
+    """
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        return float(str(value).replace(",", ""))
+    except (TypeError, ValueError):
+        return None
+
+
+def _normalize_date(value) -> str:
+    """把支持的 Excel 日期或中文日期文本归一化为 ``YYYY-MM-DD``。
+
+    完整日期可使用横线、斜线或“年月”分隔；只有月日时采用当前年份。正则只提取
+    日期主体，允许单元格附带星期等说明；最终仍经 ``datetime`` 校验，非法日期返回
+    空串并由读取层跳过。
+    """
+    if isinstance(value, datetime):
+        return value.strftime("%Y-%m-%d")
+    text = _text(value)
+    if not text:
+        return ""
+    for pattern in (
+        r"(\d{4})[-/年](\d{1,2})[-/月](\d{1,2})",
+        r"(\d{1,2})[-/月](\d{1,2})[-/日]",
+    ):
+        match = re.search(pattern, text)
+        if match:
+            groups = match.groups()
+            if len(groups) == 3:
+                # 完整日期直接使用源年份，避免归档跨年数据时被当前时间影响。
+                year, month, day = int(groups[0]), int(groups[1]), int(groups[2])
+            else:
+                month, day = int(groups[0]), int(groups[1])
+                # 缺少年份的历史模板没有更多依据，只能按运行时当前年份解释。
+                year = datetime.now().year
+            try:
+                return datetime(year, month, day).strftime("%Y-%m-%d")
+            except ValueError:
+                return ""
+    return ""
+
+
+def _detect_layout(worksheet) -> tuple[int, dict[str, int]] | None:
+    """在页签前十二行中选择字段最完整的考勤表头。
+
+    姓名、日期和工时是必要角色，加班与异常可选。同一页签可能在标题区出现部分字段，
+    因此不是找到第一行就返回，而是比较候选角色数量，选择信息最完整的一行。返回
+    openpyxl 的 1 基行列号；没有完整必要字段时返回 ``None``。
+    """
+    best = None
+    scan_rows = min(12, worksheet.max_row or 12)
+    for row_index in range(1, scan_rows + 1):
+        columns: dict[str, int] = {}
+        for cell in worksheet[row_index]:
+            text = _text(cell.value).replace("\n", "")
+            if not text:
+                continue
+            for role, aliases in _ROLE_ALIASES.items():
+                if role in columns:
+                    # 一个业务角色只使用该行中的首个命中列，保持模板行为可预测。
+                    continue
+                for alias in aliases:
+                    if alias in text:
+                        columns[role] = cell.column
+                        break
+        if {"name", "date", "hours"}.issubset(columns):
+            score = len(columns)
+            if best is None or score > best[1]:
+                # 分数相同保留更靠上的候选，符合常规模板的首个正式表头习惯。
+                best = (row_index, score, columns)
+    if best is None:
+        return None
+    return best[0], best[2]
+
+
+def _read_attendance(path: str, log=None) -> list[dict[str, object]]:
+    """读取一本考勤表内所有可识别页签的有效每日记录。
+
+    封面和说明页因识别不到必要字段而跳过。空行、合计行和无效日期不进入结果；缺少
+    加班或异常列时使用零和空串，缺失/非法工时也按零保留。整本工作簿没有任何有效
+    记录时抛出带文件名的业务错误。
+    """
+    common_core.warn_if_uncached(path, log, what="工时")
+    # 只按顺序读取公式计算值，不修改样式；read_only 适合月度批量归档的大数据量。
+    workbook = openpyxl.load_workbook(path, read_only=True, data_only=True)
+    try:
+        rows: list[dict[str, object]] = []
+        for worksheet in workbook.worksheets:
+            layout = _detect_layout(worksheet)
+            if layout is None:
+                continue
+            header_row, columns = layout
+            max_column = max(columns.values())
+            for values in worksheet.iter_rows(
+                min_row=header_row + 1, max_col=max_column, values_only=True):
+                # 只读取到最后一个必要/可选角色列，避免异常使用范围带来的空列开销。
+                if all(value is None or _text(value) == "" for value in values):
+                    continue
+                name = _text(values[columns["name"] - 1] if columns["name"] <= len(values) else None)
+                if not name or name in ("合计", "总计", "小计"):
+                    continue
+                date = _normalize_date(
+                    values[columns["date"] - 1] if columns["date"] <= len(values) else None)
+                if not date:
+                    # 日期是出勤天数和月份推断的基础，无法确认时不能纳入归档。
+                    continue
+                hours = _number(values[columns["hours"] - 1] if columns["hours"] <= len(values) else None)
+                ot = _number(values[columns["ot"] - 1] if columns.get("ot") and columns["ot"] <= len(values) else None)
+                abnormal = _text(values[columns["abnormal"] - 1] if columns.get("abnormal") and columns["abnormal"] <= len(values) else None)
+                rows.append({
+                    "name": name, "date": date,
+                    # 使用“or 0.0”将 None 兜底为零；合法的 0.0 仍保持零值。
+                    "hours": hours or 0.0, "ot": ot or 0.0,
+                    "abnormal": abnormal,
+                })
+        if not rows:
+            raise ValueError("未在 %s 中识别到 姓名/日期/工时 列" % os.path.basename(path))
+        return rows
+    finally:
+        workbook.close()
+
+
+def archive(files, out_dir=None, log=None, progress=None) -> dict[str, object]:
+    """汇总多份考勤表并生成月度统计工作簿。
+
+    输入在读取前统一校验存在性和扩展名。每条记录都会进入每日明细并累计工时；每人
+    出勤天数使用日期集合去重，因而同日多条记录只算一天但工时会相加。主体月份按
+    有效记录数量最多的 ``YYYY-MM`` 决定。进度在校验后从 10% 开始，读取阶段占到
+    80%；输出路径遵循全局设置。
+
+    返回报告路径、主体月份、人员数和明细记录数，字段 ``days`` 为历史协议名称，
+    实际表示每日明细行数而不是全体唯一自然日数量。
+    """
+    files = [os.path.abspath(str(value)) for value in (files or []) if str(value).strip()]
+    if not files:
+        raise ValueError("请选择考勤填报表")
+    for path in files:
+        # 先验证全部输入，防止已累计部分文件后才因后续文件无效而中止。
+        if not os.path.isfile(path):
+            raise FileNotFoundError("找不到文件：%s" % path)
+        if os.path.splitext(path)[1].lower() not in EXCEL_SUFFIXES:
+            raise ValueError("仅支持 xlsx 或 xlsm 文件：%s" % os.path.basename(path))
+    if progress:
+        progress(10)
+
+    per_person: dict[str, dict[str, object]] = defaultdict(
+        lambda: {"days": set(), "hours": 0.0, "ot": 0.0, "abnormal": 0})
+    detail_rows: list[tuple[str, str, float, float, str]] = []
+    months: dict[str, int] = defaultdict(int)
+    for index, path in enumerate(files, start=1):
+        for row in _read_attendance(path, log=log):
+            name = str(row["name"])
+            date = str(row["date"])
+            stats = per_person[name]
+            # 日期集合只负责出勤天数去重；明细和工时故意按源记录累计，不静默删行。
+            stats["days"].add(date)
+            stats["hours"] += float(row["hours"])
+            stats["ot"] += float(row["ot"])
+            if str(row["abnormal"]):
+                # 归档只统计非空异常记录数，不重新解释异常文本的严重程度。
+                stats["abnormal"] += 1
+            months[date[:7]] += 1
+            detail_rows.append((name, date, float(row["hours"]), float(row["ot"]), str(row["abnormal"])))
+        if log:
+            log("已读取 %s" % os.path.basename(path))
+        if progress:
+            progress(10 + round(index / len(files) * 70))
+    if not per_person:
+        raise ValueError("考勤表中没有有效记录")
+
+    # 主体月份按记录众数而非最早/最晚日期，减少少量跨月补卡导致文件命名偏移。
+    month_label = max(months, key=months.get) if months else datetime.now().strftime("%Y-%m")
+
+    if out_dir is None:
+        current = settings.get_settings()
+        # 源旁输出模式以第一份考勤表定位，固定目录等策略仍由 settings/paths 统一处理。
+        out_dir = paths.resolve_output_dir(
+            "attendance_archive", src_path=os.path.abspath(files[0]),
+            **current.output_kwargs())
+    else:
+        out_dir = os.path.abspath(str(out_dir))
+        os.makedirs(out_dir, exist_ok=True)
+
+    # 两个页签复用同一套样式对象，避免生成大量等价样式记录。
+    thin = Side(style="thin", color="9AA5B1")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    head_fill = PatternFill("solid", fgColor="EAF1FF")
+    head_font = Font(name="宋体", size=10, bold=True)
+    cell_font = Font(name="宋体", size=10)
+
+    workbook = openpyxl.Workbook()
+    summary = workbook.active
+    summary.title = "月度汇总"
+    headers = ["姓名", "出勤天数", "总工时（小时）", "加班（小时）", "异常次数", "日均工时"]
+    widths = {"A": 14, "B": 10, "C": 15, "D": 12, "E": 10, "F": 10}
+    for column, width in widths.items():
+        summary.column_dimensions[column].width = width
+    for column, name in enumerate(headers, start=1):
+        cell = summary.cell(1, column, name)
+        cell.font = head_font
+        cell.fill = head_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.border = border
+    row_index = 2
+    for name in sorted(per_person, key=lambda item: item.encode("utf-8")):
+        stats = per_person[name]
+        days = len(stats["days"])
+        # 日均工时用唯一出勤日作分母，而非明细条数，避免同日多行压低平均值。
+        average = round(stats["hours"] / days, 2) if days else 0
+        values = [name, days, round(stats["hours"], 2), round(stats["ot"], 2),
+                  stats["abnormal"], average]
+        for column, value in enumerate(values, start=1):
+            cell = summary.cell(row_index, column, value)
+            cell.font = cell_font
+            cell.border = border
+        row_index += 1
+
+    detail = workbook.create_sheet("每日明细")
+    detail_headers = ["姓名", "日期", "工时（小时）", "加班（小时）", "异常"]
+    detail_widths = {"A": 14, "B": 12, "C": 12, "D": 12, "E": 22}
+    for column, width in detail_widths.items():
+        detail.column_dimensions[column].width = width
+    for column, name in enumerate(detail_headers, start=1):
+        cell = detail.cell(1, column, name)
+        cell.font = head_font
+        cell.fill = head_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.border = border
+    detail_rows.sort(key=lambda item: (item[0].encode("utf-8"), item[1]))
+    # 明细按姓名 UTF-8 字节序、再按 ISO 日期排序，跨平台输出顺序稳定。
+    for index, (name, date, hours, ot, abnormal) in enumerate(detail_rows, start=2):
+        values = [name, date, round(hours, 2), round(ot, 2), abnormal]
+        for column, value in enumerate(values, start=1):
+            cell = detail.cell(index, column, value)
+            cell.font = cell_font
+            cell.border = border
+
+    target = common_core.unique_path(os.path.join(
+        out_dir, "考勤月度汇总_%s.xlsx" % month_label))
+    workbook.save(target)
+    workbook.close()
+    if log:
+        log("已生成月度汇总：%d 人、%d 条出勤记录（%s）。"
+            % (len(per_person), len(detail_rows), month_label))
+    return {
+        "out_dir": out_dir, "path": target, "month": month_label,
+        "persons": len(per_person), "days": len(detail_rows),
+    }

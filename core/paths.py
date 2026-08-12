@@ -1,16 +1,18 @@
 # -*- coding: utf-8 -*-
 """
-统一路径系统 —— 解决"各功能输出目录各不相同"的混乱
-=====================================================
-原状况：考勤/对账写到「源文件目录/output」，到料/透视写到「程序目录/output」，
-用户找不到结果在哪。现统一为：
+应用路径与业务输出目录的单一事实来源
+======================================
+集中解析配置、主数据库、本机缓存、任务历史、崩溃日志、美术资源和各业务输出目录，
+避免功能模块根据当前工作目录或界面入口自行拼接路径。桌面默认数据根为当前用户
+“文档/峰运通数据管理系统”，Web 任务则通过环境变量把配置和输出指向用户隔离目录。
 
-    <文档>/峰运通数据管理系统/输出/<功能中文名>/<时间戳>/文件...
+默认业务输出结构为：
 
-· 位置固定、可预测、按功能归档；
-· 也支持"源文件旁 output/"与"自定义目录"两种模式（见 settings）。
+    文档/峰运通数据管理系统/输出/<功能中文名>/<时间戳>/文件...
 
-兼容 Windows 10/11 + Python 3.13。
+同时支持源文件旁 ``output`` 和自定义根目录。输出目录使用原子创建方式竞争唯一名称，
+同一分钟或并发任务不会写入同一目录。应用数据目录函数会按需创建目录；只返回文件
+路径的函数不创建文件本身，实际写入错误由业务调用点明确暴露。
 """
 import os
 import sys
@@ -18,9 +20,11 @@ import datetime
 
 from . import version
 
-# 各功能的中文归档名（输出根目录下的子文件夹）
+# Web 业务目录和打包文档均依赖此映射；新增输出类型必须在这里注册中文客户名称。
 FEATURE_DIRS = {
     "attendance": "考勤填报",
+    "attendance_archive": "考勤月度归档",
+    "reconcile_statement": "对账单制作",
     "reconcile": "工时对账",
     "arrival": "到料明细",
     "pivot": "透视表",
@@ -28,23 +32,39 @@ FEATURE_DIRS = {
     "excel_tools": "Excel工具",
     "purchase": "采购数对账",
     "delivery": "送货计划",
+    "supplier_batch": "供应商批次表",
+    "purchase_plan": "采购计划导入",
+    "master_data": "主数据库",
+    "workshop_issue": "车间每日问题",
+    "daily_report": "日清报告",
+    "daily_safety_check": "安全检查日报",
     "invoice": "增值税发票统计",
+    "invoice_match": "票货匹配",
     "compare": "表格比对",
 }
 
 
 def app_dir():
-    """程序所在目录：打包后为 exe 所在目录，源码运行为本文件上一级(项目根)。"""
+    """返回程序资源基准目录。
+
+    PyInstaller 冻结后使用可执行文件所在目录；源码运行时从 ``core`` 文件的上一级
+    得到项目根，不依赖调用进程的当前工作目录。
+    """
     if getattr(sys, "frozen", False):
         return os.path.dirname(sys.executable)
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def documents_dir():
-    """当前用户"文档"目录；取不到则退回用户主目录。运行于 Windows 10/11。"""
+    """解析当前 Windows 用户的“文档”目录，失败时退回用户主目录。
+
+    优先调用 Shell API，而不是假定目录名为 Documents，因为中文系统、OneDrive
+    重定向和企业策略都可能改变真实位置。非 Windows 或 API 不可用时的回退也让
+    核心模块可在 Linux 服务端测试和运行。
+    """
     try:
         import ctypes.wintypes
-        CSIDL_PERSONAL = 5          # My Documents
+        CSIDL_PERSONAL = 5  # Windows Shell 的“我的文档”目录标识。
         SHGFP_TYPE_CURRENT = 0
         buf = ctypes.create_unicode_buffer(ctypes.wintypes.MAX_PATH)
         ctypes.windll.shell32.SHGetFolderPathW(None, CSIDL_PERSONAL, None,
@@ -52,41 +72,42 @@ def documents_dir():
         if buf.value and os.path.isdir(buf.value):
             return buf.value
     except Exception:
+        # 路径探测属于兼容能力，失败后仍有跨平台的用户主目录可用。
         pass
     return os.path.expanduser("~")
 
 
 def app_data_dir():
-    """应用数据目录：<文档>/峰运通数据管理系统。存放配置、输出根、崩溃日志。"""
+    """返回并确保桌面应用数据根目录存在。"""
     d = os.path.join(documents_dir(), version.APP_NAME)
     _ensure(d)
     return d
 
 
 def default_output_root():
-    """默认输出根目录：<文档>/峰运通数据管理系统/输出。"""
+    """返回并确保统一业务输出根目录存在。"""
     d = os.path.join(app_data_dir(), "输出")
     _ensure(d)
     return d
 
 
 def library_dir():
-    """数据库根目录：<文档>/峰运通数据管理系统/数据库。程序自带的表存储。"""
+    """返回并确保本机业务资料数据库目录存在。"""
     d = os.path.join(app_data_dir(), "数据库")
     _ensure(d)
     return d
 
 
 def library_index_path():
-    """数据库索引文件（记录每张表的类别/更新日期/元信息）。"""
+    """返回资料数据库索引 JSON 路径，不创建索引文件。"""
     return os.path.join(library_dir(), "索引.json")
 
 
 def assets_dir():
-    """静态资源目录（logo/图标）。
+    """返回品牌图片和图标等静态资源目录。
 
-    打包后随程序一并携带：PyInstaller 会把 assets/ 释放到 _MEIPASS
-    （单文件=临时目录；单目录=_internal）。源码运行时取项目根下的 assets/。
+    PyInstaller 单文件/单目录包会把资源释放到 ``sys._MEIPASS``；只有该位置实际存在
+    assets 时才使用它，否则回退到程序目录，兼容源码和未内嵌资源的开发构建。
     """
     if getattr(sys, "frozen", False):
         base = getattr(sys, "_MEIPASS", None)
@@ -96,20 +117,21 @@ def assets_dir():
 
 
 def config_path():
-    """全局配置文件路径。"""
+    """返回全局配置路径；Web/测试可通过 ``FYT_CONFIG_PATH`` 完整覆盖。"""
     override = os.environ.get("FYT_CONFIG_PATH", "").strip()
     if override:
+        # 环境变量可能是相对路径，立即转绝对路径避免子进程工作目录变化。
         return os.path.abspath(override)
     return os.path.join(app_data_dir(), "配置.json")
 
 
 def crash_log_path():
-    """崩溃日志路径（统一到应用数据目录，两程序原来各写各的）。"""
+    """返回统一崩溃日志文件路径。"""
     return os.path.join(app_data_dir(), "错误日志.txt")
 
 
 def task_history_path():
-    """任务历史 SQLite 路径；测试可用环境变量覆盖，避免污染真实数据。"""
+    """返回本机任务历史 SQLite 路径，并允许环境变量隔离测试或 Web 用户。"""
     override = os.environ.get("FYT_TASK_HISTORY_PATH", "").strip()
     if override:
         return os.path.abspath(override)
@@ -117,26 +139,27 @@ def task_history_path():
 
 
 def incremental_cache_path():
-    """增量缓存索引路径；测试可用环境变量覆盖。"""
+    """返回增量缓存索引路径，并允许环境变量覆盖。"""
     override = os.environ.get("FYT_INCREMENTAL_CACHE_PATH", "").strip()
     if override:
         return os.path.abspath(override)
     return os.path.join(app_data_dir(), "增量缓存.json")
 
 
-# 崩溃日志单文件上限(字节)。超过则把当前日志转存为 .old(只留一份历史),
-# 重开新文件。长期使用下日志有界(最多 ~2×上限),不会无限增长撑爆磁盘。
-_CRASH_LOG_MAX = 512 * 1024      # 512 KB
+# 当前文件超过 512 KB 后轮转为一个 .old；最多保留约两倍上限，避免长期运行无限增长。
+_CRASH_LOG_MAX = 512 * 1024
 
 
 def append_crash_log(text):
-    """向崩溃日志追加一段(带时间戳头),超限自动轮转。全程静默失败。
+    """为格式化错误正文补充时间戳并追加到有界崩溃日志。
 
-    各前端桥接层的错误记录统一经由此写入，轮转逻辑只此一处。
-    text 已是格式化好的正文(不含时间戳);本函数补统一的 "===== 时间 =====" 头。"""
+    写入前若当前文件达到上限，将其原子替换为唯一一份 ``.old``；旧 ``.old`` 先删除。
+    轮转失败不阻断本次追加，整个日志路径也绝不向业务层抛异常，避免记录原始故障时
+    再产生第二个故障并掩盖真正错误。
+    """
     try:
         p = crash_log_path()
-        # 超限轮转:现有文件转 .old(覆盖旧的),再从空文件写起
+        # 轮转只保留一个历史文件，空间有界且用户仍能查看上一段日志。
         try:
             if os.path.isfile(p) and os.path.getsize(p) >= _CRASH_LOG_MAX:
                 old = p + ".old"
@@ -144,35 +167,33 @@ def append_crash_log(text):
                     os.remove(old)
                 os.replace(p, old)
         except OSError:
-            pass                 # 轮转失败不影响本次写入(大不了继续追加)
+            pass  # 权限或占用导致轮转失败时继续追加，日志可能暂时超过上限。
         stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with open(p, "a", encoding="utf-8") as f:
             f.write("\n===== %s =====\n%s\n" % (stamp, text))
     except Exception:
-        pass                     # 写日志本身绝不能再抛异常
+        pass  # 日志是诊断辅助，不能改变业务成功或失败状态。
 
 
 def timestamp():
-    """时间戳 YYYYMMDD_HHMM，用于输出子文件夹与文件名。"""
+    """返回分钟级本地时间戳 ``YYYYMMDD_HHMM``，供同批输出统一命名。"""
     return datetime.datetime.now().strftime("%Y%m%d_%H%M")
 
 
 def resolve_output_dir(feature, mode="unified", src_path=None,
                        custom_root=None, ts=None):
-    """按设置解析某次运行的输出目录并创建它。
+    """按运行环境和用户设置解析并原子创建一次业务输出目录。
 
-    feature    : "attendance"/"reconcile"/"arrival"/"pivot"
-    mode       : "unified"=文档下统一文件夹(默认) / "beside"=源文件旁 output/ / "custom"=自定义根
-    src_path   : beside 模式下用来定位源文件目录
-    custom_root: custom 模式下的根目录
-    ts         : 时间戳；不传自动生成。同一批次可共用一个。
-    返回创建好的目录绝对路径。
+    ``feature`` 通过 ``FEATURE_DIRS`` 转为中文子目录；``mode`` 支持统一目录、源文件旁
+    和自定义根。Web 设置 ``FYT_WEB_OUTPUT_ROOT`` 后拥有最高优先级，服务端预先把它
+    指向当前用户和任务的隔离根，不能再受桌面输出模式影响。``ts`` 可由同一批任务
+    共用，但目录仍会自动追加序号避免冲突。返回已创建的绝对或规范化目录路径。
     """
     ts = ts or timestamp()
     feat_cn = FEATURE_DIRS.get(feature, feature)
     web_root = os.environ.get("FYT_WEB_OUTPUT_ROOT", "").strip()
     if web_root:
-        # Web 任务必须按用户和任务隔离输出，避免共享文档目录互相暴露结果。
+        # Web 隔离根由服务端校验所有权；核心层只在其下增加功能分类。
         base = os.path.join(os.path.abspath(web_root), feat_cn)
     elif mode == "beside" and src_path:
         base = os.path.join(os.path.dirname(os.path.abspath(src_path)), "output")
@@ -180,16 +201,17 @@ def resolve_output_dir(feature, mode="unified", src_path=None,
         base = os.path.join(custom_root, feat_cn)
     else:  # unified
         base = os.path.join(default_output_root(), feat_cn)
-    # 时间戳精确到分钟：同一分钟内多次生成会落到同名文件夹、内部同名文件被覆盖。
-    # 故做唯一化：目标文件夹已存在(上次同分钟运行留下的)则追加 _2/_3…。每次运行
-    # 只解析一次输出目录，故不会把同一次运行的多个文件拆散到不同文件夹。
+    # 分钟级时间戳可能碰撞，原子认领目录会追加 _2/_3；调用方应每批只解析一次，
+    # 再把同一批的多个输出写入返回目录。
     return _claim_unique_dir(os.path.join(base, ts))
 
 
 def _unique_dir(path):
-    """返回一个尚不存在的目录路径：path 不存在则原样返回；否则追加 _2/_3…。
+    """只计算尚不存在的候选目录名，不执行创建。
 
-    仅做命名，不创建目录(交由调用方 _ensure)。用 os.path.exists 判存在。"""
+    这是保留给旧调用方的非原子辅助函数；并发业务应使用 ``_claim_unique_dir``，避免
+    两个进程在检查与创建之间同时选择同一路径。
+    """
     if not os.path.exists(path):
         return path
     i = 2
@@ -201,7 +223,11 @@ def _unique_dir(path):
 
 
 def _claim_unique_dir(path):
-    """原子创建唯一目录，避免并发任务先检查后创建而落入同一输出目录。"""
+    """通过 ``os.mkdir`` 的排他创建语义认领唯一目录并返回实际路径。
+
+    父目录允许并发安全地存在；候选目录已存在时捕获 ``FileExistsError`` 并递增后缀。
+    其他权限、磁盘或路径错误不吞掉，由业务入口向用户报告。
+    """
     parent = os.path.dirname(path)
     if parent:
         os.makedirs(parent, exist_ok=True)
@@ -216,6 +242,6 @@ def _claim_unique_dir(path):
 
 
 def _ensure(d):
-    """确保目录存在；路径权限错误应在真正的调用点明确暴露。"""
+    """递归创建目录并返回原参数；权限或磁盘错误保持向上抛出。"""
     os.makedirs(d, exist_ok=True)
     return d

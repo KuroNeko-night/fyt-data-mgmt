@@ -1,0 +1,88 @@
+/* 此文件由 scripts/sync-design-tokens.mjs 生成，请勿手工修改。 */
+:where(html, body, #root) {
+  width: 100%;
+  height: 100%;
+  min-height: 100%;
+}
+
+:where(html) {
+  background: var(--fyt-canvas);
+}
+
+:where(body) {
+  min-width: 320px;
+  margin: 0;
+  background: var(--fyt-canvas-gradient, var(--fyt-canvas));
+}
+
+:where(.fyt-ui, .fyt-ui *) {
+  box-sizing: border-box;
+}
+
+:where(.fyt-ui button, .fyt-ui input, .fyt-ui select, .fyt-ui textarea) {
+  font: inherit;
+}
+
+:where(.fyt-ui button) {
+  cursor: pointer;
+}
+
+:where(.fyt-ui button:disabled, .fyt-ui [aria-disabled="true"]) {
+  cursor: not-allowed;
+}
+
+:where(.fyt-ui :focus-visible) {
+  outline: 3px solid color-mix(in srgb, var(--fyt-focus) 34%, transparent);
+  outline-offset: 2px;
+}
+
+:where(.fyt-ui input:not([type="checkbox"]):not([type="radio"]), .fyt-ui select, .fyt-ui textarea) {
+  transition: color var(--fyt-motion-fast) var(--fyt-motion-ease), border-color var(--fyt-motion-fast) var(--fyt-motion-ease), background-color var(--fyt-motion-fast) var(--fyt-motion-ease), box-shadow var(--fyt-motion-fast) var(--fyt-motion-ease);
+}
+:where(.fyt-ui input, .fyt-ui select, .fyt-ui textarea)::placeholder { color: color-mix(in srgb, var(--fyt-text-muted) 82%, transparent); }
+:where(.fyt-ui input, .fyt-ui select, .fyt-ui textarea):disabled { cursor: not-allowed; opacity: .58; }
+:where(.fyt-ui input[readonly], .fyt-ui textarea[readonly]) { color: var(--fyt-text-secondary); background-color: color-mix(in srgb, var(--fyt-surface-subtle) 74%, transparent); }
+:where(.fyt-ui select) {
+  appearance: none;
+  padding-right: 34px !important;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cpath d='m5.5 7.5 4.5 4.5 4.5-4.5' fill='none' stroke='%236BA2FF' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-position: right 10px center;
+  background-repeat: no-repeat;
+  background-size: 16px;
+}
+:where(.fyt-ui input[type="checkbox"], .fyt-ui input[type="radio"]) {
+  width: 18px !important;
+  height: 18px !important;
+  min-width: 18px !important;
+  min-height: 18px;
+  flex: 0 0 18px;
+  margin: 0;
+  appearance: none;
+  border: 1px solid color-mix(in srgb, var(--fyt-border-strong) 76%, var(--fyt-text-muted));
+  outline: 0;
+  background-color: color-mix(in srgb, var(--fyt-surface-subtle) 88%, transparent);
+  background-position: center;
+  background-repeat: no-repeat;
+  box-shadow: inset 0 1px 2px color-mix(in srgb, var(--fyt-text) 8%, transparent);
+  cursor: pointer;
+  transition: border-color var(--fyt-motion-fast) var(--fyt-motion-ease), background-color var(--fyt-motion-fast) var(--fyt-motion-ease), box-shadow var(--fyt-motion-fast) var(--fyt-motion-ease), transform var(--fyt-motion-fast) var(--fyt-motion-ease);
+}
+:where(.fyt-ui input[type="checkbox"]) { border-radius: 5px; }
+:where(.fyt-ui input[type="radio"]) { border-radius: 50%; }
+:where(.fyt-ui input[type="checkbox"], .fyt-ui input[type="radio"]):hover { border-color: var(--fyt-primary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--fyt-primary) 12%, transparent); }
+:where(.fyt-ui input[type="checkbox"]:checked) {
+  border-color: var(--fyt-primary);
+  background-color: var(--fyt-primary);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 18'%3E%3Cpath d='m4.2 9 3.1 3.1 6.5-6.5' fill='none' stroke='white' stroke-width='2.1' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  box-shadow: 0 5px 12px color-mix(in srgb, var(--fyt-primary) 24%, transparent);
+}
+:where(.fyt-ui input[type="checkbox"]:indeterminate) { border-color: var(--fyt-primary); background-color: var(--fyt-primary); background-image: linear-gradient(white, white); background-size: 8px 2px; }
+:where(.fyt-ui input[type="radio"]:checked) { border-color: var(--fyt-primary); background-color: var(--fyt-primary); box-shadow: inset 0 0 0 4px var(--fyt-surface), 0 5px 12px color-mix(in srgb, var(--fyt-primary) 22%, transparent); }
+:where(.fyt-ui input[type="checkbox"], .fyt-ui input[type="radio"]):active { transform: scale(.92); }
+:where(.fyt-ui input[type="checkbox"], .fyt-ui input[type="radio"]):disabled { cursor: not-allowed; opacity: .46; }
+
+.fyt-mono {
+  font-family: var(--fyt-type-font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}

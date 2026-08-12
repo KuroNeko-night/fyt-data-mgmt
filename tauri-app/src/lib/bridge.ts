@@ -1,3 +1,10 @@
+/**
+ * Tauri 前端与 Python Core 桥接的唯一调用入口。
+ *
+ * 桌面运行时通过 Rust 命令启动受控 sidecar；普通浏览器开发预览则只返回本文件定义的
+ * 无副作用演示数据。业务页面不应直接调用 `invoke`，否则会绕过预览兼容、请求编号和
+ * 桥接协议的统一类型边界。
+ */
 import { invoke } from "@tauri-apps/api/core";
 
 export type BridgePayload = Record<string, unknown>;
@@ -71,23 +78,31 @@ let previewSettings: AppSettings = {
   enable_incremental_cache: true,
 };
 
+/** 判断当前页面是否运行在 Tauri 注入了内部对象的桌面 WebView 中。 */
 export function isTauriRuntime(): boolean {
   return "__TAURI_INTERNALS__" in window;
 }
 
+/**
+ * 为纯浏览器预览提供有限、可预测的桥接响应。
+ *
+ * 预览只模拟设置、健康信息、任务和文件库摘要，不执行本地文件操作。未登记动作直接给出
+ * 面向用户的桌面端提示，避免开发预览看似成功却没有产生真实业务结果。
+ */
 async function previewResponse<T>(action: string, payload: BridgePayload): Promise<T> {
   if (action === "settings.update") {
     const values = payload.values;
-    if (values && typeof values === "object") previewSettings = { ...previewSettings, ...values };
+    if (values && typeof values === "object") previewSettings = { ...previewSettings, ...values }; // 保留未提交字段，模拟 Core 的局部设置更新。
     return previewSettings as T;
   }
+  // 演示数据固定在模块级，页面刷新后自然重置，不写入浏览器持久存储或污染真实配置。
   const responses: Record<string, unknown> = {
     "system.health": {
       app_name: "峰运通数据管理系统",
       version: "1.3.0",
-      python: "浏览器预览",
+      python: "运行环境",
       platform: "web-preview",
-      project_root: "仅 Tauri 桌面运行时连接 Python 核心",
+      project_root: "当前工作目录",
       features: ["settings", "tasks", "library", "currency"],
     },
     "settings.get": previewSettings,
@@ -119,11 +134,17 @@ async function previewResponse<T>(action: string, payload: BridgePayload): Promi
     },
   };
   if (!(action in responses)) {
-    throw new Error("浏览器预览不连接 Python 核心，请在 Tauri 桌面窗口中运行此操作。");
+    throw new Error("当前功能需要在桌面端运行，请从桌面端重新打开。");
   }
   return responses[action] as T;
 }
 
+/**
+ * 调用一个桥接动作，并在浏览器预览与 Tauri 桌面运行时之间选择正确实现。
+ *
+ * `requestId` 只对长任务必需，Rust 会用它登记子进程并转发日志和进度事件。普通查询可
+ * 留空，仍通过同一 `bridge_request` 白名单进入 Python Core。
+ */
 export async function bridgeRequest<T>(action: string, payload: BridgePayload = {}, requestId = ""): Promise<T> {
   if (!isTauriRuntime()) {
     return previewResponse<T>(action, payload);
@@ -131,16 +152,29 @@ export async function bridgeRequest<T>(action: string, payload: BridgePayload = 
   return invoke<T>("bridge_request", { request: { action, payload, requestId } });
 }
 
+/**
+ * 请求 Rust 精确终止指定桥接任务；预览环境或空编号直接返回未取消。
+ *
+ * 这里只表达“已向系统请求取消”，最终任务状态仍由 Python 任务历史与调用 Hook 的异常
+ * 分支统一解释。
+ */
 export async function cancelBridgeRequest(requestId: string): Promise<boolean> {
   if (!requestId || !isTauriRuntime()) return false;
   return invoke<boolean>("cancel_bridge_request", { requestId });
 }
 
+/** 通过受控桥接安装已下载更新；浏览器预览禁止触发本机安装。 */
 export async function installUpdate(path: string): Promise<void> {
-  if (!isTauriRuntime()) throw new Error("安装更新仅在 Tauri 桌面窗口中可用。");
+  if (!isTauriRuntime()) throw new Error("安装更新需要桌面版，请在桌面端继续。");
   await invoke("install_update", { path });
 }
 
+/**
+ * 把影响原生窗口行为的设置同步到 Rust 运行时。
+ *
+ * 普通界面设置仍由 Python 配置保存，这里只同步“关闭时最小化到托盘”这一项内存状态；
+ * 浏览器预览没有原生窗口，因此保持无操作。
+ */
 export async function syncRuntimeSettings(settings: AppSettings): Promise<void> {
   if (!isTauriRuntime()) return;
   await invoke("set_minimize_to_tray", { enabled: settings.minimize_to_tray });

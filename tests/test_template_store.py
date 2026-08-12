@@ -8,11 +8,17 @@ from core import template_store
 
 
 class TestTemplateStore(unittest.TestCase):
+    """验证模板指纹版本、结构差异、迁移规则和删除。"""
+
     def setUp(self):
+        """创建隔离模板索引。"""
+
         self.tmp = tempfile.TemporaryDirectory(prefix="fyt_template_")
         self.path = os.path.join(self.tmp.name, "templates.json")
 
     def tearDown(self):
+        """恢复模板路径并删除临时版本记录。"""
+
         self.tmp.cleanup()
 
     def test_same_structure_does_not_create_duplicate_version(self):
@@ -25,6 +31,8 @@ class TestTemplateStore(unittest.TestCase):
         self.assertEqual(second["versions"][0]["diff"]["summary"], "初始版本")
 
     def test_structure_change_creates_version_and_diff(self):
+        """表头结构变化应创建新版本，并给出新增、删除或改名差异。"""
+
         template_store.save_template(
             "月度总表", "rec_zong", "总表", ["姓名", "公司", "工时"], path=self.path)
         updated = template_store.save_template(
@@ -36,6 +44,8 @@ class TestTemplateStore(unittest.TestCase):
         self.assertIn("工时", latest["diff"]["removed"])
 
     def test_migration_rule_and_apply(self):
+        """版本迁移规则应持久化，并把旧字段映射到新模板结构。"""
+
         saved = template_store.save_template(
             "月度总表", "rec_zong", "总表", ["姓名", "工时"], path=self.path)
         rule = template_store.save_migration_rule(

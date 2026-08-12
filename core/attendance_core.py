@@ -1,153 +1,66 @@
 # -*- coding: utf-8 -*-
 """
-考勤填表核心逻辑（不依赖GUI，便于测试与复用）。
-- 从“每日统计表”读取：姓名、日期、上班1打卡时间、下班1打卡时间（支持 .xlsx/.xlsm/.xls）
-- 按 姓名 + 日期 匹配，填入考勤表的：上班时间（系统）、下班时间（系统）
-- 自动算“实际上/下班时间”：把系统打卡时间按半小时进位(上班)/退位(下班)。
-  例：上班 7:56、7:31 → 8:00；下班 8:13、8:24 → 8:00。（opts.auto_actual，默认开）
-- 实际工作时间 = 下班时间（实际） - 上班时间（实际） - 休息时间
-- 加班 = 实际工时 - 标准工时（可在高级选项调整；不足记0）
-- 异常数据(下班早于上班、或扣休息后为负)不再按跨夜 +24 处理：该行标黄、
-  工时写真实(负)值，并汇总到输出表新增子表『异常核对报告』，供人工核对。
-- 未匹配到打卡数据的行(系统数据查无此人此日)也记入异常报告并标黄；
-  行内已标“假/休/调休”等非工时词、或已手填实际时间算出工时的除外。
-公共解析/常量/选项/输出路径统一来自 common_core。保留目标文件原有格式。
+考勤填表业务核心
+================
+读取一份或多份系统导出的每日打卡统计表，以“规范化姓名 + 业务日期”为联合键，
+将上、下班打卡时间写入现有考勤模板，并计算实际时间、工时和加班。模块只处理
+工作簿数据，不依赖桌面或 Web 界面，因此双端均通过同一入口复用本实现。
+
+主要规则：
+  · 源表支持 xlsx、xlsm 和 xls，由 ``common_core.read_sheets`` 统一读取；
+  · 上班实际时间向上取整到半小时，下班实际时间向下取整到半小时；
+  · 白班下班早于上班视为异常，不擅自按跨日补 24 小时；只有明确判定为夜班时
+    才允许跨零点，防止漏打下班卡被误算成超长正常工时；
+  · 异常行保留真实计算值、在原表标黄，并汇总到“异常核对报告”供人工复核；
+  · 未匹配记录同样进入异常报告，但“假、休、调休”等非工时标记不误报；
+  · 模板原有样式由 openpyxl 保留，公共解析、选项和输出目录规则来自 common_core。
+
+本模块不推断或修改考勤制度。标准工时、夜班阈值、冲突策略等均由 ``Options``
+传入，输出参数会随结果返回，便于前端展示并保留本次处理口径。
 """
 import os
+from dataclasses import dataclass
+
 import openpyxl
 from openpyxl.styles import PatternFill, Font, Alignment
 
+from . import attendance_source as _attendance_source
 from . import common_core as cc
 from .common_core import Options, norm_name, norm_date, parse_time, to_hours, parse_rest
 
-# 异常行标黄填充
+# 异常统一使用纯黄色：既能在原模板中醒目提示，又与报告页表头保持一致。
 _HL_FILL = PatternFill(fill_type="solid", fgColor="FFFF00")
 
-# 向后兼容：仍暴露该常量名
+# 旧调用方可能仍从本模块导入该名称，因此只做别名转发，不复制公共常量值。
 STANDARD_WORKDAY_HOURS = cc.STANDARD_WORKDAY_HOURS
 
 
 # ---------- 读取源表（每日统计表） ----------
 def _detect_source_header(rows, opts, path=""):
-    """在一个 sheet 里定位 姓名/日期/上班1打卡/下班1打卡 表头。
-    返回 (hdr_idx0, cols) 或 None。
-    手动列映射(opts.resolve_roles)优先；其次按 header_row 限定行；否则自动识别。"""
-    roles = opts.resolve_roles(path)
-    header = opts.resolve_header(path)
-    if roles and all(k in roles for k in ("name", "date", "on", "off")):
-        hdr0 = (header - 1) if header else 0
-        return hdr0, {k: roles[k] for k in ("name", "date", "on", "off")}
-    cand = [header - 1] if header else range(min(6, len(rows)))
-    for i in cand:
-        if i < 0 or i >= len(rows):
-            continue
-        row = rows[i]
-        joined = [norm_name(x) for x in row]
-        # 表头判定放宽为"子串":真实导出常见"员工姓名""考勤日期""上班1打卡时间"等
-        # 变体,旧版要求 =="姓名" 且含"上班1打卡"会整表识别失败。判定与取列同源。
-        if not any("姓名" in x for x in joined) or \
-           not any(("上班" in x and "打卡" in x) for x in joined):
-            continue
-        cols = {}
-        # 各角色"首个命中列"胜出:避免"上班2打卡时间"覆盖"上班1打卡时间"(取第一次打卡);
-        # 用 if/elif 保证一列只认领一个角色。打卡列要求同时含"上班/下班"+"打卡",
-        # 从而放过"上班时间(系统)"这类填报目标列(它无"打卡"),不误当作源打卡列。
-        for c, val in enumerate(joined):
-            if "name" not in cols and "姓名" in val:
-                cols["name"] = c
-            elif "date" not in cols and "日期" in val:
-                cols["date"] = c
-            elif "on" not in cols and "上班" in val and "打卡" in val:
-                cols["on"] = c
-            elif "off" not in cols and "下班" in val and "打卡" in val:
-                cols["off"] = c
-        if all(k in cols for k in ("name", "date", "on", "off")):
-            return i, cols
-    return None
+    """兼容旧内部入口，实际识别规则由独立来源读取模块维护。"""
+
+    return _attendance_source.detect_source_header(rows, opts, path)
 
 
 def load_source(path, opts=None):
-    """读取单个每日统计表 -> {(姓名,(y,m,d)):(上班打卡,下班打卡)}。支持多子表，取首个命中表头的子表。"""
-    opts = opts or cc.DEFAULTS
-    sheets = cc.read_sheets(path)
-    want_sheet = opts.resolve_sheet(path)
-    if want_sheet:
-        sheets = [(n, r) for (n, r) in sheets if n == want_sheet]
-        if not sheets:
-            raise ValueError("文件 %s 中找不到工作表 '%s'" % (os.path.basename(path), want_sheet))
-    ds_override = opts.resolve_data_start(path)
-    for sname, rows in sheets:
-        det = _detect_source_header(rows, opts, path)
-        if det is None:
-            continue
-        hdr, cols = det
-        data = {}
-        start = (ds_override - 1) if ds_override else (hdr + 1)
-        for r in range(start, len(rows)):
-            row = rows[r]
-            def g(c):
-                return row[c] if c < len(row) else None
-            name = norm_name(g(cols["name"]))
-            d = norm_date(g(cols["date"]))
-            if not name or d is None:
-                continue
-            on = g(cols["on"]); off = g(cols["off"])
-            on_s = "" if on is None else str(on).strip()
-            off_s = "" if off is None else str(off).strip()
-            data[(name, d)] = (on_s, off_s)
-        return data
-    raise ValueError("源表 %s 未找到表头（需含'姓名'列与'上班/下班打卡'列）。" % os.path.basename(path))
+    """读取单个每日统计文件；稳定公开名称保持不变。"""
+
+    return _attendance_source.load_source(path, opts)
 
 
 def load_source_multi(paths, opts=None, log=None):
-    """读取并合并多个每日统计表。重复(姓名+日期)按 opts.conflict 处理。
-    返回 (data, stat)：stat={"files","records","conflicts"}"""
-    opts = opts or cc.DEFAULTS
-    log = log or (lambda *a, **k: None)
-    if isinstance(paths, str):
-        paths = [paths]
-    merged = {}; conflicts = 0
-    failed = 0                                     # 读取失败的文件数,用于事后醒目提示
-    for p in paths:
-        # 读源表前探测"公式未刷新(读出 None)",命中则醒目提示,避免静默漏算工时
-        cc.warn_if_uncached(p, log, what="打卡时间")
-        try:
-            one = load_source(p, opts)
-        except Exception as e:
-            failed += 1
-            log("  · [跳过] %s（读取失败：%s）" % (os.path.basename(p), e)); continue
-        log("  · [读取] %s：%d 条打卡记录" % (os.path.basename(p), len(one)))
-        for key, (new_on, new_off) in one.items():
-            if key not in merged:
-                merged[key] = (new_on, new_off); continue
-            conflicts += 1
-            old_on, old_off = merged[key]
-            if opts.conflict == "first":
-                pass                                  # 保留先者
-            elif opts.conflict == "warn":
-                log("    ! 重复且不覆盖：%s %s" % (key[0], "-".join(map(str, key[1]))))
-            else:                                     # last：非空才覆盖
-                use_on = new_on if (new_on and new_on not in ("-", "—")) else old_on
-                use_off = new_off if (new_off and new_off not in ("-", "—")) else old_off
-                merged[key] = (use_on, use_off)
-    if conflicts:
-        cn = {"last": "后者覆盖", "first": "先者优先", "warn": "不覆盖仅提示"}
-        log("  注意：%d 条(姓名+日期)重复，按【%s】处理。" % (conflicts, cn.get(opts.conflict)))
-    # 读取失败占比过高或合并为空时醒目告警,避免"没数据"被当成正常结果
-    n = len(paths)
-    if failed and (not merged or failed == n or failed / float(n) >= 0.5):
-        if not merged:
-            log("⚠ 警告：%d 个文件全部读取失败（合并后无任何打卡记录），请检查表头/格式/是否选错文件。" % failed)
-        else:
-            log("⚠ 警告：%d/%d 个文件读取失败（占比过半），结果可能不完整，请检查这些文件的表头/格式。"
-                % (failed, n))
-    return merged, {"files": n, "records": len(merged),
-                    "conflicts": conflicts, "failed": failed}
+    """合并多个来源文件；冲突与失败提示由独立来源模块统一处理。"""
+
+    return _attendance_source.load_source_multi(paths, opts, log)
 
 
 # ---------- 异常行标黄 + 报告子表 ----------
 def _highlight_row(ws, r, cols):
-    """把该行涉及的数据列(从最小列到最大列)整段标黄，便于人工定位。"""
+    """把目标字段覆盖的连续单元格区间标黄，便于在原模板中定位异常。
+
+    只处理已识别且列号非空的角色；不涂满整行，避免破坏模板右侧可能存在的说明、
+    签字或其他非业务区域。
+    """
     used = [c for c in cols.values() if c]
     if not used:
         return
@@ -156,11 +69,16 @@ def _highlight_row(ws, r, cols):
 
 
 def _write_report_sheet(wb, anomalies):
-    """在工作簿追加“异常核对报告”子表，逐条列出异常。anomalies 为空则不建表。"""
+    """把异常明细写入独立核对页；没有异常时不创建空报告。
+
+    若输入模板已含同名页，先删除再重建，确保本次输出不会混入历史异常。原始业务
+    页上的行号、姓名和日期一并保存，使人工可从报告快速返回对应位置复核。
+    """
     if not anomalies:
         return
     title = "异常核对报告"
-    if title in wb.sheetnames:                 # 避免重名冲突
+    if title in wb.sheetnames:
+        # 同名页通常来自重复处理旧输出；重建比追加更能保证报告属于当前计算结果。
         del wb[title]
     ws = wb.create_sheet(title)
     head = ["工作表", "行号", "姓名", "日期", "班次", "实际上班", "实际下班",
@@ -174,6 +92,7 @@ def _write_report_sheet(wb, anomalies):
     for a in anomalies:
         ws.append([a["sheet"], a["row"], a["name"], a["date"], a.get("shift", ""),
                    a["act_on"], a["act_off"], a["rest"], a["hours"], a["reason"]])
+    # 固定列宽优先保证异常原因可读，同时避免自动宽度扫描大表增加处理耗时。
     widths = [14, 6, 10, 12, 8, 10, 10, 10, 10, 34]
     for i, w in enumerate(widths, 1):
         ws.column_dimensions[chr(64 + i)].width = w
@@ -181,8 +100,11 @@ def _write_report_sheet(wb, anomalies):
 
 
 def _row_rest_mark(ws, r, cols, skip):
-    """行内若已标注“假/休/调休”等非工时词，返回该词；否则返回 ""。
-    检查上/下班(系统/实际)四个时间格——休息日通常在这里写“休”“假”。"""
+    """识别目标行中人工填写的非工时标记，避免将休假误报为缺卡。
+
+    现有考勤模板可能把“假、休、调休”等写在系统或实际时间四个格中的任意一个，
+    因此逐格检查；返回命中的原词便于调用方区分“找到标记”和“没有标记”。
+    """
     for k in ("sys_on", "act_on", "sys_off", "act_off"):
         c = cols.get(k)
         if not c:
@@ -194,37 +116,42 @@ def _row_rest_mark(ws, r, cols, skip):
 
 
 def compute_shift(a_on, a_off, rest, opts):
-    """按两班制算工时并判异常。
-    a_on/a_off : datetime.time（实际上/下班，已进退位）；rest：休息小时。
-    返回 (hours, reason, shift, base)：
-      hours——实际工作时间(小时,四舍五入2位,异常时为真实值可负)；
-      reason——异常原因(空串=正常)；shift——"白班"/"夜班"；base——该班标准工时(加班基准)。
-    规则：上班钟点 ≥ opts.night_start_hour 判夜班；夜班下班<上班时 +24 修正。
-    异常：白班下班早于上班；任意班扣休息后为负；夜班时长超上限(疑漏打卡)。
+    """根据实际打卡时间计算班次、净工时、异常原因和加班基准。
+
+    ``a_on``、``a_off`` 是已按业务规则取整的 ``datetime.time``，``rest`` 为小时数。
+    返回 ``(hours, reason, shift, base)``：工时保留两位小数，异常时也保留真实负值；
+    ``reason`` 为空代表可直接计算加班；``base`` 是对应班次的标准工时。
+
+    班次只根据上班小时是否达到 ``night_start_hour`` 判定。夜班允许下班小于上班并
+    补 24 小时，这是明确的跨零点场景；白班绝不自动补 24 小时，否则一次漏打卡
+    可能被伪装成正常夜班。白班和夜班还分别受最大时长约束，用于捕捉漏卡或班次
+    阈值配置错误。函数只返回异常说明，不自行修正可疑数据，最终决定留给人工。
     """
     on_h = to_hours(a_on)
     off_h = to_hours(a_off)
     is_night = opts.night_shift and on_h >= opts.night_start_hour
     shift = "夜班" if is_night else "白班"
     base = opts.night_workday_hours if is_night else opts.workday_hours
-    raw = off_h - on_h
+    raw = off_h - on_h  # 先保留同一自然日的有符号差值，随后按班次决定能否跨零点。
     reason = ""
     if is_night:
-        if raw < 0:                     # 跨零点：+24 修正为真实时长
+        if raw < 0:
+            # 夜班的负差值是预期跨日表现，补一天后才是连续工作时长。
             raw += 24
         hours = round(raw - rest, 2)
-        if raw > opts.night_max_hours:  # 时长过长，疑似漏打卡
+        if raw > opts.night_max_hours:
+            # 先判断原始跨度，再判断扣休息后的负值，错误信息更接近真实问题来源。
             reason = "夜班时长 %.2fh 超上限 %.2fh（疑漏打卡，请核对）" % (raw, opts.night_max_hours)
         elif hours < 0:
             reason = "夜班工时不足扣休息（时长 %.2fh 少于休息 %.2fh）" % (raw, rest)
     else:
-        # 白班不做 +24 跨夜修正:raw<0 视为下班早于上班;raw 过大则疑漏打卡/本应是夜班
+        # 白班不做跨日补偿：负值和过长时长都必须交由人工确认，不能猜测班次。
         hours = round(raw - rest, 2)
-        day_max = getattr(opts, "day_max_hours", 16.0)   # 白班合理工时上限,默认16h
+        day_max = opts.day_max_hours
         if raw < 0:
             reason = "下班早于上班（实际下班 %s 早于实际上班 %s）" % (
                 cc.fmt_time(a_off), cc.fmt_time(a_on))
-        elif raw > day_max:                              # 新增白班上限校验(区分跨零点夜班)
+        elif raw > day_max:
             reason = "白班时长 %.2fh 超上限 %.2fh（疑漏打卡，或本应为跨零点夜班，请核对）" % (raw, day_max)
         elif hours < 0:
             reason = "工时不足扣休息（时长 %.2fh 少于休息 %.2fh）" % (raw, rest)
@@ -233,20 +160,27 @@ def compute_shift(a_on, a_off, rest, opts):
 
 # ---------- 填写目标表（保留原格式，用 openpyxl 写回） ----------
 def find_target_columns(ws, opts=None, path=""):
-    """在目标表定位所需列，返回 (header_row, cols)。
-    手动列映射(opts.resolve_roles)优先；其次 header_row 指定行；否则第1行自动识别。
-    cols 内的列号统一为 1-based（openpyxl）；手动映射存的是 0-based，取用时 +1。"""
+    """在待填写模板中定位考勤字段，返回表头行和 1 基列号映射。
+
+    表头行优先采用管理员配置，否则默认为第一行。自动识别同时支持中英文括号、
+    换行和“系统上班时间”等常见变体；先精确匹配再做包含匹配。管理员保存的角色
+    映射最后覆盖自动结果，因为它代表人工确认；映射存储协议使用 0 基列号，而
+    openpyxl 使用 1 基列号，所以覆盖时必须加一。
+    """
     opts = opts or cc.DEFAULTS
     hr = opts.resolve_header(path) or 1
-    # 规范化表头:去空格/换行,并把全角括号统一成半角,兼容"（系统）"/"(系统)"两种写法
     def _norm_hdr(v):
+        """清理表头换行并统一括号，降低仅有排版差异时的识别失败。"""
         t = norm_name(v).replace("\n", "")
         return t.replace("（", "(").replace("）", ")")
+
+    # 字典值保留 openpyxl 的 1 基列号；重复同名表头按最后一列生效，与 Python
+    # 字典构造规则一致，若模板确有歧义应由人工角色映射明确指定。
     header = {_norm_hdr(ws.cell(hr, c).value): c
               for c in range(1, ws.max_column + 1)}
 
     def col(*keys):
-        """先精确命中(规范化后),再退回子串匹配,兼容括号全半角与'系统上班时间'等变体。"""
+        """按候选词顺序先精确、后包含匹配，并返回首个可靠列号。"""
         for k in keys:
             if k in header:
                 return header[k]
@@ -255,7 +189,7 @@ def find_target_columns(ws, opts=None, path=""):
                 if k and k in h:
                     return c
         return None
-    # 关键词用"上班+系统"这类判定,避免全角括号精确匹配漏命中
+    # 每个角色给出从具体到宽松的候选词；实际列缺失时保留 None，写表阶段按需跳过。
     cols = {
         "name": col("姓名"), "date": col("日期"),
         "sys_on": col("上班时间(系统)", "上班(系统)", "系统上班时间", "上班时间系统"),
@@ -264,122 +198,292 @@ def find_target_columns(ws, opts=None, path=""):
         "act_off": col("下班时间(实际)", "下班(实际)", "实际下班时间", "下班时间实际"),
         "rest": col("休息时间"), "work": col("实际工作时间"), "ot": col("加班"),
     }
-    roles = opts.resolve_roles(path)     # 手动映射覆盖对应角色（0-based -> 1-based）
+    roles = opts.resolve_roles(path)
     for k, c0 in roles.items():
         if k in cols:
+            # 配置层统一采用 0 基列号，转换后才能直接传给 ws.cell。
             cols[k] = c0 + 1
     return hr, cols
 
 
+@dataclass
+class _SheetFillStats:
+    """单个考勤页签的写入计数，结束后再一次性合并到工作簿总计。"""
+
+    matched: int = 0
+    filled_time: int = 0
+    computed_work: int = 0
+    unmatched: int = 0
+    filled_actual: int = 0
+    anomalies: int = 0
+
+    def merge_into(self, totals):
+        """把页签计数累加到对外返回的工作簿统计字典。"""
+        for key in (
+            "matched", "filled_time", "computed_work",
+            "unmatched", "filled_actual", "anomalies",
+        ):
+            totals[key] += getattr(self, key)
+
+
+def _select_target_sheets(workbook, target_path, opts):
+    """应用管理员的页签选择；未指定时返回工作簿全部页签。"""
+    wanted = opts.resolve_sheet(target_path)
+    if not wanted:
+        return workbook.worksheets
+    selected = [sheet for sheet in workbook.worksheets if sheet.title == wanted]
+    if not selected:
+        raise ValueError("目标表中找不到工作表 '%s'" % wanted)
+    return selected
+
+
+def _write_matched_times(ws, row, cols, on_text, off_text, opts, stats):
+    """写入系统打卡时间，并按设置生成实际时间。"""
+    if cols["sys_on"] and on_text and on_text not in ("-", "—"):
+        ws.cell(row, cols["sys_on"]).value = on_text
+        stats.filled_time += 1
+    if cols["sys_off"] and off_text and off_text not in ("-", "—"):
+        ws.cell(row, cols["sys_off"]).value = off_text
+    if not opts.auto_actual:
+        return
+    if cols["act_on"]:
+        rounded_on = cc.round_half_hour(parse_time(on_text), "up")
+        if rounded_on is not None:
+            ws.cell(row, cols["act_on"]).value = cc.fmt_time(rounded_on)
+            stats.filled_actual += 1
+    if cols["act_off"]:
+        rounded_off = cc.round_half_hour(parse_time(off_text), "down")
+        if rounded_off is not None:
+            ws.cell(row, cols["act_off"]).value = cc.fmt_time(rounded_off)
+
+
+def _compute_row_work(
+    ws,
+    row,
+    cols,
+    name,
+    day,
+    opts,
+    stats,
+    anomalies,
+    log,
+):
+    """根据实际上下班时间计算工时；返回该行是否具备完整可计算时间。"""
+    if not (cols["work"] and cols["act_on"] and cols["act_off"]):
+        return False
+    actual_on = parse_time(ws.cell(row, cols["act_on"]).value)
+    actual_off = parse_time(ws.cell(row, cols["act_off"]).value)
+    if actual_on is None or actual_off is None:
+        return False
+    rest = parse_rest(ws.cell(row, cols["rest"]).value) if cols["rest"] else 0.0
+    hours, reason, shift, base = compute_shift(actual_on, actual_off, rest, opts)
+    ws.cell(row, cols["work"]).value = hours
+    stats.computed_work += 1
+    if reason:
+        _record_shift_anomaly(
+            ws, row, cols, name, day, actual_on, actual_off,
+            rest, hours, shift, reason, stats, anomalies, log,
+        )
+    elif opts.overtime and cols["ot"]:
+        overtime = round(hours - base, 2)
+        ws.cell(row, cols["ot"]).value = overtime if overtime > 0 else 0
+    return True
+
+
+def _record_shift_anomaly(
+    ws,
+    row,
+    cols,
+    name,
+    day,
+    actual_on,
+    actual_off,
+    rest,
+    hours,
+    shift,
+    reason,
+    stats,
+    anomalies,
+    log,
+):
+    """标记工时异常并添加到跨页签核对报告。"""
+    _highlight_row(ws, row, cols)
+    stats.anomalies += 1
+    anomalies.append({
+        "sheet": ws.title,
+        "row": row,
+        "name": name,
+        "date": "%04d-%02d-%02d" % day,
+        "shift": shift,
+        "act_on": cc.fmt_time(actual_on),
+        "act_off": cc.fmt_time(actual_off),
+        "rest": rest,
+        "hours": hours,
+        "reason": reason,
+    })
+    log(
+        "    ! 异常：%s 第%d行 %s(%s) —— %s"
+        % (ws.title, row, name, shift, reason)
+    )
+
+
+def _record_missing_punch_anomaly(
+    ws,
+    row,
+    cols,
+    name,
+    day,
+    skip,
+    stats,
+    anomalies,
+    log,
+):
+    """源数据未命中且无完整人工实际时间时，记录缺卡异常。"""
+    if _row_rest_mark(ws, row, cols, skip):
+        return
+    _highlight_row(ws, row, cols)
+    stats.anomalies += 1
+    anomalies.append({
+        "sheet": ws.title,
+        "row": row,
+        "name": name,
+        "date": "%04d-%02d-%02d" % day,
+        "shift": "-",
+        "act_on": "",
+        "act_off": "",
+        "rest": "",
+        "hours": "",
+        "reason": "未匹配到打卡数据（系统数据中查无此人此日，或姓名/日期不一致、缺卡）",
+    })
+    log("    ! 异常：%s 第%d行 %s —— 未匹配到打卡数据" % (ws.title, row, name))
+
+
+def _fill_attendance_sheet(
+    ws,
+    start,
+    cols,
+    source_data,
+    opts,
+    skip,
+    anomalies,
+    log,
+):
+    """处理一个有效数据页签，返回该页签独立统计。"""
+    stats = _SheetFillStats()
+    for row in range(start, ws.max_row + 1):
+        name = norm_name(ws.cell(row, cols["name"]).value)
+        day = norm_date(ws.cell(row, cols["date"]).value)
+        if not name or day is None:
+            continue
+        key = (name, day)
+        matched = key in source_data
+        if matched:
+            on_text, off_text = source_data[key]
+            stats.matched += 1
+            _write_matched_times(
+                ws, row, cols, on_text, off_text, opts, stats,
+            )
+        else:
+            stats.unmatched += 1
+        computed = _compute_row_work(
+            ws, row, cols, name, day, opts, stats, anomalies, log,
+        )
+        if not matched and not computed:
+            _record_missing_punch_anomaly(
+                ws, row, cols, name, day, skip, stats, anomalies, log,
+            )
+    return stats
+
+
+def _log_sheet_result(log, sheet_title, stats):
+    """输出单个页签的客户可读处理摘要。"""
+    anomaly_text = (
+        "，异常 %d 行(已标黄)" % stats.anomalies
+        if stats.anomalies else ""
+    )
+    log(
+        "工作表 '%s'：匹配 %d 行，填打卡 %d 处，算实际时间 %d 处，"
+        "算工时 %d 行%s"
+        % (
+            sheet_title,
+            stats.matched,
+            stats.filled_time,
+            stats.filled_actual,
+            stats.computed_work,
+            anomaly_text,
+        )
+    )
+
+
 def fill_workbook(target_path, source_data, out_path, opts=None, log=None):
-    """把 source_data 填入目标表所有工作表（或指定表），算工时/加班，另存 out_path。返回统计 dict。"""
+    """将合并后的打卡数据写入一个考勤模板，并保存独立输出文件。
+
+    页签选择、单行写入、工时计算和异常记录已拆成独立步骤；所有步骤仍共用同一个打开
+    的工作簿，保持原模板样式、计数口径和异常报告结构不变。
+    """
     opts = opts or cc.DEFAULTS
     log = log or (lambda *a, **k: None)
-    skip = opts.skip_set()                     # “假/休/调休”等非工时标记，不当未匹配异常
-    wb = openpyxl.load_workbook(target_path)   # 不用 data_only，保留格式
-    try:                                       # try/finally 确保成功/异常路径都 close(wb)
-        stats = {"sheets": [], "matched": 0, "filled_time": 0, "computed_work": 0,
-                 "unmatched": 0, "filled_actual": 0, "anomalies": 0}
-        anomalies = []                 # 跨所有子表汇总,最后写“异常核对报告”
-        sheets = wb.worksheets
-        want_sheet = opts.resolve_sheet(target_path)
-        if want_sheet:
-            sheets = [w for w in sheets if w.title == want_sheet]
-            if not sheets:
-                raise ValueError("目标表中找不到工作表 '%s'" % want_sheet)
-        ds_override = opts.resolve_data_start(target_path)
-        for ws in sheets:
-            hr, cols = find_target_columns(ws, opts, target_path)
+    skip = opts.skip_set()
+    workbook = openpyxl.load_workbook(target_path)
+    try:
+        totals = {
+            "sheets": [],
+            "matched": 0,
+            "filled_time": 0,
+            "computed_work": 0,
+            "unmatched": 0,
+            "filled_actual": 0,
+            "anomalies": 0,
+        }
+        anomalies = []
+        data_start = opts.resolve_data_start(target_path)
+        for ws in _select_target_sheets(workbook, target_path, opts):
+            header_row, cols = find_target_columns(ws, opts, target_path)
             if not cols["name"] or not cols["date"]:
-                log("跳过工作表 '%s'（未找到姓名/日期列）" % ws.title); continue
-            s_matched = s_filled = s_work = s_unmatched = s_actual = s_anomaly = 0
-            start = ds_override if ds_override else (hr + 1)
-            for r in range(start, ws.max_row + 1):
-                name = norm_name(ws.cell(r, cols["name"]).value)
-                d = norm_date(ws.cell(r, cols["date"]).value)
-                if not name or d is None:
-                    continue
-                key = (name, d)
-                matched = key in source_data
-                if matched:
-                    on_s, off_s = source_data[key]; s_matched += 1
-                    if cols["sys_on"] and on_s and on_s not in ("-", "—"):
-                        ws.cell(r, cols["sys_on"]).value = on_s; s_filled += 1
-                    if cols["sys_off"] and off_s and off_s not in ("-", "—"):
-                        ws.cell(r, cols["sys_off"]).value = off_s
-                    # 自动算“实际上/下班时间”：上班进位、下班退位到最近半小时，填入实际列
-                    if opts.auto_actual:
-                        if cols["act_on"]:
-                            t = cc.round_half_hour(parse_time(on_s), "up")
-                            if t is not None:
-                                ws.cell(r, cols["act_on"]).value = cc.fmt_time(t); s_actual += 1
-                        if cols["act_off"]:
-                            t = cc.round_half_hour(parse_time(off_s), "down")
-                            if t is not None:
-                                ws.cell(r, cols["act_off"]).value = cc.fmt_time(t)
-                else:
-                    s_unmatched += 1
-                # 实际工作时间 = 下班(实际) - 上班(实际) - 休息
-                computed = False
-                if cols["work"] and cols["act_on"] and cols["act_off"]:
-                    a_on = parse_time(ws.cell(r, cols["act_on"]).value)
-                    a_off = parse_time(ws.cell(r, cols["act_off"]).value)
-                    if a_on is not None and a_off is not None:
-                        computed = True
-                        rest = parse_rest(ws.cell(r, cols["rest"]).value) if cols["rest"] else 0.0
-                        hours, reason, shift, base = compute_shift(a_on, a_off, rest, opts)
-                        ws.cell(r, cols["work"]).value = hours; s_work += 1
-                        if reason:
-                            _highlight_row(ws, r, cols)
-                            s_anomaly += 1
-                            anomalies.append({
-                                "sheet": ws.title, "row": r, "name": name,
-                                "date": "%04d-%02d-%02d" % d, "shift": shift,
-                                "act_on": cc.fmt_time(a_on), "act_off": cc.fmt_time(a_off),
-                                "rest": rest, "hours": hours, "reason": reason})
-                            log("    ! 异常：%s 第%d行 %s(%s) —— %s"
-                                % (ws.title, r, name, shift, reason))
-                        elif opts.overtime and cols["ot"]:    # 正常行才算加班(按各班基准)
-                            ot = round(hours - base, 2)
-                            ws.cell(r, cols["ot"]).value = ot if ot > 0 else 0
-                # 未匹配到打卡、又没算出工时：记为异常（休息日“假/休”等除外）
-                if not matched and not computed:
-                    mark = _row_rest_mark(ws, r, cols, skip)
-                    if not mark:
-                        _highlight_row(ws, r, cols)
-                        s_anomaly += 1
-                        anomalies.append({
-                            "sheet": ws.title, "row": r, "name": name,
-                            "date": "%04d-%02d-%02d" % d, "shift": "-",
-                            "act_on": "", "act_off": "", "rest": "", "hours": "",
-                            "reason": "未匹配到打卡数据（系统数据中查无此人此日，或姓名/日期不一致、缺卡）"})
-                        log("    ! 异常：%s 第%d行 %s —— 未匹配到打卡数据" % (ws.title, r, name))
-            stats["sheets"].append((ws.title, s_matched, s_filled, s_work, s_unmatched))
-            for k, v in (("matched", s_matched), ("filled_time", s_filled),
-                         ("computed_work", s_work), ("unmatched", s_unmatched),
-                         ("filled_actual", s_actual), ("anomalies", s_anomaly)):
-                stats[k] += v
-            log("工作表 '%s'：匹配 %d 行，填打卡 %d 处，算实际时间 %d 处，算工时 %d 行%s" %
-                (ws.title, s_matched, s_filled, s_actual, s_work,
-                 ("，异常 %d 行(已标黄)" % s_anomaly) if s_anomaly else ""))
-        _write_report_sheet(wb, anomalies)     # 有异常才追加报告子表
+                log("跳过工作表 '%s'（未找到姓名/日期列）" % ws.title)
+                continue
+            sheet_stats = _fill_attendance_sheet(
+                ws,
+                data_start if data_start else header_row + 1,
+                cols,
+                source_data,
+                opts,
+                skip,
+                anomalies,
+                log,
+            )
+            totals["sheets"].append((
+                ws.title,
+                sheet_stats.matched,
+                sheet_stats.filled_time,
+                sheet_stats.computed_work,
+                sheet_stats.unmatched,
+            ))
+            sheet_stats.merge_into(totals)
+            _log_sheet_result(log, ws.title, sheet_stats)
+        _write_report_sheet(workbook, anomalies)
         if anomalies:
-            log("⚠ 共 %d 行异常数据需人工核对，已标黄并汇总到子表『异常核对报告』。" % len(anomalies))
-        wb.save(out_path)
-        return stats
+            log(
+                "⚠ 共 %d 行异常数据需人工核对，已标黄并汇总到子表『异常核对报告』。"
+                % len(anomalies)
+            )
+        workbook.save(out_path)
+        return totals
     finally:
-        wb.close()                             # 成功/异常/提前 return 都关闭,避免句柄泄漏
+        workbook.close()
 
 
 # ---------- 统一入口：与对账功能同构 ----------
 def run(targets, sources, opts=None, log=None, out_dir=None, progress=None):
-    """考勤填报统一入口（输出方式与工时对账一致）。
-    targets : 待填考勤表路径列表（或单个）
-    sources : 系统数据表路径列表（打卡来源）
-    out_dir : 输出目录；不传则用统一 paths 系统（文档下统一文件夹）。
-    progress: 可选进度回调(0~100)；Worker 按 run 是否有此形参自动注入。
-    输出：out_dir 下生成 名字_已填写_时间戳.xlsx（同批次共用一个时间戳）
-    返回 {"out_files":[...], "out_dir":..., "source_stat":..., "results":[(target,out,stats)]}
+    """执行一批考勤填表任务，并返回双端可消费的结构化结果。
+
+    ``targets`` 是一个或多个待填模板，``sources`` 是一个或多个打卡来源；字符串会
+    自动提升为单元素列表。未传输出目录时使用统一路径配置，显式传入时仅确保目录
+    存在。全部目标共享同一时间戳，便于识别为同一批处理，但每个模板生成独立文件。
+
+    进度按“读取合并 30% + 模板写入 70%”分段，写入阶段再按目标数量均分。返回值
+    包含输出文件、源表统计、每个模板统计和本次关键参数，前端无需重新解析 Excel
+    即可展示处理结果与计算口径。
     """
     opts = opts or cc.DEFAULTS
     log = log or (lambda *a, **k: None)
@@ -387,13 +491,14 @@ def run(targets, sources, opts=None, log=None, out_dir=None, progress=None):
         targets = [targets]
     if isinstance(sources, str):
         sources = [sources]
-    # 两段:读合并系统数据 30% / 逐个填写待填表(写盘,大头) 70%,后者按目标数细分。
+    # 写回工作簿和保存文件通常比读取更耗时，因此把大部分进度权重分配给填表阶段。
     prog = cc.Progress(progress, stages=[("read", 30), ("fill", 70)])
-    ts = cc.timestamp()          # 同一批次共用一个时间戳
+    ts = cc.timestamp()
     if out_dir is None:
+        # 统一目录解析异常时兼容旧部署逻辑，保证历史环境仍能完成核心业务。
         out_dir = _unified_out_dir("attendance", ts, src=targets[0]) or cc.make_out_dir(targets[0])
     else:
-        os.makedirs(out_dir, exist_ok=True)   # 与其余功能一致:显式传入的目录也确保存在,避免保存时 FileNotFoundError
+        os.makedirs(out_dir, exist_ok=True)
     log("采用选项：" + opts.summary())
     prog.stage("read")
     log("① 读取并合并系统数据（%d 个文件）..." % len(sources))
@@ -413,22 +518,44 @@ def run(targets, sources, opts=None, log=None, out_dir=None, progress=None):
                stats["unmatched"], stats["anomalies"]))
         log("   已保存：%s" % op)
         out_files.append(op); results.append((tgt, op, stats))
-        prog.tick(i, n_tgt)          # 每填完一个待填表推进一格
+        prog.tick(i, n_tgt)  # 以完成的目标数推进，避免大文件处理中虚构精细进度。
     prog.done()
-    return {"out_files": out_files, "out_dir": out_dir,
-            "source_stat": sstat, "results": results}
+    return {
+        "out_files": out_files,
+        "out_dir": out_dir,
+        "source_stat": sstat,
+        "results": results,
+        "parameters": {
+            "workday_hours": opts.workday_hours,
+            "overtime": opts.overtime,
+            "conflict": opts.conflict,
+            "auto_actual": opts.auto_actual,
+            "night_shift": opts.night_shift,
+            "night_start_hour": opts.night_start_hour,
+            "night_workday_hours": opts.night_workday_hours,
+            "night_max_hours": opts.night_max_hours,
+            "day_max_hours": opts.day_max_hours,
+            "skip_extra": sorted(opts.skip_extra),
+        },
+    }
 
 
 def _unified_out_dir(feature, ts=None, src=None):
-    """通过统一 paths/settings 解析输出目录；导入失败则回退到原逻辑。
-    src: beside 模式下用于定位源文件目录。"""
+    """按当前设置解析统一输出目录，失败时返回 ``None`` 触发旧逻辑回退。
+
+    ``src`` 仅在“输出到源文件旁”模式中补充定位依据。这里采用延迟导入并容忍异常，
+    是为了兼容早期独立分发过的考勤模块；正式项目环境应正常走 ``core.paths``。
+    回退只影响输出位置，不改变任何业务计算。
+    """
     try:
         from . import paths as _paths
         from . import settings as _settings
         st = _settings.get_settings()
         kw = st.output_kwargs()
         if src and not kw.get("src_path"):
+            # 调用方显式配置的 src_path 优先，本函数只在缺失时用首个目标模板补全。
             kw["src_path"] = src
         return _paths.resolve_output_dir(feature, ts=ts, **kw)
     except Exception:
+        # 由 run 使用 common_core.make_out_dir 接管，旧环境不会因路径模块不可用而中断。
         return None

@@ -6,6 +6,8 @@ from core import pdf_core as pc
 
 
 class TestParsePages(unittest.TestCase):
+    """验证 PDF 页码列表、范围、开区间、去重和越界裁剪语法。"""
+
     def test_single_and_list(self):
         self.assertEqual(pc.parse_pages("1", 10), [0])
         self.assertEqual(pc.parse_pages("1,3,5", 10), [0, 2, 4])

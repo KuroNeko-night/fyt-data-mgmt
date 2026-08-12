@@ -6,6 +6,8 @@ from core import invoice_core as ic
 
 
 class TestRate(unittest.TestCase):
+    """验证发票税率文本解析和粘连字符恢复。"""
+
     def test_single_rate_to_decimal(self):
         self.assertEqual(ic._rate("税率13%"), 0.13)
         self.assertEqual(ic._rate("6%"), 0.06)
@@ -24,6 +26,8 @@ class TestRate(unittest.TestCase):
 
 
 class TestMoney(unittest.TestCase):
+    """验证金额候选提取和价税三元组识别。"""
+
     def test_last_three_amounts(self):
         raw = "小计 ¥100.00 ... 金额 ¥1000.00 税额 ¥130.00 价税合计 ¥1130.00"
         a, t, tot = ic._money3(raw)
@@ -39,6 +43,8 @@ class TestMoney(unittest.TestCase):
 
 
 class TestSeller(unittest.TestCase):
+    """验证销售方名称从文本区块中提取。"""
+
     def test_picks_non_buyer_company(self):
         raw = ("购买方\n%s\n销售方\n某某科技有限公司\n开户行: 工商银行\n" % ic.BUYER)
         self.assertEqual(ic._seller(raw), "某某科技有限公司")
@@ -49,6 +55,8 @@ class TestSeller(unittest.TestCase):
 
 
 class TestFindNum(unittest.TestCase):
+    """验证发票号码定位和数字边界。"""
+
     def test_anchored_20(self):
         n = "发票号码:" + "1" * 20
         self.assertEqual(ic._find_num(n), "1" * 20)
@@ -65,6 +73,8 @@ class TestFindNum(unittest.TestCase):
 
 
 class TestDeriveRate(unittest.TestCase):
+    """验证缺失税率时由金额与税额反推税率。"""
+
     def test_from_tax_over_amount(self):
         # 130/1000 = 0.13 -> 吸附到标准税率
         self.assertEqual(ic._derive_rate(1000.0, 130.0, 1130.0, None), 0.13)
@@ -74,6 +84,8 @@ class TestDeriveRate(unittest.TestCase):
 
 
 class TestDetectMonth(unittest.TestCase):
+    """验证发票集合月份识别与多月份冲突。"""
+
     def test_most_common(self):
         items = [ic.Invoice(date="2026-06-01"), ic.Invoice(date="2026-06-15"),
                  ic.Invoice(date="2026-05-30")]
@@ -84,6 +96,8 @@ class TestDetectMonth(unittest.TestCase):
 
 
 class TestFilterMonth(unittest.TestCase):
+    """验证按月份筛选发票且保留问题文件。"""
+
     def test_filter(self):
         items = [ic.Invoice(date="2026-06-01"), ic.Invoice(date="2026-05-30")]
         got = ic.filter_month(items, "2026-06")

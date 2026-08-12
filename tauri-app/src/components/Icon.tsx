@@ -1,8 +1,15 @@
+/**
+ * 桌面端轻量线框图标组件。
+ *
+ * 图形统一使用同一套 24 像素坐标、描边宽度和端点样式，避免每个业务页面
+ * 重复内联 SVG。图标仅承担装饰，按钮等交互元素必须在外层提供可访问名称。
+ */
 interface IconProps {
   name: string;
   size?: number;
 }
 
+// 键名是页面使用的稳定语义名称，值只保存路径数据，尺寸和颜色由组件统一控制。
 const paths: Record<string, string> = {
   home: "M3 10.8 12 3l9 7.8V21h-6v-6H9v6H3V10.8Z",
   calendar: "M5 4h14a2 2 0 0 1 2 2v14H3V6a2 2 0 0 1 2-2Zm0 6h14M8 2v4m8-4v4",
@@ -27,10 +34,21 @@ const paths: Record<string, string> = {
   panel: "M4 4h16v16H4V4Zm10 0v16",
   sun: "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm0-5v2m0 14v2M3 12h2m14 0h2M5.6 5.6 7 7m10 10 1.4 1.4m0-12.8L17 7M7 17l-1.4 1.4",
   plus: "M12 5v14M5 12h14",
+  close: "M6 6l12 12M18 6 6 18",
+  up: "m6 14 6-6 6 6",
+  down: "m6 10 6 6 6-6",
+  arrow: "M5 12h13m-5-5 5 5-5 5",
+  activity: "M3 12h4l2.2-6 4.2 12 2.2-6H21",
   folder: "M3 6h7l2 2h9v11H3V6Z",
   help: "M9.5 9a2.7 2.7 0 1 1 4.2 2.2c-1.1.8-1.7 1.3-1.7 2.8m0 4h.01M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z",
+  laptop: "M4 5h16v11H4V5Zm-1 14h18M8 19v-3m8 3v-3",
+  server: "M4 4h16v7H4V4Zm0 9h16v7H4v-7Zm4 2h.01m-.01 4h.01M8 7.5h.01M12 7.5h4",
 };
 
+/**
+ * 按语义名称渲染线框图标；未知名称回退到“说明”图形，避免生成无路径的 SVG。
+ * `aria-hidden` 防止装饰图标与外层按钮文字或无障碍标签被重复朗读。
+ */
 export default function Icon({ name, size = 20 }: IconProps) {
   return (
     <svg className="icon" width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">

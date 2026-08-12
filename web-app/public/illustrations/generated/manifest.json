@@ -1,0 +1,127 @@
+{
+  "version": "v1",
+  "generated_at": "2026-08-04T07:24:51.987807+00:00",
+  "assets": [
+    {
+      "id": "A01",
+      "version": "v1.0",
+      "prompt_file": "scripts/art-prompts/auth-data-ribbon.md",
+      "source_size": "1536x1024",
+      "final_files": [
+        "web/auth-data-ribbon.webp"
+      ],
+      "background": "opaque",
+      "usage": [
+        "web-auth",
+        "web-register"
+      ],
+      "alt": "",
+      "generated_at": "2026-08-04T06:57:17.382043+00:00"
+    },
+    {
+      "id": "A02",
+      "version": "v1.0",
+      "prompt_file": "scripts/art-prompts/workbench-data-ribbon.md",
+      "source_size": "1536x1024",
+      "final_files": [
+        "tauri/workbench-data-ribbon.png",
+        "tauri/workbench-data-ribbon.webp",
+        "web/workbench-data-ribbon.png",
+        "web/workbench-data-ribbon.webp"
+      ],
+      "background": "chroma-key-removed",
+      "usage": [
+        "web-workbench",
+        "tauri-home"
+      ],
+      "alt": "",
+      "generated_at": "2026-08-04T06:59:03.790702+00:00"
+    },
+    {
+      "id": "A03",
+      "version": "v1.0",
+      "prompt_file": "scripts/art-prompts/remote-bridge.md",
+      "source_size": "1254x1254",
+      "final_files": [
+        "tauri/remote-bridge.png",
+        "tauri/remote-bridge.webp",
+        "web/remote-bridge.png",
+        "web/remote-bridge.webp"
+      ],
+      "background": "chroma-key-removed",
+      "usage": [
+        "tauri-mode-picker"
+      ],
+      "alt": "本地资料与服务器工作台之间的连接示意",
+      "generated_at": "2026-08-04T07:02:01.287958+00:00"
+    },
+    {
+      "id": "A04",
+      "version": "v1.0",
+      "prompt_file": "scripts/art-prompts/empty-task-archive.md",
+      "source_size": "1254x1254",
+      "final_files": [
+        "tauri/empty-task-archive.png",
+        "tauri/empty-task-archive.webp",
+        "web/empty-task-archive.png",
+        "web/empty-task-archive.webp"
+      ],
+      "background": "chroma-key-removed",
+      "usage": [
+        "web-task-center",
+        "tauri-task-center"
+      ],
+      "alt": "尚未开始的任务记录示意",
+      "generated_at": "2026-08-04T07:04:54.738877+00:00"
+    },
+    {
+      "id": "A05",
+      "version": "v1.0",
+      "prompt_file": "scripts/art-prompts/empty-library-shelf.md",
+      "source_size": "1254x1254",
+      "final_files": [
+        "web/empty-library-shelf.png",
+        "web/empty-library-shelf.webp"
+      ],
+      "background": "chroma-key-removed",
+      "usage": [
+        "web-library"
+      ],
+      "alt": "尚无可见数据库文件的档案架示意",
+      "generated_at": "2026-08-04T07:08:10.674765+00:00"
+    },
+    {
+      "id": "A06",
+      "version": "v1.0",
+      "prompt_file": "scripts/art-prompts/empty-workshop-note.md",
+      "source_size": "1254x1254",
+      "final_files": [
+        "web/empty-workshop-note.png",
+        "web/empty-workshop-note.webp"
+      ],
+      "background": "chroma-key-removed",
+      "usage": [
+        "web-workshop"
+      ],
+      "alt": "可以开始记录现场问题的示意",
+      "generated_at": "2026-08-04T07:22:03.760244+00:00"
+    },
+    {
+      "id": "A07",
+      "version": "v1.0",
+      "prompt_file": "scripts/art-prompts/empty-review-check.md",
+      "source_size": "1024x1024",
+      "final_files": [
+        "web/empty-review-check.png",
+        "web/empty-review-check.webp"
+      ],
+      "background": "chroma-key-removed",
+      "usage": [
+        "web-review-empty",
+        "web-task-review-filter"
+      ],
+      "alt": "当前没有待人工确认事项的示意",
+      "generated_at": "2026-08-04T07:18:00.733240+00:00"
+    }
+  ]
+}

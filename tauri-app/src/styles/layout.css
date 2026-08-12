@@ -1,0 +1,23 @@
+/* 此文件由 scripts/sync-design-tokens.mjs 生成，请勿手工修改。 */
+.fyt-content-container {
+  width: min(var(--fyt-layout-content-max), calc(100% - (var(--fyt-layout-gutter-desktop) * 2)));
+  margin-inline: auto;
+}
+
+.fyt-page {
+  min-width: 0;
+  padding: var(--fyt-space-8) 0 var(--fyt-space-12);
+}
+
+.fyt-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--fyt-space-6);
+}
+
+.fyt-cluster {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--fyt-space-3);
+}

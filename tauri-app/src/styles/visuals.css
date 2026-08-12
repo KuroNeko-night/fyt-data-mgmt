@@ -1,0 +1,75 @@
+/* 美术资源公共尺寸与纯 CSS 降级图形，图片缺失时仍保留可辨识的品牌背景。 */
+.fyt-art-asset,
+.fyt-art-fallback {
+  display: block;
+  max-width: 100%;
+  object-fit: contain;
+}
+
+.fyt-art-fallback {
+  position: relative;
+  min-height: 120px;
+  overflow: hidden; /* 裁切节点和信号线，避免装饰元素扩大业务卡片的布局边界。 */
+  border: 1px solid color-mix(in srgb, var(--fyt-primary) 18%, var(--fyt-border));
+  border-radius: var(--fyt-radius-card);
+  background-color: var(--fyt-surface-subtle);
+  background-image: linear-gradient(90deg, var(--fyt-visual-grid-dark) 1px, transparent 1px), linear-gradient(var(--fyt-visual-grid-dark) 1px, transparent 1px);
+  background-position: center;
+  background-size: 32px 32px;
+}
+
+.fyt-art-fallback::before,
+.fyt-art-fallback::after { position: absolute; display: block; content: ""; }
+.fyt-art-fallback::before { top: 44%; right: 9%; left: 9%; height: var(--fyt-visual-signal-width); background: var(--fyt-visual-signal-gradient); transform: rotate(-8deg); }
+.fyt-art-fallback::after { top: 30%; right: 22%; width: 42%; height: 42%; border: 1px solid color-mix(in srgb, var(--fyt-accent) 64%, var(--fyt-border)); border-radius: 24% 8% 16% 10%; transform: rotate(8deg); }
+.fyt-art-fallback i, .fyt-art-fallback b { position: absolute; z-index: 1; display: block; width: var(--fyt-visual-signal-node); height: var(--fyt-visual-signal-node); border: 2px solid var(--fyt-surface-subtle); border-radius: 50%; background: var(--fyt-accent); box-shadow: 0 0 0 4px var(--fyt-visual-glow-cyan); }
+.fyt-art-fallback i { top: 41%; left: 24%; }
+.fyt-art-fallback b { right: 20%; bottom: 25%; background: var(--fyt-primary); box-shadow: 0 0 0 4px var(--fyt-visual-glow-blue); }
+
+/* 侧栏蓝图网格放在独立层中，交互元素通过更高层级保持可点击。 */
+.fyt-tauri-sidebar { position: relative; isolation: isolate; }
+.fyt-tauri-sidebar::after { position: absolute; z-index: 0; inset: 0; background-image: linear-gradient(90deg, var(--fyt-visual-grid-light) 1px, transparent 1px), linear-gradient(var(--fyt-visual-grid-light) 1px, transparent 1px); background-size: 40px 40px; content: ""; opacity: .7; pointer-events: none; }
+.fyt-tauri-sidebar > * { position: relative; z-index: 1; }
+.fyt-tauri-navigation-item.is-selected::after { position: absolute; top: 50%; left: 9px; width: 24px; height: 1px; background: var(--fyt-signal-gradient); content: ""; opacity: .9; transform: translateY(-50%); }
+.fyt-tauri-navigation-item.is-selected > .icon { filter: drop-shadow(0 0 5px var(--fyt-visual-glow-cyan)); }
+
+/* 路由进入动画仅使用透明度和 transform，避免触发布局重排。 */
+.fyt-tauri-route-stage { animation: fyt-visual-route-enter var(--fyt-motion-page) var(--fyt-motion-ease) both; }
+.fyt-tauri-mode-picker { position: relative; isolation: isolate; overflow: auto; }
+/* fixed 网格覆盖整个启动页；pointer-events 关闭后不会阻挡模式卡片输入和点击。 */
+.fyt-tauri-mode-picker::before { position: fixed; z-index: 0; inset: 0; background-image: linear-gradient(90deg, var(--fyt-visual-grid-dark) 1px, transparent 1px), linear-gradient(var(--fyt-visual-grid-dark) 1px, transparent 1px); background-size: 40px 40px; content: ""; opacity: .46; pointer-events: none; }
+.fyt-tauri-mode-picker > * { position: relative; z-index: 1; }
+.fyt-tauri-mode-option { position: relative; overflow: hidden; }
+.fyt-tauri-mode-option::before { position: absolute; top: 0; right: 0; left: 0; height: 2px; background: var(--fyt-signal-gradient); content: ""; opacity: .36; transform: scaleX(.42); transform-origin: left; transition: opacity var(--fyt-motion-fast) var(--fyt-motion-ease), transform var(--fyt-motion-base) var(--fyt-motion-ease); }
+.fyt-tauri-mode-option:hover::before, .fyt-tauri-mode-option:focus-within::before { opacity: 1; transform: scaleX(1); }
+/* 首页主视觉位于文字与健康卡之后，透明遮罩让插画自然融入画布而不影响阅读。 */
+.fyt-tauri-home-lead { position: relative; isolation: isolate; overflow: hidden; }
+.fyt-tauri-home-lead::after { position: absolute; z-index: 0; inset: 0; background-image: linear-gradient(90deg, var(--fyt-visual-grid-dark) 1px, transparent 1px), linear-gradient(var(--fyt-visual-grid-dark) 1px, transparent 1px); background-size: 32px 32px; content: ""; opacity: .7; pointer-events: none; }
+.fyt-tauri-home-lead-copy, .fyt-tauri-home-health { position: relative; z-index: 1; }
+.fyt-tauri-home-lead-copy { max-width: 52%; }
+.fyt-tauri-home-art { position: absolute; z-index: 0; top: 0; right: 184px; bottom: 0; left: 46%; overflow: hidden; opacity: .4; pointer-events: none; -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 26%, #000 78%, transparent 100%); mask-image: linear-gradient(90deg, transparent 0%, #000 26%, #000 78%, transparent 100%); } /* 双写 mask 兼容 WebView2 的不同 Chromium 版本。 */
+.fyt-tauri-home-art .fyt-art-asset, .fyt-tauri-home-art .fyt-art-fallback { width: 100%; height: 100%; min-height: 0; border: 0; background: transparent; object-fit: cover; object-position: center; }
+.fyt-tauri-mode-option .fyt-mode-art { width: 100%; min-height: 88px; margin-top: auto; }
+.fyt-tauri-mode-option .fyt-mode-art .fyt-art-asset, .fyt-tauri-mode-option .fyt-mode-art .fyt-art-fallback { width: 100%; min-height: 88px; border: 0; background: transparent; }
+.fyt-tauri-mode-visual { display: flex; width: min(100%, 620px); height: 144px; align-items: center; justify-content: center; margin: 0 auto var(--fyt-space-5); overflow: hidden; }
+.fyt-tauri-mode-visual .fyt-art-asset, .fyt-tauri-mode-visual .fyt-art-fallback { width: 100%; height: 100%; min-height: 0; border: 0; background: transparent; object-fit: cover; object-position: center; }
+.fyt-empty-illustration-frame { display: grid; width: min(232px, 72vw); height: 168px; place-items: center; margin-bottom: var(--fyt-space-2); overflow: hidden; }
+.fyt-empty-illustration { width: 100%; height: 100%; object-fit: cover; object-position: center; }
+.fyt-empty-illustration.fyt-art-fallback { min-height: 168px; }
+.fyt-empty-illustration-frame > .fyt-art-asset.fyt-art-empty-task-archive { transform: scale(1.08); }
+
+@keyframes fyt-visual-route-enter { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+
+@media (max-width: 920px) {
+  /* 平板空间优先留给行动信息，装饰主视觉直接隐藏而不缩成难辨的小图。 */
+  .fyt-tauri-home-art { display: none; }
+}
+
+@media (max-width: 640px) {
+  .fyt-tauri-mode-visual { height: 108px; margin-bottom: var(--fyt-space-3); }
+  .fyt-empty-illustration-frame { width: min(184px, 60vw); height: 136px; }
+}
+
+/* 系统偏好和应用内开关均可独立关闭路由进入动画。 */
+@media (prefers-reduced-motion: reduce) { .fyt-tauri-route-stage { animation: none; } }
+[data-reduce-motion="true"] .fyt-tauri-route-stage { animation: none; }

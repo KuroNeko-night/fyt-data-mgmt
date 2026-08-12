@@ -1,0 +1,135 @@
+/* 应用壳固定占满动态视口；页面只在内部主容器滚动，侧栏和导航始终留在视野内。 */
+.fyt-shell {
+  display: grid;
+  grid-template-columns: var(--fyt-layout-web-sidebar) minmax(0, 1fr);
+  width: 100%;
+  height: 100dvh;
+  min-height: 100vh;
+  max-height: 100dvh;
+  overflow: hidden;
+  color: var(--fyt-text);
+  background: var(--fyt-canvas);
+}
+
+.fyt-shell-sidebar {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  min-width: 0;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+  color: var(--fyt-text);
+  background: var(--fyt-surface-inverse);
+  border-right: 1px solid color-mix(in srgb, var(--fyt-border-strong) 55%, transparent);
+}
+
+.fyt-shell-brand { display: flex; min-height: var(--fyt-layout-web-topbar); align-items: center; padding: 0 var(--fyt-space-5); border-bottom: 1px solid color-mix(in srgb, var(--fyt-border-strong) 55%, transparent); }
+.fyt-brand { display: inline-flex; min-width: 0; align-items: center; gap: var(--fyt-space-3); color: var(--fyt-text); }
+.fyt-brand img { width: 40px; height: 40px; flex: 0 0 40px; border-radius: var(--fyt-radius-control); }
+.fyt-brand span { min-width: 0; }
+.fyt-brand strong, .fyt-brand small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fyt-brand strong { color: var(--fyt-text-on-inverse); font-size: 16px; font-weight: 700; letter-spacing: 1px; }
+.fyt-brand small { margin-top: 3px; color: var(--fyt-text-on-inverse-secondary); font-size: var(--fyt-type-caption); }
+.fyt-brand-compact { gap: var(--fyt-space-2); }
+.fyt-brand-compact img { width: 32px; height: 32px; flex-basis: 32px; }
+.fyt-brand-compact strong { font-size: 14px; }
+
+/* 导航项目过多时仍可滚轮、触控板和键盘滚动，只隐藏轨道外观。 */
+.fyt-shell-nav { min-width: 0; flex: 1; overflow-y: auto; padding: var(--fyt-space-5) var(--fyt-space-3); scrollbar-width: none; -ms-overflow-style: none; }
+.fyt-shell-nav::-webkit-scrollbar { display: none; width: 0; height: 0; }
+.fyt-shell-nav button { position: relative; display: flex; width: 100%; min-height: 44px; align-items: center; gap: var(--fyt-space-3); margin-bottom: var(--fyt-space-1); padding: 0 var(--fyt-space-3); border: 0; border-radius: var(--fyt-radius-control); color: var(--fyt-text-on-inverse-secondary); background: transparent; text-align: left; font-size: var(--fyt-type-body); transition: color var(--fyt-motion-fast) var(--fyt-motion-ease), background-color var(--fyt-motion-fast) var(--fyt-motion-ease); }
+.fyt-shell-nav button:hover { color: var(--fyt-text-on-inverse); background: var(--fyt-surface-inverse-raised); }
+.fyt-shell-nav button.is-active { color: var(--fyt-text-on-inverse); background: var(--fyt-surface-inverse-raised); }
+.fyt-shell-nav button.is-active::before { position: absolute; top: 10px; bottom: 10px; left: 0; width: 3px; border-radius: 0 3px 3px 0; background: var(--fyt-accent); content: ""; }
+.fyt-shell-nav button span { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fyt-shell-nav button b, .fyt-mobile-nav b, .fyt-more-nav button > b { display: inline-grid; min-width: 20px; min-height: 20px; place-items: center; padding: 0 5px; border-radius: var(--fyt-radius-pill); color: var(--fyt-text-on-inverse); background: var(--fyt-danger); font-size: 11px; font-weight: 700; }
+
+.fyt-shell-account { display: flex; min-width: 0; align-items: center; gap: var(--fyt-space-2); padding: var(--fyt-space-4); border-top: 1px solid color-mix(in srgb, var(--fyt-border-strong) 55%, transparent); }
+.fyt-account-avatar { display: grid; width: 34px; height: 34px; flex: 0 0 34px; place-items: center; border-radius: 50%; color: var(--fyt-text-on-inverse); background: var(--fyt-primary); font-size: var(--fyt-type-caption); font-weight: 700; }
+.fyt-account-copy { min-width: 0; flex: 1; }
+.fyt-account-copy strong, .fyt-account-copy span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fyt-account-copy strong { color: var(--fyt-text-on-inverse); font-size: var(--fyt-type-caption); }
+.fyt-account-copy span { margin-top: 3px; color: var(--fyt-text-on-inverse-secondary); font-size: var(--fyt-type-caption); }
+.fyt-shell-logout, .fyt-topbar-logout, .fyt-topbar-theme { display: grid; width: 44px; height: 44px; flex: 0 0 44px; place-items: center; padding: 0; border: 1px solid transparent; border-radius: var(--fyt-radius-control); color: var(--fyt-text-secondary); background: transparent; }
+.fyt-shell-logout { color: var(--fyt-text-on-inverse-secondary); }
+.fyt-shell-logout:hover, .fyt-topbar-logout:hover, .fyt-topbar-theme:hover { color: var(--fyt-primary-strong); border-color: var(--fyt-border); background: var(--fyt-primary-soft); }
+
+.fyt-shell-main { display: flex; min-width: 0; min-height: 0; height: 100%; flex-direction: column; }
+.fyt-shell-topbar { display: flex; min-height: var(--fyt-layout-web-topbar); align-items: center; justify-content: space-between; gap: var(--fyt-space-5); padding: 0 var(--fyt-layout-gutter-desktop); border-bottom: 1px solid var(--fyt-border); background: color-mix(in srgb, var(--fyt-canvas) 93%, transparent); }
+.fyt-topbar-copy { min-width: 0; }
+.fyt-topbar-copy > span { display: block; overflow: hidden; color: var(--fyt-text-muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.fyt-topbar-copy h1 { margin: 5px 0 0; overflow: hidden; color: var(--fyt-text); font-size: var(--fyt-type-section); font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.fyt-topbar-actions { display: flex; align-items: center; gap: var(--fyt-space-2); }
+.fyt-topbar-more { display: none; min-height: 44px; align-items: center; gap: var(--fyt-space-2); padding: 0 var(--fyt-space-3); border: 1px solid var(--fyt-border); border-radius: var(--fyt-radius-control); color: var(--fyt-text-secondary); background: var(--fyt-surface); font-size: var(--fyt-type-caption); }
+.fyt-topbar-theme { border-color: var(--fyt-border); color: var(--fyt-text-secondary); background: var(--fyt-surface); }
+.fyt-topbar-user { display: flex; align-items: center; gap: var(--fyt-space-2); margin-left: var(--fyt-space-2); padding-left: var(--fyt-space-4); border-left: 1px solid var(--fyt-border); color: var(--fyt-text-secondary); font-size: var(--fyt-type-caption); }
+.fyt-topbar-user .fyt-account-avatar { width: 30px; height: 30px; flex-basis: 30px; }
+.fyt-topbar-logout { display: none; }
+/* min-height: 0 允许 flex 子项真正缩小并内部滚动；overscroll 防止滚动链传到页面根节点。 */
+.fyt-shell-scroll { min-width: 0; min-height: 0; flex: 1; overflow: auto; overscroll-behavior: contain; background: var(--fyt-canvas); }
+.fyt-offline-banner { display: flex; align-items: center; gap: var(--fyt-space-2); padding: var(--fyt-space-3) var(--fyt-layout-gutter-desktop); border-bottom: 1px solid color-mix(in srgb, var(--fyt-warning) 30%, var(--fyt-border)); color: var(--fyt-warning); background: var(--fyt-warning-soft); font-size: var(--fyt-type-caption); }
+.fyt-route-stage { min-width: 0; min-height: calc(100vh - var(--fyt-layout-web-topbar)); }
+.fyt-refresh-line { padding: 6px var(--fyt-layout-gutter-desktop); color: var(--fyt-info); background: var(--fyt-info-soft); font-size: var(--fyt-type-caption); }
+.fyt-partial-notice { display: flex; align-items: center; gap: 4px; padding: 9px var(--fyt-layout-gutter-desktop); border-bottom: 1px solid var(--fyt-border); color: var(--fyt-warning); background: var(--fyt-warning-soft); font-size: var(--fyt-type-caption); }
+.fyt-partial-notice button { padding: 0; border: 0; color: inherit; background: transparent; font-weight: 700; text-decoration: underline; }
+.fyt-page-state { display: grid; min-height: 320px; place-items: center; align-content: center; gap: var(--fyt-space-3); padding: var(--fyt-space-8); color: var(--fyt-text-secondary); text-align: center; }
+.fyt-page-state strong { color: var(--fyt-text); font-size: var(--fyt-type-body); }
+.fyt-page-state p { max-width: 440px; margin: 0; color: var(--fyt-text-secondary); font-size: var(--fyt-type-caption); }
+.fyt-page-state button { min-height: var(--fyt-control-height-md); padding: 0 var(--fyt-space-4); border: 1px solid var(--fyt-border-strong); border-radius: var(--fyt-radius-control); color: var(--fyt-primary-strong); background: var(--fyt-surface); font-size: var(--fyt-type-caption); font-weight: 700; }
+.fyt-page-state button:hover { border-color: var(--fyt-primary); background: var(--fyt-primary-soft); }
+.fyt-page-spinner { width: 28px; height: 28px; border: 3px solid var(--fyt-border); border-top-color: var(--fyt-primary); border-radius: 50%; animation: fyt-page-spin 800ms linear infinite; }
+.fyt-page-state-error { min-height: 360px; }
+@keyframes fyt-page-spin { to { transform: rotate(360deg); } }
+
+.fyt-mobile-nav { display: none; }
+.fyt-more-nav { display: grid; gap: var(--fyt-space-2); }
+.fyt-more-nav button { display: flex; min-height: 64px; align-items: center; gap: var(--fyt-space-3); padding: var(--fyt-space-3); border: 1px solid var(--fyt-border); border-radius: var(--fyt-radius-control); color: var(--fyt-text); background: var(--fyt-surface); text-align: left; }
+.fyt-more-nav button:hover { border-color: var(--fyt-primary); background: var(--fyt-primary-soft); }
+.fyt-more-nav button > span:nth-child(2) { min-width: 0; flex: 1; }
+.fyt-more-nav button strong, .fyt-more-nav button small { display: block; }
+.fyt-more-nav button strong { font-size: var(--fyt-type-body); }
+.fyt-more-nav button small { margin-top: 3px; overflow: hidden; color: var(--fyt-text-secondary); font-size: var(--fyt-type-caption); text-overflow: ellipsis; white-space: nowrap; }
+.fyt-more-icon { display: grid; width: 36px; height: 36px; flex: 0 0 36px; place-items: center; border-radius: var(--fyt-radius-control); color: var(--fyt-primary-strong); background: var(--fyt-primary-soft); }
+
+@media (max-width: 1199px) {
+  .fyt-shell { grid-template-columns: var(--fyt-layout-web-sidebar-compact) minmax(0, 1fr); }
+  .fyt-shell-sidebar { width: var(--fyt-layout-web-sidebar-compact); }
+  .fyt-shell-brand { justify-content: center; padding-inline: var(--fyt-space-2); }
+  .fyt-shell-brand .fyt-brand { justify-content: center; }
+  .fyt-shell-brand .fyt-brand span, .fyt-shell-nav button span, .fyt-shell-nav button b, .fyt-shell-account .fyt-account-copy { display: none; }
+  .fyt-shell-nav { padding-inline: var(--fyt-space-2); }
+  .fyt-shell-nav button { justify-content: center; padding-inline: 0; }
+  .fyt-shell-nav button.is-active::before { left: 0; }
+  .fyt-shell-account { justify-content: center; padding-inline: var(--fyt-space-2); }
+  .fyt-shell-logout { display: none; }
+  .fyt-shell-topbar { padding-inline: var(--fyt-layout-gutter-tablet); }
+  .fyt-offline-banner { padding-inline: var(--fyt-layout-gutter-tablet); }
+  .fyt-refresh-line, .fyt-partial-notice { padding-inline: var(--fyt-layout-gutter-tablet); }
+}
+
+/* 小屏隐藏桌面侧栏，底部导航固定在安全区上方，内容区预留同等底部空间。 */
+@media (max-width: 767px) {
+  .fyt-shell { display: block; height: 100dvh; min-height: 100dvh; padding-bottom: calc(var(--fyt-layout-web-mobile-bar) + env(safe-area-inset-bottom)); }
+  .fyt-shell-sidebar { display: none; }
+  .fyt-shell-main { height: 100%; min-height: 0; }
+  .fyt-shell-topbar { min-height: var(--fyt-layout-web-mobile-bar); padding-inline: var(--fyt-layout-gutter-mobile); }
+  .fyt-topbar-copy > span { font-size: 10px; }
+  .fyt-topbar-copy h1 { font-size: var(--fyt-type-title-mobile); }
+  .fyt-topbar-more { display: inline-flex; }
+  .fyt-topbar-user { display: none; }
+  .fyt-topbar-logout { display: grid; }
+  .fyt-offline-banner { padding-inline: var(--fyt-layout-gutter-mobile); }
+  .fyt-refresh-line, .fyt-partial-notice { padding-inline: var(--fyt-layout-gutter-mobile); }
+  .fyt-mobile-nav { position: fixed; z-index: 900; right: 0; bottom: 0; left: 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); min-height: var(--fyt-layout-web-mobile-bar); padding: 4px var(--fyt-space-2) env(safe-area-inset-bottom); border-top: 1px solid var(--fyt-border); background: color-mix(in srgb, var(--fyt-surface) 96%, transparent); box-shadow: var(--fyt-elevation-mobile-nav); }
+  .fyt-mobile-nav button { position: relative; display: grid; min-width: 0; min-height: 44px; place-items: center; gap: 1px; padding: 3px 2px; border: 0; color: var(--fyt-text-muted); background: transparent; font-size: var(--fyt-type-caption); }
+  .fyt-mobile-nav button.is-active { color: var(--fyt-primary-strong); }
+  .fyt-mobile-nav button.is-active::before { position: absolute; top: -4px; right: 28%; left: 28%; height: 2px; border-radius: 0 0 3px 3px; background: var(--fyt-primary); content: ""; }
+  .fyt-mobile-nav button b { position: absolute; top: 1px; right: 15%; min-width: 17px; min-height: 17px; padding: 0 3px; font-size: 9px; }
+  .fyt-shell-scroll { overflow-x: hidden; padding-bottom: env(safe-area-inset-bottom); }
+}
+
+/* 壳层的旋转加载和交互过渡在减少动画模式下全部停用。 */
+@media (prefers-reduced-motion: reduce) {
+  .fyt-shell-nav button, .fyt-shell-logout, .fyt-topbar-logout, .fyt-topbar-theme, .fyt-more-nav button, .fyt-page-spinner { transition: none; animation: none; }
+}

@@ -1,4 +1,3 @@
 [tool.fyt]
 python = "3.13"
-qt-api = "pyside6"
 requirements = "requirements.txt"

@@ -1,48 +1,68 @@
 # -*- coding: utf-8 -*-
-"""文件预览读取 —— 只取前若干行,喂给侧栏预览网格。
+"""
+表格文件轻量预览核心
+====================
+为桌面侧栏和其他快速查看入口读取文件前若干行，而不启动 Excel 或执行业务处理。
+xlsx/xlsm 使用 openpyxl 只读流，xls 使用 xlrd，CSV/TXT 探测常见中文编码和分隔符；
+所有格式统一返回 ``PreviewData``，界面只负责渲染二维文本。
 
-供常驻侧栏的"文件预览"分区用:选中/点击一个文件即在右侧看到它的前 N 行,
-无需打开 Excel。刻意轻量:.xlsx/.xlsm 用 read_only 流式只读前 N 行即停,
-不载入整簿;.xls 走 xlrd;.csv 探测编码/分隔符读前 N 行。绝不改动源文件。
+预览默认限制 30 行、40 列，避免超宽或超大文件拖慢界面。xlsx 会重置错误的工作表
+dimension，兼容第三方导出把实际大表标成 ``A1`` 的问题；仍在达到行数上限后立即停止。
+CSV 只抽样前 4 KiB/2 KiB 探测编码与方言。任何读取错误都封装到 ``error`` 字段，
+不会从预览辅助功能向上抛出并导致主界面崩溃。
 
-返回结构统一为 PreviewData,UI 只管渲染,不关心来源格式。
-运行于 Windows 10/11 + Python 3.13。
+模块绝不写入源文件，也不保证预览可替代正式业务读取：公式只展示缓存值，截断标记在
+流式格式中是保守估计，正式处理仍应使用各业务核心的严格解析器。
 """
 import os
 import csv
 import datetime
 
-DEFAULT_ROWS = 30          # 预览行数(含表头行)
-DEFAULT_COLS = 40          # 预览列数上限,避免超宽表把网格撑爆
+# 行数包含标题和表头；列上限防止异常使用范围或超宽表把界面网格撑爆。
+DEFAULT_ROWS = 30
+DEFAULT_COLS = 40
 
 
 class PreviewData(object):
-    """一张表的预览快照。rows 为二维列表(已文本化),sheets 为同簿其余表名。"""
+    """一张页签的不可依赖格式预览快照。
+
+    ``rows`` 已全部文本化，``sheets`` 保存工作簿页签列表供界面切换，``truncated``
+    表示可能因行数限制未展示全部内容，``error`` 非空时 ``rows`` 通常为空。
+    """
+
     def __init__(self, path, sheet, rows, sheets=None, truncated=False, error=""):
+        """保存预览来源、当前页签、二维文本、截断状态和读取错误。"""
         self.path = path
         self.sheet = sheet
-        self.rows = rows                 # [[cell_text, ...], ...]
-        self.sheets = sheets or []       # 该工作簿所有子表名(csv 为空)
-        self.truncated = truncated       # 是否因行数上限被截断
-        self.error = error               # 非空表示读取失败,rows 为空
+        self.rows = rows
+        self.sheets = sheets or []
+        self.truncated = truncated
+        self.error = error
 
     @property
     def ncols(self):
+        """返回预览中实际最宽行的列数，空预览为零。"""
         return max((len(r) for r in self.rows), default=0)
 
     @property
     def nrows(self):
+        """返回当前已经读取的预览行数。"""
         return len(self.rows)
 
 
 def _fmt(v):
-    """单元格文本化:None->''、日期->ISO、浮点整数去 .0、其余 str。"""
+    """把单元格值转换为紧凑、稳定的预览文本。
+
+    空值为空串，布尔值使用 Excel 风格大写英文，日期仅展示年月日，整数浮点去掉
+    ``.0``，其他类型使用 ``str``。日期格式化异常时回退原字符串，不影响整页预览。
+    """
     if v is None:
         return ""
     if isinstance(v, bool):
         return "TRUE" if v else "FALSE"
     if isinstance(v, (datetime.datetime, datetime.date)):
         try:
+            # 预览只关心业务日期，datetime 的时分秒不在侧栏中展开。
             return v.strftime("%Y-%m-%d")
         except Exception:
             return str(v)
@@ -52,7 +72,11 @@ def _fmt(v):
 
 
 def list_sheets(path):
-    """列出工作簿子表名(供预览面板切换)。csv/.xls 读失败返回 []。"""
+    """尽力列出 Excel 页签名，供预览界面切换；失败返回空列表。
+
+    xlsx/xlsm 只读打开并确保关闭，xls 使用 on-demand 模式避免加载全部页内容。CSV/TXT
+    没有页签概念，直接返回空列表。该辅助查询不把异常升级为业务错误。
+    """
     ext = os.path.splitext(path)[1].lower()
     try:
         if ext in (".xlsx", ".xlsm"):
@@ -66,14 +90,17 @@ def list_sheets(path):
             import xlrd
             return list(xlrd.open_workbook(path, on_demand=True).sheet_names())
     except Exception:
+        # 页签列表只是预览增强能力，正式 read_preview 会给出更具体的错误文本。
         pass
     return []
 
 
 def read_preview(path, sheet=None, max_rows=DEFAULT_ROWS, max_cols=DEFAULT_COLS):
-    """读取 path(可指定 sheet)的前 max_rows 行 × max_cols 列,返回 PreviewData。
+    """按扩展名读取指定文件的有限区域并统一返回 ``PreviewData``。
 
-    出错不抛异常,错误信息写进 PreviewData.error,让 UI 就地显示而非崩溃。"""
+    指定页签不存在时，Excel 读取器兼容回落到首个页签；文件不存在、格式不支持或
+    读取异常都转为 ``error`` 文本。此入口是界面容错边界，内部读取函数可正常抛错。
+    """
     ext = os.path.splitext(path)[1].lower()
     try:
         if not os.path.isfile(path):
@@ -86,18 +113,19 @@ def read_preview(path, sheet=None, max_rows=DEFAULT_ROWS, max_cols=DEFAULT_COLS)
             return _read_csv(path, max_rows, max_cols)
         return PreviewData(path, sheet, [], error="不支持预览的类型:%s" % ext)
     except Exception as e:
+        # 预览失败不影响文件继续作为业务输入，界面可在原位置展示错误原因。
         return PreviewData(path, sheet, [], error=str(e))
 
 
 def _read_xlsx(path, sheet, max_rows, max_cols):
+    """以只读计算值模式预览 xlsx/xlsm，并返回工作簿全部页签名。"""
     import openpyxl
     wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
     try:
         names = list(wb.sheetnames)
+        # 指定名称无效时回落首表，避免历史界面仍记住已被删除页签而无法预览文件。
         ws = wb[sheet] if (sheet and sheet in names) else wb[names[0]]
-        # 有些导出文件 <dimension> 标为单格(如 ref="A1"),read_only 会据此只吐 1 行,
-        # 导致预览把几千行的表显示成"只有 1 行"。reset_dimensions 让 openpyxl 按实际
-        # 内容重算范围,仍保持 read_only 流式(下面取满 max_rows 即 break,开销可控)。
+        # 某些导出把 dimension 错写为 A1；重置后按实际 XML 流式遍历，仍只取有限行。
         try:
             ws.reset_dimensions()
         except Exception:
@@ -107,7 +135,7 @@ def _read_xlsx(path, sheet, max_rows, max_cols):
             if i >= max_rows:
                 break
             rows.append([_fmt(c) for c in row[:max_cols]])
-        # read_only 下无法廉价知道总行数,以"取满即可能被截断"近似
+        # 只读流无法低成本确认后面是否还有一行；“取满上限”保守标记为可能截断。
         truncated = len(rows) >= max_rows
         return PreviewData(path, ws.title, rows, sheets=names, truncated=truncated)
     finally:
@@ -115,6 +143,7 @@ def _read_xlsx(path, sheet, max_rows, max_cols):
 
 
 def _read_xls(path, sheet, max_rows, max_cols):
+    """用 xlrd 预览旧 xls 的指定页签，并依据已知行数精确判断截断。"""
     import xlrd
     book = xlrd.open_workbook(path)
     names = book.sheet_names()
@@ -127,7 +156,8 @@ def _read_xls(path, sheet, max_rows, max_cols):
 
 
 def _read_csv(path, max_rows, max_cols):
-    # 探测编码:优先 utf-8-sig(带 BOM 的国产导出常见),回退 gbk
+    """探测常见编码和分隔符后预览 CSV/TXT 的有限行列。"""
+    # 先抽样少量原始字节判断 UTF-8；失败后回落 GBK，正式读取用 replace 保证可展示。
     with open(path, "rb") as fb:
         raw = fb.read(4096)
     enc = "utf-8-sig"
@@ -137,11 +167,13 @@ def _read_csv(path, max_rows, max_cols):
         enc = "gbk"
     rows = []
     with open(path, "r", encoding=enc, errors="replace", newline="") as f:
+        # Sniffer 只看 2 KiB，并限制逗号、制表符和分号，避免猜出罕见错误分隔符。
         sample = f.read(2048)
         f.seek(0)
         try:
             dialect = csv.Sniffer().sniff(sample, delimiters=",\t;")
         except Exception:
+            # 无法判断时使用标准逗号 CSV 方言，仍给用户一个可检查的预览。
             dialect = csv.excel
         reader = csv.reader(f, dialect)
         for i, row in enumerate(reader):

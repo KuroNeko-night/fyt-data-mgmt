@@ -24,8 +24,8 @@ npm --prefix web-app run build
 
 ## 账号规则
 
-- 首次启动自动创建管理员：`admin` / `admin123456`。
-- 可通过 `$env:FYT_ADMIN_PASSWORD` 或 `-AdminPassword` 在首次初始化前设置管理员密码。
+- 首次启动自动创建管理员账号 `admin`：未设置密码时生成随机密码且不显示在日志中，请使用 `reset-web-admin-password.ps1` 设置已知密码。
+- 可通过 `$env:FYT_ADMIN_PASSWORD` 或 `-AdminPassword` 在首次初始化前指定管理员密码。
 - 新用户注册后状态为“待审核”，管理员在“账号审核”页面通过或拒绝。
 - 密码使用 PBKDF2-HMAC-SHA256 加盐保存，会话令牌保存于 SQLite，默认有效期 7 天。
 - 数据库默认位于 `web-data/accounts.sqlite3`，可用 `FYT_WEB_DATA` 指定其他目录。
@@ -36,7 +36,7 @@ npm --prefix web-app run build
 | --- | --- | --- |
 | `FYT_WEB_HOST` | `0.0.0.0` | 监听地址，局域网服务保持默认值 |
 | `FYT_WEB_PORT` | `8787` | HTTP 端口 |
-| `FYT_ADMIN_PASSWORD` | `admin123456` | 仅首次创建管理员时读取 |
+| `FYT_ADMIN_PASSWORD` | 未设置时生成随机密码 | 仅首次创建管理员时读取 |
 | `FYT_WEB_DATA` | `web-data` | SQLite 数据目录 |
 
 ## 业务处理

@@ -46,6 +46,8 @@ class TestAttendanceVariants(unittest.TestCase):
     """考勤源:姓名/日期/上班·下班打卡列的同义变体都应能识别整表。"""
 
     def _load_n(self, hdr):
+        """用给定考勤表头生成工作簿并返回识别记录数。"""
+
         from core import attendance_core as ac
         p = _mk([hdr, ["张三", D(2026, 5, 1), "08:00", "17:00"],
                  ["张三", D(2026, 5, 2), "08:05", "17:10"]])
@@ -86,6 +88,8 @@ class TestReconcileVariants(unittest.TestCase):
     """工时对账源:工时列的同义变体 + 干扰列。"""
 
     def _detect(self, hdr):
+        """返回工时对账表头别名对应的列布局。"""
+
         from core import reconcile_core as rc
         return rc._detect_source_header([hdr, ["张三", D(2026, 5, 1), 8]])
 
@@ -118,6 +122,8 @@ class TestPurchaseVariants(unittest.TestCase):
     """采购列识别:编号/名称/数量的同义变体(用友/金蝶/SAP 常见用词)。"""
 
     def _detect(self, hdr):
+        """返回采购对账表头别名对应的列布局。"""
+
         from core import purchase_core as pc
         wb, ws = _ws([["某某公司对账单"], hdr, ["A001", "货物", "规格1", "个", 10, "P1"]])
         try:
@@ -151,6 +157,8 @@ class TestDeliveryVariants(unittest.TestCase):
     """送货列识别:code 角色的同义变体。"""
 
     def _detect(self, hdr):
+        """返回送货计划表头别名对应的列布局。"""
+
         from core import delivery_core as dc
         wb, ws = _ws([hdr, ["x"] * len(hdr)])
         try:
@@ -262,6 +270,8 @@ class TestStructuralVariants(unittest.TestCase):
     """标题行/空行/合计行/多子表等结构变体:应读对数据区,不漏不串。"""
 
     def test_purchase_title_blank_total(self):
+        """采购表前导标题、空行和合计行不能被误当作业务数据。"""
+
         # 标题行 + 表头 + 数据 + 空行 + 数据 + 合计行
         from core import purchase_core as pc
         rows = [["某公司对账单", None, None, None, None, None, None], _PHDR,
@@ -310,6 +320,8 @@ class TestStructuralVariants(unittest.TestCase):
         self.assertEqual(len(got), 1)
 
     def test_attendance_title_blank_total(self):
+        """考勤表前导标题和尾部合计不影响真实记录识别。"""
+
         from core import attendance_core as ac
         rows = [["每日统计表", None, None, None],
                 ["姓名", "日期", "上班1打卡时间", "下班1打卡时间"],
@@ -321,6 +333,8 @@ class TestStructuralVariants(unittest.TestCase):
         self.assertEqual(len(data), 2)
 
     def test_attendance_merged_group_header(self):
+        """考勤合并分组表头应展开为单一字段行并保留数据。"""
+
         # 第1行分组(合并), 第2行真表头 -> 仍能定位并读数
         from core import attendance_core as ac
         wb = openpyxl.Workbook(); ws = wb.active; ws.title = "每日统计表"
@@ -408,6 +422,8 @@ class TestRobustness(unittest.TestCase):
     """病态输入不得裸崩;输出不得静默覆盖上一次结果。"""
 
     def test_corrupt_file_clear_error(self):
+        """损坏工作簿应抛客户可理解的读取错误，不泄露底层 ZIP 堆栈。"""
+
         # 损坏/伪装的 xlsx -> 清晰 ValueError, 不是底层 BadZipFile
         from core import purchase_core as pc
         import zipfile
@@ -444,6 +460,8 @@ class TestRobustness(unittest.TestCase):
 
     # ---- 输出防覆盖 ----
     def test_unique_path_avoids_overwrite(self):
+        """同名输出存在时唯一路径助手应递增命名而不覆盖已有文件。"""
+
         from core.common_core import unique_path
         d = tempfile.mkdtemp()
         p1 = unique_path(os.path.join(d, "结果.xlsx"))
@@ -470,6 +488,8 @@ class TestPivotVariants(unittest.TestCase):
     """透视:最终数量列别名 + 全角空格表头。锚点为"材料编号"所在行。"""
 
     def _final_col(self, hdr):
+        """返回销售表变体中最终采购数量列的识别位置。"""
+
         from core import pivot_core as pc
         wb, ws = _ws([hdr, ["V1", "M001", "螺栓", "M8", 10, "个", 8]])
         try:
@@ -496,6 +516,8 @@ class TestArrivalVariants(unittest.TestCase):
     """到货:需求列认"计划数量"、剩余列认"缺料"。返回 dict(demand/remain/…)。"""
 
     def _cols(self, hdr):
+        """返回每日到料表头变体的角色列映射。"""
+
         from core import arrival_core as ac
         wb, ws = _ws([hdr, ["M001", "螺栓", 100, 20]])
         try:
@@ -516,6 +538,8 @@ class TestCompareVariants(unittest.TestCase):
     """比对:填满的标题横幅不得冒名顶替真表头(_detect_header_row)。"""
 
     def test_banner_row_not_chosen_as_header(self):
+        """横幅说明行含局部关键词时不能压过角色更完整的真实表头。"""
+
         from core import compare_core as cc
         # 第1行是填满的整句标题横幅(长文本、重复填充),第2行才是真表头
         p = _mk([["某某公司二〇二六年五月采购对账明细表（内部资料请勿外传）"] * 5,

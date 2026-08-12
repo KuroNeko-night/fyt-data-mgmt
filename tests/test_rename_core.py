@@ -9,6 +9,8 @@ from core import rename_core as rc
 
 
 class TestNewFilename(unittest.TestCase):
+    """验证重命名规则组合、序号和扩展名规范化。"""
+
     def test_find_replace(self):
         r = rc.RenameRule(find="旧", replace="新")
         self.assertEqual(rc._new_filename("旧表.xlsx", r, 0), "新表.xlsx")
@@ -33,6 +35,8 @@ class TestNewFilename(unittest.TestCase):
 
 
 class TestNameInvalid(unittest.TestCase):
+    """验证 Windows 非法字符、保留名和尾随点空格。"""
+
     def test_illegal_chars(self):
         self.assertTrue(rc._name_invalid("a/b.txt"))
         self.assertTrue(rc._name_invalid("a:b.txt"))
@@ -50,13 +54,21 @@ class TestNameInvalid(unittest.TestCase):
 
 
 class TestBuildPlan(unittest.TestCase):
+    """验证重命名计划状态、批内冲突、磁盘冲突和摘要。"""
+
     def setUp(self):
+        """创建临时文件目录。"""
+
         self.d = tempfile.mkdtemp(prefix="fyt_rename_")
 
     def tearDown(self):
+        """删除计划输入。"""
+
         shutil.rmtree(self.d, ignore_errors=True)
 
     def _touch(self, name):
+        """创建空文件并返回路径。"""
+
         p = os.path.join(self.d, name)
         with open(p, "w", encoding="utf-8") as f:
             f.write("x")
@@ -97,19 +109,29 @@ class TestBuildPlan(unittest.TestCase):
 
 
 class TestApplyUndo(unittest.TestCase):
+    """验证两阶段安全改名、撤销和文件名交换。"""
+
     def setUp(self):
+        """创建临时文件目录。"""
+
         self.d = tempfile.mkdtemp(prefix="fyt_rename2_")
 
     def tearDown(self):
+        """删除改名与撤销产物。"""
+
         shutil.rmtree(self.d, ignore_errors=True)
 
     def _touch(self, name):
+        """创建带内容的测试文件并返回路径。"""
+
         p = os.path.join(self.d, name)
         with open(p, "w", encoding="utf-8") as f:
             f.write("x")
         return p
 
     def test_apply_then_undo(self):
+        """执行改名后撤销应恢复原文件名和内容。"""
+
         p1 = self._touch("a.txt")
         p2 = self._touch("b.txt")
         items = rc.build_plan([p1, p2], rc.RenameRule(prefix="N_"))
@@ -125,6 +147,8 @@ class TestApplyUndo(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.join(self.d, "N_a.txt")))
 
     def test_swap_names(self):
+        """两个文件互换名称应通过中间临时名完成，不发生覆盖或内容交换错误。"""
+
         # A->B, B->A 交换：两段式改名应无冲突
         p1 = self._touch("A.txt")
         p2 = self._touch("B.txt")

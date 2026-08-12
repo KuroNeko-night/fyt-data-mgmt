@@ -29,6 +29,8 @@ def repo(*parts):
 
 
 def _first(pattern):
+    """返回按名称排序后的首个匹配样本，缺失时返回空值。"""
+
     hits = sorted(glob.glob(pattern))
     return hits[0] if hits else None
 
@@ -50,23 +52,33 @@ def _find(pattern, contains=None, exclude=None):
 
 # ---------------- 考勤填报 ----------------
 def attendance_target():
+    """定位考勤填报目标模板。"""
+
     return _first(repo("考勤对账程序", "考勤填报测试数据", "*KD仓考勤*.xlsx"))
 
 
 def attendance_source():
+    """定位考勤填报每日统计来源。"""
+
     return _first(repo("考勤对账程序", "考勤填报测试数据", "每日统计表*.xlsx"))
 
 
 # ---------------- 工时对账 ----------------
 def reconcile_target():
+    """定位工时对账待填写目标表。"""
+
     return _first(repo("考勤对账程序", "工时对账测试数据", "待对表", "*考勤表*.xlsx"))
 
 
 def reconcile_sources():
+    """返回工时对账的内部数据来源列表。"""
+
     return _find(repo("考勤对账程序", "工时对账测试数据", "待对表数据来源", "*.xlsx"))
 
 
 def reconcile_labor():
+    """同时返回 xlsx 与旧 xls 格式的劳务公司对账数据。"""
+
     xlsx = _find(repo("考勤对账程序", "工时对账测试数据", "待对数据", "*.xlsx"))
     xls = _find(repo("考勤对账程序", "工时对账测试数据", "待对数据", "*.xls"))
     return xlsx + xls
@@ -74,10 +86,14 @@ def reconcile_labor():
 
 # ---------------- 采购数对账 ----------------
 def purchase_ours():
+    """定位我方采购对账单样本。"""
+
     return _first(repo("采购数对账", "测试数据", "*对账单*.xlsx"))
 
 
 def purchase_supplier():
+    """定位供应商采购明细样本。"""
+
     return _first(repo("采购数对账", "测试数据", "*对单明细*.xlsx"))
 
 
@@ -94,6 +110,8 @@ def delivery_supplier():
 
 # ---------------- 到料明细 ----------------
 def arrival_plans():
+    """返回每日到料业务的全部送货计划样本。"""
+
     return _find(repo("表格制作工具", "每日到料表样本", "*送货计划*.xlsx"))
 
 
@@ -106,12 +124,16 @@ def pivot_sources():
 
 # ---------------- 发票 ----------------
 def invoice_folder():
+    """返回发票扫描样本目录，目录缺失时供集成测试跳过。"""
+
     d = repo("发票筛选", "输入", "6月资料统计")
     return d if os.path.isdir(d) else None
 
 
 # ---------------- 补充测试样本(SAP 多子表 KD 清单 / PFEP 核算表) ----------------
 def _supp_dir():
+    """返回分类器真实补充样本根目录。"""
+
     return repo("补充测试样本")
 
 

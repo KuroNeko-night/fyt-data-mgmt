@@ -15,7 +15,11 @@ from core import template_store
 
 
 class TestTauriBridgeContracts(unittest.TestCase):
+    """验证前端动作名、载荷字段和 core 调用参数之间的稳定契约。"""
+
     def setUp(self):
+        """隔离配置、任务、缓存、映射、模板和默认输出根，并创建两份合成表。"""
+
         self.temp = tempfile.TemporaryDirectory(prefix="fyt_tauri_contract_")
         self.old_env = {key: os.environ.get(key) for key in (
             "FYT_CONFIG_PATH", "FYT_TASK_HISTORY_PATH", "FYT_INCREMENTAL_CACHE_PATH",
@@ -37,6 +41,8 @@ class TestTauriBridgeContracts(unittest.TestCase):
         self._write_book(self.file_b, [["编号", "数量"], ["A", 1], ["B", 3]])
 
     def tearDown(self):
+        """恢复设置单例与全部路径环境变量，清理桥接产物。"""
+
         settings_mod._instance = self.old_settings
         for key, value in self.old_env.items():
             if value is None:
@@ -46,10 +52,14 @@ class TestTauriBridgeContracts(unittest.TestCase):
         self.temp.cleanup()
 
     def path(self, name):
+        """返回当前桥接契约用例的临时文件路径。"""
+
         return os.path.join(self.temp.name, name)
 
     @staticmethod
     def _write_book(path, rows):
+        """生成最小“数据”工作表，供预览、对比和文件工具动作使用。"""
+
         workbook = openpyxl.Workbook()
         worksheet = workbook.active
         worksheet.title = "数据"
@@ -60,10 +70,14 @@ class TestTauriBridgeContracts(unittest.TestCase):
 
     @staticmethod
     def dispatch(action, payload=None):
+        """发送桥接动作并只返回成功响应中的 data 载荷。"""
+
         response = tauri_bridge.dispatch({"action": action, "payload": payload or {}})
         return response["data"]
 
     def test_system_preview_and_sheet_actions(self):
+        """系统级工作表枚举与预览动作应接受单路径并返回可 JSON 化结构。"""
+
         sheets = self.dispatch("system.sheets", {"path": self.file_a})
         self.assertEqual(sheets["sheets"], ["数据"])
         preview = self.dispatch("system.preview", {
@@ -71,6 +85,9 @@ class TestTauriBridgeContracts(unittest.TestCase):
         self.assertIn("编号", str(preview))
 
     def test_six_business_action_payloads(self):
+        """六类核心业务的列表、选项、人工复核选择和进度回调应准确转发。"""
+
+        # mock 只替代耗时算法，断言重点是桥接参数形态而非各 core 已单测的业务结果。
         with mock.patch("core.attendance_core.run", return_value={"out_dir": self.temp.name}) as run:
             self.dispatch("attendance.run", {
                 "targets": [self.file_a], "sources": [self.file_b],
@@ -89,9 +106,20 @@ class TestTauriBridgeContracts(unittest.TestCase):
                 "choices": {"aliases": {"甲": "乙"}}})
             self.assertEqual(run.call_args.kwargs["choices"]["aliases"], {"甲": "乙"})
 
-        with mock.patch("core.arrival_core.detect_batch", return_value="46A"):
+        with mock.patch("core.arrival_core.detect_batch", return_value="46A"), mock.patch(
+            "core.arrival_core.inspect_plan",
+            return_value={
+                "total": 12,
+                "materials": [["A-01", "固定螺栓", "供应商甲", 10, 1]],
+                "pending": 0,
+                "hidden": 0,
+            },
+        ):
             prepared = self.dispatch("arrival.prepare", {"paths": [self.file_a]})
         self.assertEqual(prepared["rows"][0]["batch_no"], "46A")
+        self.assertEqual(prepared["rows"][0]["total"], 12)
+        self.assertEqual(prepared["rows"][0]["auto_total"], 12)
+        self.assertEqual(prepared["rows"][0]["missing_count"], 1)
         with mock.patch("core.arrival_core.run", return_value={"out_dir": self.temp.name}) as run:
             self.dispatch("arrival.run", {"rows": prepared["rows"], "top_label": "截止 16 点"})
             self.assertEqual(run.call_args.args[0][0]["path"], self.file_a)
@@ -127,7 +155,25 @@ class TestTauriBridgeContracts(unittest.TestCase):
                 "sheet1": "数据", "sheet2": "数据", "order_type": "KD"})
             self.assertEqual(run.call_args.kwargs["order_type"], "KD")
 
+        with mock.patch("core.supplier_batch_core.analyze", return_value={"suppliers": []}) as analyze:
+            self.dispatch("supplier_batch.analyze", {
+                "batch_paths": [self.file_a], "history_paths": [self.file_b]})
+            self.assertEqual(analyze.call_args.args[0], [self.file_a])
+            self.assertEqual(analyze.call_args.kwargs["history_paths"], [self.file_b])
+        with mock.patch("core.supplier_batch_core.run", return_value={"out_dir": self.temp.name}) as run:
+            self.dispatch("supplier_batch.run", {
+                "batch_paths": [self.file_a], "history_paths": [self.file_b],
+                "choices": {
+                    "suppliers": ["供应商甲"],
+                    "batch_dates": {"测试批次": "8.7"},
+                }})
+            self.assertEqual(run.call_args.kwargs["selected_suppliers"], ["供应商甲"])
+            self.assertEqual(run.call_args.kwargs["batch_dates"], {"测试批次": "8.7"})
+            self.assertTrue(callable(run.call_args.kwargs["progress"]))
+
     def test_invoice_json_roundtrip(self):
+        """发票扫描对象经 JSON 前端修改后应能还原为生成器所需数据类。"""
+
         from core import invoice_core
         invoice = invoice_core.Invoice(
             path=self.file_a, num="12345678", date="2026-07-01", seller="测试公司",
@@ -148,6 +194,8 @@ class TestTauriBridgeContracts(unittest.TestCase):
         self.assertTrue(callable(generate.call_args.kwargs["progress"]))
 
     def test_file_tools_use_real_synthetic_files(self):
+        """文本、重命名、PDF、Excel 和对比工具用真实临时文件验证桥接副作用。"""
+
         text = self.dispatch("text.transform", {
             "text": "乙\n甲\n乙", "operation": "dedup"})
         self.assertEqual(text["text"].splitlines(), ["乙", "甲"])
@@ -190,6 +238,8 @@ class TestTauriBridgeContracts(unittest.TestCase):
         self.assertTrue(os.path.isfile(compared["report_path"]))
 
     def test_library_mapping_template_and_update_actions(self):
+        """资料库、字段映射、模板版本和更新器动作应保持统一 JSON 返回契约。"""
+
         item = {"name": "A.xlsx", "category": "unknown", "path": self.file_a}
         with mock.patch.object(tauri_bridge.library, "import_many", return_value=[item]) as imported:
             result = self.dispatch("library.import", {"paths": [self.file_a]})["result"]

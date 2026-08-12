@@ -1,0 +1,21 @@
+/* 此文件由 scripts/sync-design-tokens.mjs 生成，请勿手工修改。 */
+:where(.fyt-ui) {
+  display: block;
+  width: 100%;
+  min-height: 100%;
+  height: 100%;
+  color: var(--fyt-text);
+  background: var(--fyt-canvas-gradient, var(--fyt-canvas));
+  font-family: var(--fyt-type-font-sans);
+  font-size: var(--fyt-type-body);
+  line-height: var(--fyt-type-line-body);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+:where([data-reduce-motion="true"] .fyt-ui, .fyt-ui[data-reduce-motion="true"]) {
+  --fyt-motion-fast: 0ms;
+  --fyt-motion-base: 0ms;
+  --fyt-motion-slow: 0ms;
+}

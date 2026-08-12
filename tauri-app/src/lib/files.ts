@@ -1,3 +1,4 @@
+/** Tauri 文件选择、受控本地路径打开、危险操作确认和文件名展示辅助函数。 */
 import { confirm, open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { isTauriRuntime } from "./bridge";
@@ -7,6 +8,12 @@ export interface FileFilter {
   extensions: string[];
 }
 
+/**
+ * 调用原生文件选择器，并把单选、多选和取消统一归一为路径数组。
+ *
+ * 浏览器预览不能伪造本机绝对路径，因此直接提示需要桌面版；筛选器只改善选择体验，
+ * 业务 Core 仍会再次校验扩展名和文件内容。
+ */
 export async function chooseFiles(options: {
   title: string;
   multiple?: boolean;
@@ -14,7 +21,7 @@ export async function chooseFiles(options: {
   filters?: FileFilter[];
 }): Promise<string[]> {
   if (!isTauriRuntime()) {
-    throw new Error("文件选择仅在 Tauri 桌面窗口中可用。");
+    throw new Error("当前窗口不支持选择本机文件，请在桌面版中继续。");
   }
   const selected = await open({
     title: options.title,
@@ -26,19 +33,25 @@ export async function chooseFiles(options: {
   return Array.isArray(selected) ? selected : [selected];
 }
 
+/**
+ * 通过自有 Rust 命令打开文件或目录，不向 WebView 授予通用 opener 路径权限。
+ * Rust 侧会再次要求绝对路径存在，前端空值在此直接忽略。
+ */
 export async function openLocalPath(path: string): Promise<void> {
   if (!path) return;
   if (!isTauriRuntime()) {
-    throw new Error("打开本地路径仅在 Tauri 桌面窗口中可用。");
+    throw new Error("当前窗口不支持打开本机路径，请在桌面版中继续。");
   }
   await invoke("open_local_path", { path });
 }
 
+/** 桌面端使用原生警告对话框，浏览器预览回退到同步确认框。 */
 export async function confirmAction(message: string): Promise<boolean> {
   if (!isTauriRuntime()) return window.confirm(message);
   return confirm(message, { title: "峰运通数据管理系统", kind: "warning" });
 }
 
+/** 同时兼容 Windows 与 Unix 分隔符，从完整路径提取客户可读文件名。 */
 export function fileName(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).at(-1) || path;
 }

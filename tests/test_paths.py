@@ -10,10 +10,16 @@ from core import paths
 
 
 class TestResolveOutputDir(unittest.TestCase):
+    """验证统一输出目录模式、中文业务目录和唯一命名。"""
+
     def setUp(self):
+        """保存路径相关环境变量并创建临时根。"""
+
         self.d = tempfile.mkdtemp(prefix="fyt_paths_")
 
     def tearDown(self):
+        """恢复环境并清理输出目录。"""
+
         shutil.rmtree(self.d, ignore_errors=True)
 
     def test_custom_mode_uses_feature_cn(self):
@@ -81,6 +87,8 @@ class TestCrashLogRotation(unittest.TestCase):
     """崩溃日志体积轮转:超限转 .old 只留一份,长期使用有界。"""
 
     def setUp(self):
+        """把崩溃日志根隔离到临时目录并保存原配置。"""
+
         self.d = tempfile.mkdtemp(prefix="fyt_crashlog_")
         self.log = os.path.join(self.d, "错误日志.txt")
         # 把 crash_log_path 临时指到临时目录,避免污染用户文档
@@ -90,6 +98,8 @@ class TestCrashLogRotation(unittest.TestCase):
         paths._CRASH_LOG_MAX = 1024          # 调小上限便于测试
 
     def tearDown(self):
+        """恢复崩溃日志配置并删除轮换样本。"""
+
         paths.crash_log_path = self._orig
         paths._CRASH_LOG_MAX = self._orig_max
         shutil.rmtree(self.d, ignore_errors=True)
@@ -102,6 +112,8 @@ class TestCrashLogRotation(unittest.TestCase):
         self.assertIn("=====", content)     # 带时间戳头
 
     def test_rotation_caps_size(self):
+        """崩溃日志超过上限后应轮换并限制保留数量，避免本机日志无限增长。"""
+
         # 反复写超过上限,应触发轮转:主文件重开、旧内容进 .old
         for i in range(50):
             paths.append_crash_log("X" * 200 + (" line%d" % i))

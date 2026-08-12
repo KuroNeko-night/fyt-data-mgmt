@@ -8,14 +8,22 @@ from core import task_history
 
 
 class TestTaskHistory(unittest.TestCase):
+    """验证本机任务历史成功、取消、中断恢复和未知任务保护。"""
+
     def setUp(self):
+        """创建隔离 SQLite 任务库。"""
+
         self.tmp = tempfile.TemporaryDirectory(prefix="fyt_tasks_")
         self.db = os.path.join(self.tmp.name, "tasks.db")
 
     def tearDown(self):
+        """删除任务库和临时目录。"""
+
         self.tmp.cleanup()
 
     def test_success_lifecycle(self):
+        """任务从开始到成功应保留输入、结果、日志、输出目录和持续时间。"""
+
         task_id = task_history.start_task(
             "attendance", "考勤填报", {"files": 2}, db_path=self.db)
         self.assertTrue(task_id)
@@ -43,6 +51,8 @@ class TestTaskHistory(unittest.TestCase):
             "missing", "failed", "不存在", db_path=self.db))
 
     def test_cancel_request_only_marks_matching_task(self):
+        """按 request_id 取消只能影响对应运行任务，不得波及其他请求。"""
+
         matching = task_history.start_task(
             "pivot", "透视任务", {"request_id": "request-a"}, db_path=self.db)
         other = task_history.start_task(

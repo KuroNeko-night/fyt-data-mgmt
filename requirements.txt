@@ -1,9 +1,5 @@
-# 峰运通数据管理系统 —— 现代运行/打包依赖
-# 基准环境：Windows 10/11 + Python 3.13。
-PySide6==6.11.1
-QtPy==2.4.3
-openpyxl==3.1.5
-xlrd==2.0.2          # 只读老式 .xls（Excel 工具箱）
-pypdf==6.14.2        # PDF 工具箱
+# 峰运通数据管理系统 —— 开发与打包依赖
+# 运行依赖统一由 requirements-runtime.txt 锁定，Docker、Linux 包和开发环境共用。
+-r requirements-runtime.txt
 # 打包工具（仅开发机需要，运行时不依赖）
 pyinstaller==6.21.0

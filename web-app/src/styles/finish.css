@@ -1,0 +1,292 @@
+/* Web 端统一视觉收口：让背景、业务表面和可交互卡片形成清晰层级。 */
+.fyt-shell,
+.fyt-shell-scroll {
+  /* 三层低饱和径向光斑在放大的背景画布内缓慢移动，避免出现明显重复接缝。 */
+  background:
+    radial-gradient(circle at 8% 4%, color-mix(in srgb, var(--fyt-primary) 12%, transparent) 0, transparent 30%),
+    radial-gradient(circle at 92% 16%, color-mix(in srgb, var(--fyt-accent) 11%, transparent) 0, transparent 28%),
+    var(--fyt-canvas-gradient, var(--fyt-canvas));
+}
+
+.fyt-shell-scroll {
+  background:
+    radial-gradient(circle at 14% 8%, color-mix(in srgb, var(--fyt-primary) 16%, transparent) 0, transparent 34%),
+    radial-gradient(circle at 88% 18%, color-mix(in srgb, var(--fyt-accent) 15%, transparent) 0, transparent 31%),
+    radial-gradient(circle at 72% 82%, color-mix(in srgb, var(--fyt-visual-glow-pink) 100%, transparent) 0, transparent 30%),
+    var(--fyt-canvas-gradient, var(--fyt-canvas));
+  background-size: 150% 150%, 140% 140%, 130% 130%, 100% 100%;
+  animation: fyt-canvas-flow 24s ease-in-out infinite alternate;
+  /* 只提示浏览器优化动画期间的背景定位；减少动画模式会恢复 auto，避免长期占用合成资源。 */
+  will-change: background-position;
+}
+
+/* 顶栏和移动导航覆盖在动态背景上，毛玻璃同时需要半透明底色才能看出层次。 */
+.fyt-shell-topbar,
+.fyt-mobile-nav {
+  background: var(--fyt-surface-glass-strong);
+  -webkit-backdrop-filter: blur(var(--fyt-visual-glass-blur)) saturate(var(--fyt-visual-glass-saturation));
+  backdrop-filter: blur(var(--fyt-visual-glass-blur)) saturate(var(--fyt-visual-glass-saturation));
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--fyt-surface) 70%, transparent);
+}
+
+/* 高频业务卡片共用“玻璃底 + 细蓝图网格 + 轻阴影”，具体内容布局仍由各页面样式控制。 */
+.dsp-cell,
+.fyt-feature-card,
+.fyt-flow-steps,
+.fyt-flow-section,
+.fyt-flow-file-field,
+.fyt-flow-task-panel,
+.fyt-flow-history,
+.fyt-review-panel,
+.fyt-task-card,
+.fyt-tasks-summary > div,
+.fyt-tasks-results,
+.fyt-flow-preview,
+.fyt-library-summary,
+.fyt-library-upload-panel,
+.fyt-library-table-panel,
+.fyt-workshop-toolbar,
+.fyt-workshop-form,
+.fyt-workshop-feed,
+.fyt-daily-command,
+.fyt-daily-metrics > div,
+.fyt-daily-panel,
+.fyt-daily-ledger,
+.fyt-daily-loading,
+.fyt-daily-production-overview,
+.fyt-production-insights {
+  border-color: color-mix(in srgb, var(--fyt-border-strong) 88%, transparent);
+  background: linear-gradient(
+    145deg,
+    color-mix(in srgb, var(--fyt-surface-glass-strong) 94%, var(--fyt-primary-soft)) 0%,
+    var(--fyt-surface-glass) 58%,
+    color-mix(in srgb, var(--fyt-surface-glass) 96%, var(--fyt-accent)) 100%
+  );
+  background-image:
+    linear-gradient(90deg, color-mix(in srgb, var(--fyt-primary) 6%, transparent) 1px, transparent 1px),
+    linear-gradient(color-mix(in srgb, var(--fyt-primary) 6%, transparent) 1px, transparent 1px),
+    linear-gradient(
+      145deg,
+      color-mix(in srgb, var(--fyt-surface-glass-strong) 94%, var(--fyt-primary-soft)) 0%,
+      var(--fyt-surface-glass) 58%,
+      color-mix(in srgb, var(--fyt-surface-glass) 96%, var(--fyt-accent)) 100%
+    );
+  background-size: 28px 28px, 28px 28px, 100% 100%;
+  -webkit-backdrop-filter: blur(var(--fyt-visual-glass-blur)) saturate(var(--fyt-visual-glass-saturation));
+  backdrop-filter: blur(var(--fyt-visual-glass-blur)) saturate(var(--fyt-visual-glass-saturation));
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--fyt-surface) 82%, transparent),
+    var(--fyt-elevation-card);
+}
+
+.dsp-cell,
+.fyt-feature-card,
+.fyt-task-card,
+.fyt-daily-metrics > div,
+.fyt-daily-batch-list > button {
+  transition:
+    transform var(--fyt-motion-base) var(--fyt-motion-ease),
+    border-color var(--fyt-motion-base) var(--fyt-motion-ease),
+    background-color var(--fyt-motion-base) var(--fyt-motion-ease),
+    box-shadow var(--fyt-motion-base) var(--fyt-motion-ease);
+}
+
+/* 悬浮只提升两像素并增强边界，不缩放卡片，避免相邻网格重新排版。 */
+.dsp-cell:hover,
+.fyt-feature-card:hover,
+.fyt-task-card:hover,
+.fyt-daily-metrics > div:hover,
+.fyt-daily-batch-list > button:hover {
+  z-index: 1;
+  border-color: color-mix(in srgb, var(--fyt-primary) 34%, var(--fyt-border-strong));
+  background: linear-gradient(
+    145deg,
+    color-mix(in srgb, var(--fyt-surface-glass-strong) 92%, var(--fyt-primary-soft)),
+    var(--fyt-surface-glass-strong)
+  );
+  background-image:
+    linear-gradient(90deg, color-mix(in srgb, var(--fyt-primary) 8%, transparent) 1px, transparent 1px),
+    linear-gradient(color-mix(in srgb, var(--fyt-primary) 8%, transparent) 1px, transparent 1px),
+    linear-gradient(
+      145deg,
+      color-mix(in srgb, var(--fyt-surface-glass-strong) 92%, var(--fyt-primary-soft)),
+      var(--fyt-surface-glass-strong)
+    );
+  background-size: 28px 28px, 28px 28px, 100% 100%;
+  box-shadow: var(--fyt-elevation-card-hover);
+  transform: translateY(-2px);
+}
+
+.fyt-library-table tbody tr,
+.fyt-workshop-issue-card,
+.fyt-daily-issue-list article {
+  transition: background-color var(--fyt-motion-fast) var(--fyt-motion-ease), box-shadow var(--fyt-motion-fast) var(--fyt-motion-ease);
+}
+
+.fyt-library-table tbody tr:hover,
+.fyt-workshop-issue-card:hover,
+.fyt-daily-issue-list article:hover {
+  background: color-mix(in srgb, var(--fyt-primary-soft) 44%, transparent);
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--fyt-primary) 60%, transparent);
+}
+
+/* 美术资源使用完整构图，放大只消耗原图透明安全边距，不再裁掉主体。 */
+.dsp-board-head {
+  min-height: 144px;
+}
+
+.dsp-board-art {
+  top: -8px;
+  right: clamp(150px, 16%, 204px);
+  bottom: -8px;
+  width: clamp(310px, 36%, 460px);
+  opacity: .82;
+}
+
+.dsp-board-art .fyt-art-asset,
+.dsp-board-art .fyt-art-fallback {
+  object-fit: contain;
+  object-position: center;
+  transform: scale(1.08);
+}
+
+.fyt-empty-illustration-frame {
+  width: min(240px, 72vw);
+  height: 184px;
+  overflow: hidden;
+  border-radius: var(--fyt-radius-container);
+  background: radial-gradient(circle at 50% 62%, color-mix(in srgb, var(--fyt-primary) 10%, transparent), transparent 58%);
+}
+
+.fyt-empty-illustration {
+  object-fit: contain;
+  object-position: center;
+  transform: none;
+  filter: drop-shadow(0 14px 18px color-mix(in srgb, var(--fyt-surface-inverse) 12%, transparent));
+}
+
+.fyt-empty-illustration-frame > .fyt-art-asset.fyt-art-empty-task-archive,
+.fyt-empty-illustration-frame > .fyt-art-asset.fyt-art-empty-review-check {
+  object-position: center;
+  transform: scale(1.18);
+}
+
+.fyt-library-empty-content .fyt-empty-illustration-frame {
+  width: 212px;
+  height: 164px;
+}
+
+.fyt-workshop-empty .fyt-empty-illustration-frame {
+  width: 232px;
+  height: 196px;
+}
+
+.fyt-library-empty-content.fyt-empty-state,
+.fyt-workshop-empty.fyt-empty-state {
+  min-height: 360px;
+}
+
+/* 移动端光斑范围更收敛、动画更慢，减少小屏上背景移动造成的视觉干扰。 */
+@media (max-width: 767px) {
+  .fyt-shell-scroll {
+    background:
+      radial-gradient(circle at 15% 2%, color-mix(in srgb, var(--fyt-primary) 12%, transparent) 0, transparent 28%),
+      radial-gradient(circle at 88% 26%, color-mix(in srgb, var(--fyt-accent) 11%, transparent) 0, transparent 27%),
+      radial-gradient(circle at 72% 84%, color-mix(in srgb, var(--fyt-visual-glow-pink) 100%, transparent) 0, transparent 26%),
+      var(--fyt-canvas-gradient, var(--fyt-canvas));
+    background-size: 160% 160%, 150% 150%, 140% 140%, 100% 100%;
+    animation-duration: 28s;
+  }
+
+  .fyt-empty-illustration-frame {
+    width: min(206px, 64vw);
+    height: 164px;
+  }
+
+  .fyt-workshop-empty .fyt-empty-illustration-frame {
+    width: min(218px, 68vw);
+    height: 184px;
+  }
+}
+
+/* 只改变 background-position，因此不会触发卡片布局计算。 */
+@keyframes fyt-canvas-flow {
+  0% {
+    background-position: 0% 0%, 100% 10%, 68% 94%, 0 0;
+  }
+
+  50% {
+    background-position: 16% 10%, 82% 2%, 80% 72%, 0 0;
+  }
+
+  100% {
+    background-position: 34% 18%, 64% 12%, 58% 56%, 0 0;
+  }
+}
+
+/* 隐藏滚动条轨道但保留滚轮、触控板和触摸滚动能力。 */
+html,
+body,
+.fyt-shell,
+.fyt-shell * {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+html::-webkit-scrollbar,
+body::-webkit-scrollbar,
+.fyt-shell::-webkit-scrollbar,
+.fyt-shell *::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+/* 系统偏好关闭背景流动、卡片位移和过渡，同时保留静态渐变与层级。 */
+@media (prefers-reduced-motion: reduce) {
+  .fyt-shell-scroll {
+    animation: none;
+    will-change: auto;
+  }
+
+  .dsp-cell,
+  .fyt-feature-card,
+  .fyt-task-card,
+  .fyt-daily-metrics > div,
+  .fyt-daily-batch-list > button,
+  .fyt-library-table tbody tr,
+  .fyt-workshop-issue-card,
+  .fyt-daily-issue-list article {
+    transition: none;
+  }
+
+  .dsp-cell:hover,
+  .fyt-feature-card:hover,
+  .fyt-task-card:hover,
+  .fyt-daily-metrics > div:hover,
+  .fyt-daily-batch-list > button:hover {
+    transform: none;
+  }
+}
+
+/* data 属性是应用内设置的等价通道，不依赖操作系统偏好。 */
+[data-reduce-motion="true"] .dsp-cell,
+[data-reduce-motion="true"] .fyt-feature-card,
+[data-reduce-motion="true"] .fyt-task-card,
+[data-reduce-motion="true"] .fyt-daily-metrics > div,
+[data-reduce-motion="true"] .fyt-daily-batch-list > button {
+  transition: none;
+}
+
+[data-reduce-motion="true"] .fyt-shell-scroll {
+  animation: none;
+  will-change: auto;
+}
+
+[data-reduce-motion="true"] .dsp-cell:hover,
+[data-reduce-motion="true"] .fyt-feature-card:hover,
+[data-reduce-motion="true"] .fyt-task-card:hover,
+[data-reduce-motion="true"] .fyt-daily-metrics > div:hover,
+[data-reduce-motion="true"] .fyt-daily-batch-list > button:hover {
+  transform: none;
+}

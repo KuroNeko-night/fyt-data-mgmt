@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-送货计划表制作 —— 核心逻辑
-==========================
+送货计划表制作业务核心
+====================
 以"物料清单"为主表逐行生成送货计划，按物料号从"物料明细表(含供应商)"查供应商
 代码与名称；KD/SUB 列按用户选择统一填写；CASE/CASE托数/班组 可从一张已做好的
 往期送货计划(参考表)按物料编码带出；到货/收货等跟单列留空供后续人工填写。
@@ -12,9 +12,8 @@
     不提供时，供应商两列留空供人工补填；若物料清单自带供应商列则就地取用。
   · 参考送货计划（可选）：往期做好的送货计划，按物料编码带出 CASE/CASE托数/班组。
 
-输出 16 列送货计划，样式与客户新模板一致（标题行合并留空、微软雅黑、全边框，
-"剩余未收数"= 实际收货数 - 需求数 的公式）。表头行与列位置自动识别，不写死列号。
-运行于 Windows 10/11 + Python 3.13。
+输出固定 16 列送货计划，样式与现行模板一致。表头和输入列自动识别，不在前端复制
+物料、供应商和参考计划的合并规则；主数据库只补空值，源表已有值始终优先。
 """
 import os
 
@@ -26,11 +25,12 @@ from . import paths as _paths
 from . import settings as settings_mod
 from . import header_detect
 from . import shape_detect
-from . import common_core as _common       # load_data_only 加速读取
+from . import common_core as _common  # 公共文本清洗、计算值加载和公式缓存预警。
+from . import material_catalog
 
-# 表头关键词 -> 角色。识别时先精确匹配，再包含匹配；每列只归一个角色。
+# 表头关键词映射到业务角色；共享识别器先精确匹配再包含匹配，每列只归一个角色。
 HEADER_KEYS = {
-    # "下阶物料描述" 放前不影响(精确匹配优先);"下阶物料" 是 SAP KD 清单/供应商表的编码列
+    # “下阶物料”是 SAP KD 清单编码列；“下阶物料描述”只应落到名称角色。
     "code":  ["物料号", "物料编码", "零部件代码", "零部件编码", "物料编号", "下阶物料",
               "零件号", "零件编号", "零件代码", "料号", "编码"],
     "cname": ["物料中文描述", "物料英文描述", "下阶物料描述", "物料名称", "零部件名称", "中文描述", "名称", "品名"],
@@ -41,15 +41,19 @@ HEADER_KEYS = {
     "attr":  ["属性", "KD/SUB", "KD/SUB属性"],
 }
 
-# 输出固定 16 列（顺序即样本顺序）
+# 输出列顺序是现行业务模板协议，公式列和人工跟单列均依赖这些固定位置。
 OUT_HEADERS = ["序号", "物料编码", "物料名称", "供应商代码", "供应商信息", "KD/SUB",
                "需求数", "计划到货日期", "实际收货数", "实际收货日期", "第二次到货日期",
                "剩余未收数", "CASE", "CASE托数", "班组", "备注"]
 
 
 def norm_code(v):
-    """物料号归一：转字符串去空格。数值型编码去掉尾随的 .0。
-    并做全角→半角、去零宽/NBSP,避免同码因中文录入差异跨表对不上(保前导零)。"""
+    """
+    规范化物料编码的数值尾缀、全半角和不可见字符，同时保留文本前导零。
+
+    Excel 可能把纯数字编码读成整数浮点，此时去掉无意义的 ``.0``；文本编码交给
+    ``clean_str``，不执行整数化，以免 ``00123`` 的业务前导零被破坏。
+    """
     if v is None:
         return ""
     if isinstance(v, float) and v.is_integer():
@@ -58,7 +62,7 @@ def norm_code(v):
 
 
 def cell_text(v):
-    """单元格文本化：None->''，浮点整数去 .0，其余原样 str。"""
+    """把单元格值转为展示文本；空值为空串，整数浮点去除尾随 ``.0``。"""
     if v is None:
         return ""
     if isinstance(v, float) and v.is_integer():
@@ -69,23 +73,22 @@ def cell_text(v):
 # ---------------------------------------------------------------------------
 # 表头/列自动识别
 # ---------------------------------------------------------------------------
-# 包含匹配时,"委外供应商属性"这类标志列含"供应商"子串但实为属性列,
-# 不得当作供应商代码/名称;精确匹配不受影响。守卫随共享引擎走(见 header_detect)。
+# “委外供应商属性”等列虽然含“供应商”，实际不是供应商代码/名称，包含匹配时必须排除。
 _EXCLUDE_CONTAINS = {"sup_code": ["属性"], "sup_name": ["属性"]}
 
 
 def detect_layout(ws, scan_rows=12, log=None):
-    """在前若干行里找表头行并映射列。返回 (header_row, {角色:列号})。
+    """调用共享表头识别器，在工作表前若干行定位送货业务列。
 
-    选"能命中最多角色"的行为表头行；要求至少含 code 列，否则视为未识别(返回 None,{})。
-    薄封装:算法在 header_detect.detect_layout,此处只传本功能的常量。
+    物料编码是唯一必要角色；数量和供应商列是否存在由后续分类逻辑判断。此处仅传入
+    本业务别名和误匹配排除规则，保持公共识别算法为单一事实来源。
     """
     return header_detect.detect_layout(
         ws, HEADER_KEYS, require=("code",), scan_rows=scan_rows,
         exclude_contains=_EXCLUDE_CONTAINS, log=log)
 
 
-# 数据形态画像(供 header_detect 失败时兜底):角色顺序≈典型列序,末位 bool 为必需。
+# 数据形态画像只作人工确认兜底，角色顺序接近典型列序，布尔值表示是否为必要列。
 _SHAPE_PROFILE = [
     ("code", shape_detect.CODE, True),
     ("cname", shape_detect.TEXT, False),
@@ -96,11 +99,11 @@ _SHAPE_PROFILE = [
 
 
 def detect_layout_or_shape(ws, scan_rows=12, log=None):
-    """先按表头文字识别;失败再按数据形态兜底。
+    """先识别表头文字，失败后再按数据形态推断列角色。
 
     返回 (header_row, col_map, source):source 为 "header"(表头识别)或
-    "shape"(形态兜底,需用户确认)或 None(都失败)。兜底命中的映射**不应静默落盘**,
-    由调用方交用户核对。"""
+    ``shape`` 结果只说明数据分布相似，必须在界面交由用户核对，不得直接静默落盘。
+    """
     hr, col = detect_layout(ws, scan_rows=scan_rows, log=log)
     if hr:
         return hr, col, "header"
@@ -112,10 +115,10 @@ def detect_layout_or_shape(ws, scan_rows=12, log=None):
 
 
 def list_sheets(path):
-    """列出工作簿的子表名(供界面下拉选择)。读失败/非 xlsx 返回 []。"""
+    """返回 xlsx/xlsm 页签名供界面选择；不支持格式或读取失败时返回空列表。"""
     ext = os.path.splitext(path)[1].lower()
     if ext not in (".xlsx", ".xlsm"):
-        return []                        # openpyxl 不读 .xls;交由默认(第一表)处理
+        return []  # openpyxl 不读取旧 xls，此辅助函数不承担多格式兼容。
     try:
         wb = openpyxl.load_workbook(path, read_only=True)
         try:
@@ -123,61 +126,109 @@ def list_sheets(path):
         finally:
             wb.close()
     except Exception:
+        # 页签预览是辅助能力，错误由正式加载阶段提供更具体提示，此处不阻断选文件界面。
         return []
 
 
+def _select_delivery_sheet(workbook, requested_sheet, log):
+    """选择送货输入页签并返回已识别的表头布局。
+
+    显式指定页签时严格使用该页，名称错误由 openpyxl 抛出；自动模式先检查首表，仅在
+    首表无法识别编码列时顺序寻找后续页签，以兼容封面、说明页位于最前面的工作簿。
+    """
+    if requested_sheet:
+        worksheet = workbook[requested_sheet]
+        header_row, columns = detect_layout(worksheet, log=log)
+        return worksheet, header_row, columns
+
+    first_name = workbook.sheetnames[0]
+    worksheet = workbook[first_name]
+    header_row, columns = detect_layout(worksheet, log=log)
+    if header_row or len(workbook.sheetnames) == 1:
+        return worksheet, header_row, columns
+
+    for sheet_name in workbook.sheetnames[1:]:
+        candidate = workbook[sheet_name]
+        candidate_header, candidate_columns = detect_layout(candidate, log=log)
+        if not candidate_header:
+            continue
+        if log:
+            log("· 多子表: 首表《%s》无有效表头, 改读《%s》" % (
+                first_name, sheet_name,
+            ))
+        return candidate, candidate_header, candidate_columns
+    return worksheet, header_row, columns
+
+
+def _delivery_optional_value(worksheet, row, columns, role):
+    """读取一个可选业务角色的单元格；模板缺少该列时返回 ``None``。"""
+    column = columns.get(role)
+    return worksheet.cell(row, column).value if column else None
+
+
+def _is_delivery_summary_row(name):
+    """判断名称是否表示合计、小计或总计等非物料汇总行。"""
+    return isinstance(name, str) and any(
+        token in name for token in ("合计", "小计", "总计")
+    )
+
+
+def _delivery_row(worksheet, row, columns):
+    """把一个工作表数据行投影为送货业务记录；无效行返回 ``None``。"""
+    code = worksheet.cell(row, columns["code"]).value
+    if code is None or not norm_code(code):
+        # 编码是供应商和参考计划关联主键，空编码行不能可靠进入输出。
+        return None
+    chinese_name = _delivery_optional_value(worksheet, row, columns, "cname")
+    if _is_delivery_summary_row(chinese_name):
+        # 部分汇总行仍带编码或数量，必须按名称排除，避免生成伪物料记录。
+        return None
+    return {
+        "r": row,
+        "code": code,
+        "cname": chinese_name,
+        "ename": _delivery_optional_value(worksheet, row, columns, "ename"),
+        "qty": _delivery_optional_value(worksheet, row, columns, "qty"),
+        "sup_code": _delivery_optional_value(worksheet, row, columns, "sup_code"),
+        "sup_name": _delivery_optional_value(worksheet, row, columns, "sup_name"),
+        "attr": _delivery_optional_value(worksheet, row, columns, "attr"),
+    }
+
+
+def _read_delivery_rows(worksheet, header_row, columns):
+    """顺序读取表头后的有效送货业务行，并保持源表原始顺序。"""
+    rows = []
+    last_row = worksheet.max_row or header_row
+    for row in range(header_row + 1, last_row + 1):
+        record = _delivery_row(worksheet, row, columns)
+        if record is not None:
+            rows.append(record)
+    return rows
+
+
 def load_sheet(path, sheet=None, log=None):
-    """读取一张表：自动识别表头与列。返回 (rows, layout)。
+    """读取一个送货相关工作表，自动识别列并返回有效业务行和布局。
 
     rows: [{r, code, cname, ename, qty, sup_code, sup_name, attr}]，按角色缺省为 None。
-    已过滤空编码行与合计/小计行。
+    未指定页签时先读首张表，若无法识别再顺序寻找其他页签，兼容封面或说明页占首位。
+    空编码行和名称含合计/小计/总计的汇总行会被过滤；其他字段缺失保持 ``None``，
+    留给主数据库补全或后续分类判断。
     """
-    wb = _common.load_data_only(path)   # 跳过内嵌透视缓存解析,只取单元格值
+    # 只需要计算值，不访问公式和样式，因此使用跳过透视缓存的公共加载器。
+    wb = _common.load_data_only(path)
     try:
-        if sheet:
-            ws = wb[sheet]
-            header_row, col = detect_layout(ws, log=log)
-        else:
-            # 未指定子表(UI"自动"档): 默认第一张; 认不出且多子表时扫其余表,
-            # 取第一个能认出表头的, 避免封面/说明页占 sheet0 时静默失败。
-            ws = wb[wb.sheetnames[0]]
-            header_row, col = detect_layout(ws, log=log)
-            if not header_row and len(wb.sheetnames) > 1:
-                for nm in wb.sheetnames[1:]:
-                    ws2 = wb[nm]
-                    hr2, col2 = detect_layout(ws2, log=log)
-                    if hr2:
-                        if log:
-                            log("· 多子表: 首表《%s》无有效表头, 改读《%s》"
-                                % (wb.sheetnames[0], nm))
-                        ws, header_row, col = ws2, hr2, col2
-                        break
+        ws, header_row, col = _select_delivery_sheet(wb, sheet, log)
         if not header_row:
             raise ValueError("未能在 %s / %s 中识别表头（需含“物料号/编码”列）"
                              % (os.path.basename(path), ws.title))
-        rows = []
-        for r in range(header_row + 1, (ws.max_row or header_row) + 1):
-            code = ws.cell(r, col["code"]).value
-            if code is None or norm_code(code) == "":
-                continue
-            cn = ws.cell(r, col["cname"]).value if "cname" in col else None
-            if isinstance(cn, str) and ("合计" in cn or "小计" in cn or "总计" in cn):
-                continue
-            rows.append({
-                "r": r, "code": code, "cname": cn,
-                "ename": ws.cell(r, col["ename"]).value if "ename" in col else None,
-                "qty": ws.cell(r, col["qty"]).value if "qty" in col else None,
-                "sup_code": ws.cell(r, col["sup_code"]).value if "sup_code" in col else None,
-                "sup_name": ws.cell(r, col["sup_name"]).value if "sup_name" in col else None,
-                "attr": ws.cell(r, col["attr"]).value if "attr" in col else None,
-            })
+        rows = _read_delivery_rows(ws, header_row, col)
         return rows, {"sheet": ws.title, "header_row": header_row, "col": col}
     finally:
         wb.close()
 
 
 def analyze(path, sheet=None, log=None):
-    """选择即扫描:只读地预检一个文件的表头识别结果,不生成任何文件。
+    """只读预检文件的页签、表头、角色列和数据规模，不生成输出文件。
 
     供 UI 在用户选文件后立刻反馈"能否认出各列 / 是靠形态兜底(需核对)",
     以便在点"生成"前就发现列错位。返回 dict:
@@ -189,16 +240,18 @@ def analyze(path, sheet=None, log=None):
       n_rows       - 表头之后的数据行数(粗计,不排合计行)
       sheets       - 该簿全部子表名
       error        - 失败原因(ok=False 时)
+
+    预检允许形态兜底，以便界面展示候选列并要求人工确认；正式 ``load_sheet`` 仍只接受
+    明确表头识别结果，防止低可信映射绕过复核直接用于生成。
     """
     res = {"ok": False, "sheet": "", "header_row": 0, "roles": {},
            "source": None, "n_rows": 0, "sheets": [], "error": ""}
     try:
         res["sheets"] = list_sheets(path)
-        # 不能用 read_only:detect_layout_or_shape 走随机 .cell(r,c)+ws.max_row,
-        # 而坏 <dimension> 文件在 read_only 下 max_row=1(reset 后为 None),会导致
-        # 表头探测/行数统计失效(预览显示"未识别表头"或 0 行)。用常规+跳透视缓存读取。
+        # 形态探测依赖随机 cell 和真实 max_row；错误 dimension 文件在只读模式会被截成一行。
         wb = _common.load_data_only(path)
         try:
+            # 指定页签无效时预检首表并在返回中告知实际页签，不让底层 KeyError 泄漏到界面。
             ws = wb[sheet] if (sheet and sheet in wb.sheetnames) else wb[wb.sheetnames[0]]
             hr, col, src = detect_layout_or_shape(ws, log=log)
             res["sheet"] = ws.title
@@ -213,45 +266,49 @@ def analyze(path, sheet=None, log=None):
         finally:
             wb.close()
     except Exception as e:
+        # analyze 以 ok/error 表达失败，便于文件一选中就展示问题而不终止整个界面。
         res["error"] = str(e)
     return res
 
 
 def _has_supplier(layout):
-    """该表是否带供应商信息（可作供应商来源）。"""
+    """判断布局是否至少含供应商代码或名称，可否作为供应商信息来源。"""
     return "sup_code" in layout["col"] or "sup_name" in layout["col"]
 
 
 def _has_qty(layout):
-    """该表是否带数量/需求数列(物料清单主表的特征)。"""
+    """判断布局是否含需求数量列，这是物料清单主表的重要特征。"""
     return "qty" in layout["col"]
 
 
 def classify(lay_a, lay_b, n_a=0, n_b=0, log=None):
-    """辨识两份表哪份是物料清单(主表)、哪份是供应商明细。返回 ('a'/'b' 为主表, 供应商来源同理)。
+    """辨识两份顺序任意的输入中哪份是物料主表、哪份是供应商来源。
 
     规则(按可靠度依次):
       1) 仅一份带供应商列 -> 它作供应商来源, 另一份作主表(最可靠);
       2) 两份都带供应商列 -> 用"含数量列"区分: 有数量的那份作主表;
       3) 数量列也无法区分 -> 按行数多者作主表, 并 log 明确警告(而非静默择 A);
       4) 两份都不带供应商列 -> 报错提示"未找到供应商列"。
+
+    返回两个 ``a``/``b`` 键。只有最后的行数规则属于低可信降级，因此必须写日志提醒
+    用户核对；供应商列和数量列能明确区分时不产生多余警告。
     """
     a_sup, b_sup = _has_supplier(lay_a), _has_supplier(lay_b)
     if not a_sup and not b_sup:
-        # 两份都无供应商列: 无法带出供应商, 直接报错让用户确认选错文件
+        # 传入两份文件代表用户期望其中一份提供供应商，两份都没有时应视为选错文件。
         raise ValueError("两份表都未找到供应商列(供应商代码/名称)，无法确定供应商来源，"
                          "请确认是否选错文件。")
     if a_sup and not b_sup:
-        return "b", "a"          # B 无供应商 -> 主表；A 供应商来源
+        return "b", "a"  # B 无供应商，作为主表；A 是供应商来源。
     if b_sup and not a_sup:
-        return "a", "b"          # A 无供应商 -> 主表；B 供应商来源
-    # 两份都带供应商列: 用数量列存在性区分(物料清单必有数量)
+        return "a", "b"  # A 无供应商，作为主表；B 是供应商来源。
+    # 两份都含供应商时，用数量列区分；主物料清单通常必须提供需求数。
     a_qty, b_qty = _has_qty(lay_a), _has_qty(lay_b)
     if a_qty and not b_qty:
         return "a", "b"
     if b_qty and not a_qty:
         return "b", "a"
-    # 数量列也无法区分: 按行数多者作主表, 并明确警告
+    # 最后才按行数降级，行数相等稳定选择 A；日志明确说明此结果需要人工核对。
     if log:
         log("⚠ 两份表都含供应商列且都含/都不含数量列，无法可靠区分主表与供应商表，"
             "已按行数多者(%d vs %d)作主表，请核对结果。" % (n_a, n_b))
@@ -259,7 +316,7 @@ def classify(lay_a, lay_b, n_a=0, n_b=0, log=None):
 
 
 # ---------------------------------------------------------------------------
-# 输出（复刻客户样本格式）
+# 输出样式与固定列协议
 # ---------------------------------------------------------------------------
 _HEAD_FILL = PatternFill("solid", fgColor="FFBDD7EE")     # 新模板表头浅蓝
 _HEAD_FONT = Font(name="微软雅黑", size=11, bold=True, color="FF000000")
@@ -268,10 +325,10 @@ _TITLE_FONT = Font(name="微软雅黑", size=14, bold=True, color="FF000000")
 _THIN = Side(style="thin", color="FF000000")
 _BORDER = Border(left=_THIN, right=_THIN, top=_THIN, bottom=_THIN)
 _CENTER = Alignment(horizontal="center", vertical="center", wrap_text=True)
-# 列宽复刻新模板：A序号 B编码 C名称 D供代 E供信息 其余统一 13
+# 前五列按内容设置不同宽度，其余跟单列保持统一宽度。
 _WIDTHS = [13, 15.83, 39.91, 13, 45.75, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13]
 
-# 输出各列在 OUT_HEADERS 中的位置（1 基），供写值与公式引用，避免散落魔法数字
+# 关键输出列使用 1 基常量，公式引用和字段位置保持与 OUT_HEADERS 同步。
 _C_QTY = 7        # 需求数
 _C_RECV = 9       # 实际收货数
 _C_LEFT = 12      # 剩余未收数（= 实际收货数 - 需求数）
@@ -286,7 +343,7 @@ _DATA_ROW_H = 22    # 数据行统一行高（与参考送货计划一致）
 
 def build_plan_sheet(ws, master_rows, sup_map, order_type=None,
                      case_map=None, log=None, report_missing=True):
-    """把主表行写成送货计划（新模板样式）。
+    """把物料主表写成固定 16 列送货计划，并返回产出与匹配统计。
 
     sup_map    : 归一编码 -> (供应商代码, 供应商名称)。
     order_type : "SUB" / "KD"，统一填入 KD/SUB 列；None 则留空。
@@ -295,17 +352,17 @@ def build_plan_sheet(ws, master_rows, sup_map, order_type=None,
                      每行都会记入 missing，此时应传 False 以免刷无意义警告。
 
     版式：第 1 行合并 A1:P1 作标题（留空，仅套样式）；第 2 行表头；数据自第 3 行起。
-    数据行按物料清单原顺序从 1 编号；每行统一行高（与参考送货计划一致）。
-    "剩余未收数"写成 =I{r}-G{r} 公式（实际收货数-需求数），全表加边框、居中。
+    数据行严格保持物料清单原顺序，不按供应商重排，以便用户回查源表。剩余未收数沿用
+    现行模板口径，写入“实际收货数 - 需求数”公式；到货、收货与备注列保持空白供跟单。
     返回 (写入行数, 未匹配供应商的编码列表, CASE 命中数)。
     """
     ncol = len(OUT_HEADERS)
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=ncol)
-    t = ws.cell(1, 1, None)                  # 标题行留空，仅套样式
+    t = ws.cell(1, 1, None)  # 标题内容由用户后续填写，程序只保留模板视觉区域。
     t.font = _TITLE_FONT
     t.alignment = _CENTER
     ws.row_dimensions[1].height = _TITLE_ROW_H
-    for c in range(1, ncol + 1):            # 表头(第2行)
+    for c in range(1, ncol + 1):  # 第二行固定写入业务表头。
         cell = ws.cell(2, c, OUT_HEADERS[c - 1])
         cell.font = _HEAD_FONT
         cell.fill = _HEAD_FILL
@@ -314,13 +371,14 @@ def build_plan_sheet(ws, master_rows, sup_map, order_type=None,
     ws.row_dimensions[2].height = _HEAD_ROW_H
 
     case_map = case_map or {}
-    # 据供应商查好每行后直接按物料清单原顺序编号，不再按供应商代码重排。
+    # 先把供应商与参考信息连接到每行，仍保持 master_rows 的原始顺序。
     recs = []
     missing = []
     for row in master_rows:
         code = norm_code(row["code"])
         sup = sup_map.get(code)
         if sup is None:
+            # 区分“完全无映射”与“映射存在但某字段为空”，只把前者计入未匹配编码。
             missing.append(code)
         sc, sn = (sup if sup else (None, None))
         recs.append({"row": row, "sc": sc, "sn": sn, "cinfo": case_map.get(code)})
@@ -333,8 +391,10 @@ def build_plan_sheet(ws, master_rows, sup_map, order_type=None,
         if cinfo:
             hit_case += 1
         ca, cq, tm = (cinfo if cinfo else (None, None, None))
+        # 列表顺序与 OUT_HEADERS 一一对应；跟单列写 None，避免输出虚假默认值。
         vals = [i, row["code"], row.get("cname"), sc, sn, order_type or None,
                 row.get("qty"), None, None, None, None,
+                # 通过列常量生成公式，表头位置变化时无需查找散落的字母列号。
                 "=%s%d-%s%d" % (get_column_letter(_C_RECV), r,
                                 get_column_letter(_C_QTY), r),
                 ca, cq, tm, None]
@@ -349,15 +409,17 @@ def build_plan_sheet(ws, master_rows, sup_map, order_type=None,
     for c, w in enumerate(_WIDTHS, 1):
         ws.column_dimensions[get_column_letter(c)].width = w
     if log and missing and report_missing:
+        # 最多展示前八个缺失编码，保留可操作线索且避免大批缺失淹没任务日志。
         log("有 %d 个物料在供应商明细中未找到供应商，已留空：%s%s"
             % (len(missing), "、".join(missing[:8]), " 等" if len(missing) > 8 else ""))
     return r - 3, missing, hit_case
 
 
 def build_supplier_map(sup_rows, log=None):
-    """从供应商明细行建 归一编码 -> (供应商代码, 供应商名称) 映射。
+    """从供应商明细建立 ``归一物料编码 -> (供应商代码, 供应商名称)`` 映射。
 
-    一码多供应商时以首见为准，并在日志里提示冲突数（避免静默择一）。
+    同一编码出现不同供应商时保留首条有效记录并统计冲突。这一策略保持文件从上到下的
+    人工优先顺序，同时通过日志公开歧义，避免后出现的重复行悄悄改变整个送货计划。
     """
     m = {}
     conflicts = 0
@@ -365,9 +427,11 @@ def build_supplier_map(sup_rows, log=None):
         code = norm_code(row["code"])
         if not code:
             continue
+        # 空字符串统一为 None，便于区分“映射存在但缺某字段”和“编码完全未映射”。
         pair = (cell_text(row.get("sup_code")) or None,
                 cell_text(row.get("sup_name")) or None)
         if code in m:
+            # 重复且内容相同不算冲突；不同内容只计数，不覆盖首次选择。
             if m[code] != pair:
                 conflicts += 1
             continue
@@ -375,6 +439,35 @@ def build_supplier_map(sup_rows, log=None):
     if log and conflicts:
         log("注意：供应商明细中有 %d 个物料存在多个不同供应商，已取首个。" % conflicts)
     return m
+
+
+def _complete_from_catalog(master_rows, sup_map, resolver, fill_counts=None):
+    """
+    使用主数据库补全物料名称、供应商名称及供应商代码，现有业务表值始终优先。
+
+    物料名称写回 ``master_rows`` 的内存投影；供应商信息写回 ``sup_map``，供输出阶段
+    统一连接。主数据解析器只返回缺失字段的补充值，不覆盖源表或供应商明细中的明确值。
+    """
+    for row in master_rows:
+        code = norm_code(row.get("code"))
+        supplier_code, supplier_name = sup_map.get(code, (None, None))
+        # 把当前名称和供应商交给解析器，只有为空的字段才会出现在 additions 中。
+        additions = resolver.complete_material(
+            code,
+            {"name": row.get("cname"), "supplier": supplier_name},
+            fields=("name", "supplier"),
+            counts=fill_counts,
+        )
+        if "name" in additions:
+            row["cname"] = additions["name"]
+        if "supplier" in additions:
+            supplier_name = additions["supplier"]
+        # 供应商名称确定后再补代码，支持供应商来自主数据而非输入明细的情况。
+        supplier_code = resolver.complete_supplier_code(
+            supplier_name, supplier_code, counts=fill_counts) or None
+        if supplier_code or supplier_name:
+            # 至少有一个有效字段才建立映射，避免把所有编码都变成 (None, None) 假命中。
+            sup_map[code] = (supplier_code, supplier_name or None)
 
 
 # ---------------------------------------------------------------------------
@@ -386,12 +479,13 @@ _REF_KEYS = {"code": ["物料编码", "物料号", "零部件代码", "编码"],
 
 
 def _match_ref_header(ws, scan_rows=8):
-    """在参考表前若干行找含"物料编码 + CASE"的明细表头行，返回 (行号, {角色:列号})。
+    """在参考计划前若干行定位包含物料编码和 CASE 信息的明细表头。
 
     参考表常有多个 sheet（如透视 Sheet2 + 明细"零件到货计划"）。透视汇总表虽也含
     "班组"、且"计数项:物料编码"会被物料编码子串命中，但它没有 CASE 列——故以 CASE 为
     判据可稳妥排除透视表。code 匹配优先精确表头，避免误取"计数项:物料编码"之类。
-    找不到返回 (None, {})。
+    CASE 是区分明细表和透视汇总页的硬条件，同时要求班组或 CASE 托数至少一项。
+    编码角色仅接受精确表头，防止“计数项:物料编码”等透视统计列误命中。
     """
     for hr in range(1, min(scan_rows, ws.max_row) + 1):
         col = {}
@@ -402,76 +496,110 @@ def _match_ref_header(ws, scan_rows=8):
             for role, keys in _REF_KEYS.items():
                 if role in col:
                     continue
-                # code 只认精确表头（防"计数项:物料编码"透视列）；其余可含匹配
+                # 编码只认精确文本；CASE、托数和班组允许带前后业务说明的包含匹配。
                 if role == "code":
                     if any(k == txt for k in keys):
                         col[role] = c
                 elif any(k == txt for k in keys) or any(k in txt for k in keys):
                     col[role] = c
-        # CASE 是明细表独有列，作硬判据；再要求有 班组 或 托数 之一
+        # CASE 加班组/托数组合能有效排除只有计数和分组字段的透视汇总页。
         if "code" in col and "case" in col and ("team" in col or "case_qty" in col):
             return hr, col
     return None, {}
 
 
-def build_case_map(path, log=None):
-    """从参考送货计划读 归一编码 -> (CASE, CASE托数, 班组)。一码多值以首见为准。
+def _find_reference_detail_sheet(workbook):
+    """按工作簿顺序返回首个符合参考计划明细结构的页签及布局。"""
+    for sheet_name in workbook.sheetnames:
+        worksheet = workbook[sheet_name]
+        header_row, columns = _match_ref_header(worksheet)
+        if header_row:
+            return worksheet, header_row, columns
+    return None
 
-    自动跳过透视/汇总 sheet，找含物料编码且带 CASE/班组 的明细 sheet。
-    读不到（文件缺失/无合适表头）返回空 dict，不报错——参考表本就是可选项。
+
+def _reference_case_record(worksheet, row, columns):
+    """读取一条非空参考记录，返回编码及 CASE、托数、班组；无有效补充值时返回空。"""
+    code = norm_code(worksheet.cell(row, columns["code"]).value)
+    if not code:
+        return None
+    case_value = cell_text(worksheet.cell(row, columns["case"]).value)
+    case_quantity = _delivery_optional_value(worksheet, row, columns, "case_qty")
+    team = cell_text(_delivery_optional_value(worksheet, row, columns, "team"))
+    if not case_value and case_quantity is None and not team:
+        # 空补充行不应制造“已命中参考资料”的假象，后续同编码有效行仍可被采用。
+        return None
+    return code, (case_value or None, case_quantity, team or None)
+
+
+def _read_reference_case_map(worksheet, header_row, columns):
+    """顺序读取参考明细，同一编码保留第一条具有有效补充信息的记录。"""
+    mapping = {}
+    last_row = worksheet.max_row or header_row
+    for row in range(header_row + 1, last_row + 1):
+        record = _reference_case_record(worksheet, row, columns)
+        if record is None:
+            continue
+        code, values = record
+        if code not in mapping:
+            # 靠前记录通常是当前有效安排；重复项不应被表尾历史或汇总内容覆盖。
+            mapping[code] = values
+    return mapping
+
+
+def build_case_map(path, log=None):
+    """从可选参考计划读取 ``物料编码 -> (CASE, CASE托数, 班组)`` 映射。
+
+    自动跳过透视/汇总页，采用第一个符合明细结构的页签；同一编码多次出现时保留首值。
+    参考表是增强输入，读取失败或无匹配页签时记录提示并返回空字典，不阻断主计划生成。
     """
     def _lg(msg):
+        """把参考计划读取提示转交调用方；未提供日志回调时保持静默。"""
         if log:
             log(msg)
     if not path:
         return {}
     try:
-        wb = _common.load_data_only(path)   # 跳过内嵌透视缓存解析,只取单元格值
+        # 参考表只读取计算值，不需要样式和透视对象，使用公共加速加载器。
+        wb = _common.load_data_only(path)
     except Exception as e:
         _lg("参考送货计划读取失败，已跳过 CASE/班组：%s" % e)
         return {}
     try:
-        for name in wb.sheetnames:
-            ws = wb[name]
-            hr, col = _match_ref_header(ws)
-            if not hr:
-                continue
-            m = {}
-            for r in range(hr + 1, (ws.max_row or hr) + 1):
-                code = norm_code(ws.cell(r, col["code"]).value)
-                if not code or code in m:
-                    continue
-                ca = cell_text(ws.cell(r, col["case"]).value) if "case" in col else ""
-                cq = ws.cell(r, col["case_qty"]).value if "case_qty" in col else None
-                tm = cell_text(ws.cell(r, col["team"]).value) if "team" in col else ""
-                if ca or cq is not None or tm:
-                    m[code] = (ca or None, cq, tm or None)
-            _lg("参考送货计划：从工作表「%s」读到 %d 条 CASE/班组 记录。" % (name, len(m)))
-            return m
-        _lg("参考送货计划里未找到含「物料编码 + CASE/班组」的表，已跳过。")
-        return {}
+        detail = _find_reference_detail_sheet(wb)
+        if detail is None:
+            _lg("参考送货计划里未找到含「物料编码 + CASE/班组」的表，已跳过。")
+            return {}
+        ws, header_row, columns = detail
+        mapping = _read_reference_case_map(ws, header_row, columns)
+        _lg("参考送货计划：从工作表「%s」读到 %d 条 CASE/班组 记录。" % (
+            ws.title, len(mapping),
+        ))
+        return mapping
     finally:
         wb.close()
 
 
 def run(file_a, file_b=None, sheet_a=None, sheet_b=None, out_dir=None, log=None,
         order_type=None, ref_plan=None):
-    """送货计划表制作主流程。
+    """执行送货计划生成，支持可选供应商明细和可选往期参考计划。
 
     供应商明细为可选：
       · 传了 file_b —— 两份输入顺序任意，自动辨识主表/供应商来源（原行为）；
       · 未传 file_b —— file_a 即物料清单主表；若它自带供应商列则就地取用，
         否则供应商代码/名称两列留空供人工补填（不视为"未匹配"报警）。
 
-    返回 dict：{plan_path, out_dir, rows, matched, missing, supplier_used,
-                master_file, supplier_file}。supplier_file 无供应商来源时为 ""。
+    两份输入都提供时允许顺序任意，由 ``classify`` 辨识主表和供应商来源；只提供
+    ``file_a`` 时它直接作为主表，并优先使用自带供应商列，再由主数据库补空值。
+    ``order_type`` 规范化为大写后统一写入 KD/SUB 列；``ref_plan`` 仅用于补充 CASE、
+    CASE 托数和班组。返回输出路径、行数、匹配统计和实际采用的输入来源。
     """
     def _lg(msg):
+        """统一转发主流程日志，使核心不依赖具体界面。"""
         if log:
             log(msg)
 
-    # 物料清单"需求数/数量"若是未刷新的公式,data_only 读为 None → 送货计划需求数
-    # 静默留空。入口先查主表(此刻还没辨识),把隐患变成可见提示;有第二份也一起查。
+    # 此时尚未辨识哪份是主表，因此两份都检查数量公式缓存，避免需求数静默变空。
     from . import common_core
     common_core.warn_if_uncached(file_a, _lg, sheet_a, what="需求数/数量")
     if file_b:
@@ -481,6 +609,7 @@ def run(file_a, file_b=None, sheet_a=None, sheet_b=None, out_dir=None, log=None,
     if file_b:
         rows_b, lay_b = load_sheet(file_b, sheet_b, log=_lg)
         master_key, sup_key = classify(lay_a, lay_b, len(rows_a), len(rows_b), log=_lg)
+        # 用分类键映射完整三元组，保持主表行、布局和文件路径始终成组切换。
         pack = {"a": (rows_a, lay_a, file_a), "b": (rows_b, lay_b, file_b)}
         master_rows, _lm, master_file = pack[master_key]
         sup_rows, _ls, sup_file = pack[sup_key]
@@ -488,7 +617,7 @@ def run(file_a, file_b=None, sheet_a=None, sheet_b=None, out_dir=None, log=None,
         _lg("供应商来源：%s —— %d 行" % (os.path.basename(sup_file), len(sup_rows)))
         sup_map = build_supplier_map(sup_rows, log=_lg)
     else:
-        # 未提供供应商明细：物料清单即主表。它若自带供应商列，就地取用；否则留空。
+        # 单文件模式允许主表自带供应商；完全没有时不是错误，主数据和人工维护可继续补充。
         master_rows, master_file, sup_file = rows_a, file_a, ""
         _lg("主表(物料清单)：%s —— %d 行" % (os.path.basename(master_file), len(master_rows)))
         if _has_supplier(lay_a):
@@ -496,15 +625,23 @@ def run(file_a, file_b=None, sheet_a=None, sheet_b=None, out_dir=None, log=None,
             _lg("未单独提供供应商明细，已从物料清单自带的供应商列带出。")
         else:
             sup_map = {}
-            _lg("未提供供应商明细，供应商代码/名称两列留空，可稍后人工补填。")
+            _lg("未提供供应商明细，将优先从主数据库补全，仍缺失的内容可稍后人工填写。")
+    # 输入解析结束后统一补全，确保源文件或供应商表中的现有信息始终优先。
+    resolver = material_catalog.CatalogResolver()
+    fill_counts: dict[str, int] = {}
+    _complete_from_catalog(master_rows, sup_map, resolver, fill_counts)
+    material_catalog.log_fill_summary(_lg, "送货计划", fill_counts)
+    # 只要主数据或输入提供任一映射，就启用匹配统计；完全无来源时不把所有行误报缺失。
     supplier_used = bool(sup_map)
 
+    # 空白保持 None，使 Excel 单元格真正留空；非空值统一大写以稳定展示。
     ot = (order_type or "").strip().upper() or None
     if ot:
         _lg("KD/SUB 列统一填：%s" % ot)
     case_map = build_case_map(ref_plan, log=_lg) if ref_plan else {}
 
     if out_dir is None:
+        # 默认走统一输出设置；显式目录保持既有调用方选择并确保目录存在。
         st = settings_mod.get_settings()
         out_dir = _paths.resolve_output_dir("delivery", **st.output_kwargs())
     else:
@@ -520,12 +657,13 @@ def run(file_a, file_b=None, sheet_a=None, sheet_b=None, out_dir=None, log=None,
         matched = n - len(missing)
         _lg("已生成 %d 行，供应商匹配 %d / %d。" % (n, matched, n))
     else:
-        # 无供应商来源：不把每行都算作"未匹配",两列本就按设计留空。
+        # 完全无供应商来源时两列按设计留空，不能把这种模式误解为 n 条匹配失败。
         missing, matched = [], 0
         _lg("已生成 %d 行（供应商两列留空）。" % n)
     if case_map:
         _lg("CASE/班组 按物料编码匹配 %d / %d 行。" % (hit_case, n))
 
+    # 文件名遵循现行业务约定；若 Excel 占用同名结果，保存异常会给出明确关闭提示。
     plan_path = os.path.join(out_dir, "送货计划.xlsx")
     try:
         wb.save(plan_path)

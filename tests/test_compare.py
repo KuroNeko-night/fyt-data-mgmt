@@ -17,10 +17,16 @@ warnings.filterwarnings("ignore", message="Workbook contains no default style")
 
 
 class _Tmp(unittest.TestCase):
+    """为表格对比用例提供隔离输入和输出目录。"""
+
     def setUp(self):
+        """创建临时目录。"""
+
         self._tmp = tempfile.mkdtemp(prefix="fyt_cmp_")
 
     def tearDown(self):
+        """删除合成工作簿与报告。"""
+
         import shutil
         shutil.rmtree(self._tmp, ignore_errors=True)
 
@@ -40,7 +46,11 @@ HDR = ["物料编码", "名称", "数量"]
 
 
 class TestCompare(_Tmp):
+    """验证键匹配、重复项、差异分类和端到端报告输出。"""
+
     def _cmp(self, rows_a, rows_b, key="物料编码", columns=None):
+        """使用统一表头创建两表并执行对比。"""
+
         ha, ra = C.read_table(self.mk("a.xlsx", [HDR] + rows_a))
         hb, rb = C.read_table(self.mk("b.xlsx", [HDR] + rows_b))
         return C.compare(ha, ra, hb, rb, key, columns=columns)
@@ -141,6 +151,8 @@ class TestCompareOutputPath(_Tmp):
         self.assertIn("表格比对", out)          # 未注册会退化成英文 'compare'
 
     def test_run_default_dir_is_unified(self):
+        """未传输出目录时，对比报告必须进入统一中文业务目录并保持文件可用。"""
+
         # out_dir=None 时应走统一根(不再落 cwd);切到 custom 根验证不污染文档
         from core import settings as sm
         st = sm.get_settings()

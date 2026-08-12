@@ -1,19 +1,24 @@
 # -*- coding: utf-8 -*-
 """
-Excel 工具箱核心 —— 合并 / 拆分 / 转换 / 纵向合并
-==================================================
-基于现有 openpyxl(xlsx 读写)+ xlrd 1.2(老 .xls 只读),零新依赖。
-四种操作,均接受 log 回调、输出写入统一 paths 目录:
+Excel 文件工具核心
+==================
+提供工作簿合并、按页签拆分、Excel/CSV 转换和同结构表纵向合并四类通用能力。
+所有操作只依赖 openpyxl；旧版 ``.xls`` 读取按可选依赖 xlrd 降级处理，输出目录
+统一交给 ``core.paths``，因此桌面端和 Web 端无需各自实现文件操作规则。
 
-  merge_books   多个工作簿 → 一个工作簿(每个源 sheet 一个新 sheet)
-  split_sheets  一个工作簿 → 每个 sheet 拆成单独文件
-  convert       .xls → .xlsx;或 Excel ↔ CSV
-  stack_tables  多个"同结构"表纵向拼成一张大表(按表头对齐)
+能力与格式边界：
+  · ``merge_books``：每个源页签复制为结果中的独立页签；
+  · ``split_sheets``：每个页签生成一个独立 xlsx；
+  · ``convert``：旧 xls/CSV 转 xlsx，或 Excel 各页签转 UTF-8 BOM CSV；
+  · ``stack_tables``：按规范化表头对齐同结构表，并增加来源文件列。
 
-格式保留:.xlsx/.xlsm 的拆分/合并会保留字体、填充、边框、对齐、数字格式、
-列宽、行高、合并单元格、冻结窗格(拆分还完整保留图表/图片)。老 .xls 与 CSV
-本身不含或无法带出这些格式,相关操作退回"仅数据"。纯数据读取走 _read_sheets()。
-兼容 Windows 10/11 + Python 3.13。
+xlsx/xlsm 合并会复制单元格样式、行列尺寸、合并区域和冻结窗格，但 openpyxl 无法
+可靠地把图表、图片等绘图对象跨工作簿搬运；拆分采用“复制整簿后删除其他页签”，
+因此可保留这些对象。xls 和 CSV 只能按值读取，任何格式降级都应在日志中明确说明。
+
+纯数据读取刻意不使用 openpyxl 的只读模式：部分外部系统把工作表使用范围错误写成
+``A1``，只读模式会静默漏掉其余数据。公共加载器以常规模式读取并跳过无关透视缓存，
+在正确性和性能之间取得更安全的平衡。
 """
 import os
 import csv
@@ -22,27 +27,35 @@ import copy as _copy
 import openpyxl
 
 from . import paths as _paths
-from . import common_core as _common      # load_data_only:安全读取(非 read_only)
+from . import common_core as _common  # 提供安全的非只读计算值加载和统一文本清洗。
 
 try:
-    import xlrd                          # 仅用于读老 .xls
+    import xlrd  # 仅用于读取旧二进制 .xls，不参与 xlsx 写入。
     _HAS_XLRD = True
 except Exception:
+    # xlrd 是可选能力；现代 xlsx/CSV 操作不应因其缺失而无法启动。
     _HAS_XLRD = False
 
 
 class ExcelToolError(Exception):
-    """面向用户的业务异常。"""
+    """可直接转换为界面提示的文件工具业务异常。"""
 
 
 def _safe_sheet_title(name, used):
-    """Excel sheet 名限长 31 且不能含 []:*?/\\ ,去重。"""
+    """生成符合 Excel 约束、且在当前输出工作簿内不重复的页签名。
+
+    Excel 页签名最多 31 个字符，且不能包含方括号、冒号、星号、问号及正反斜杠。
+    重名比较不区分大小写，
+    因为 Excel 本身也按不区分大小写处理页签；冲突时追加递增后缀，并为后缀预留
+    长度，确保最终名称仍不超过限制。
+    """
     bad = set('[]:*?/\\')
     t = "".join("_" if c in bad else c for c in (name or "Sheet"))[:31] or "Sheet"
     base = t
     i = 1
     while t.lower() in used:
         suffix = "_%d" % i
+        # 先截断基础名称再拼后缀，否则长文件名会让最终页签再次超过 31 字符。
         t = base[:31 - len(suffix)] + suffix
         i += 1
     used.add(t.lower())
@@ -50,19 +63,19 @@ def _safe_sheet_title(name, used):
 
 
 def _read_sheets(path):
-    """把一个 Excel 文件读成 [(sheet名, [row,...])],row 为值列表。
+    """把一个支持的表格文件读取为 ``[(页签名, 行值列表)]``。
 
-    .xlsx/.xlsm 用 openpyxl(只读值);.xls 用 xlrd。其它扩展名报错。
-
-    注意:不能用 read_only=True。部分导出文件 <dimension> 标为单格(如 ref="A1"),
-    read_only 会信任它只吐 1 行,导致合并/拆分/转换/堆叠时整表静默漏读(实测某考勤
-    导出 6264 行只读到 1 行)。改用常规模式(会重算真实用量),并跳过内嵌透视缓存解析
-    以补偿性能。详见 common_core.load_data_only。"""
+    xlsx/xlsm 通过公共 ``load_data_only`` 取得公式缓存值；不得改用 read_only，
+    因为部分导出文件的 XML 使用范围错误标成 ``A1``，只读模式会信任该范围并静默
+    漏掉整张表。xls 使用 xlrd，并专门把日期单元格从序列号恢复为 datetime；CSV
+    复用编码探测函数并包装成单页签结构。未知扩展名抛出业务异常。
+    """
     ext = os.path.splitext(path)[1].lower()
     if ext in (".xlsx", ".xlsm"):
         wb = _common.load_data_only(path)
         out = []
         for ws in wb.worksheets:
+            # 此辅助结构只承载值，不保留单元格坐标或样式；格式操作使用其他路径。
             rows = [list(r) for r in ws.iter_rows(values_only=True)]
             out.append((ws.title, rows))
         wb.close()
@@ -75,8 +88,8 @@ def _read_sheets(path):
         for sh in book.sheets():
             rows = []
             for r in range(sh.nrows):
-                # 逐格判类型:日期格(XL_CELL_DATE)按 xldate 还原为 datetime,
-                # 否则原样取值——避免日期被写成 Excel 序列号(float)静默变数字
+                # xls 把日期存成受工作簿日期制影响的浮点序列号，必须结合 datemode
+                # 逐格还原；转换失败时保留原值，比丢弃整行更利于人工发现异常。
                 cells = []
                 for c in range(sh.ncols):
                     cell = sh.cell(r, c)
@@ -85,7 +98,7 @@ def _read_sheets(path):
                             cells.append(xlrd.xldate.xldate_as_datetime(
                                 cell.value, book.datemode))
                         except Exception:
-                            cells.append(cell.value)   # 还原失败退回原值
+                            cells.append(cell.value)
                     else:
                         cells.append(cell.value)
                 rows.append(cells)
@@ -97,60 +110,65 @@ def _read_sheets(path):
 
 
 def _write_rows(ws, rows):
-    """把行列表写入 openpyxl worksheet(仅值,无格式)。"""
+    """顺序写入二维行值；``None`` 行按空行处理，不复制任何格式。"""
     for r in rows:
         ws.append(list(r) if r is not None else [])
 
 
 def _copy_sheet(src, dst):
-    """把源工作表 src 的内容与格式复制到目标工作表 dst(同一/跨工作簿均可)。
+    """把一个页签的值和基础格式复制到另一个工作簿的页签。
 
-    复制:单元格值 + 字体/填充/边框/对齐/数字格式、列宽、行高与隐藏、
-    合并单元格、冻结窗格、网格线显示。样式对象跨工作簿需 deepcopy 脱离原簿。
-    注:图片/图表等绘图对象 openpyxl 无法跨簿搬运,合并时会丢失(拆分则保留)。"""
+    复制范围包括单元格值、字体、填充、边框、对齐、保护、数字格式、行列尺寸、
+    隐藏状态、合并区域、冻结窗格和网格线设置。样式对象不能在工作簿间共享内部
+    引用，因此逐项浅复制为新对象。图表、图片、批注形状等绘图对象不在此函数能力
+    范围内；需要保留它们的拆分操作采用整簿深复制方案。
+    """
     for row in src.iter_rows():
         for c in row:
             d = dst.cell(row=c.row, column=c.column, value=c.value)
             if c.has_style:
+                # 对每种样式分别复制，避免目标簿引用源簿的样式表索引。
                 d.font = _copy.copy(c.font)
                 d.fill = _copy.copy(c.fill)
                 d.border = _copy.copy(c.border)
                 d.alignment = _copy.copy(c.alignment)
                 d.protection = _copy.copy(c.protection)
                 d.number_format = c.number_format
-    # 列宽 / 列隐藏
+    # 行列维度不是单元格样式的一部分，必须单独迁移。
     for key, dim in src.column_dimensions.items():
         nd = dst.column_dimensions[key]
         nd.width = dim.width
         nd.hidden = dim.hidden
         if dim.width is None and dim.hidden:
+            # 某些隐藏列没有显式宽度，补 Excel 默认值可避免目标簿解除隐藏后宽度异常。
             nd.width = 8.43
-    # 行高 / 行隐藏
     for idx, dim in src.row_dimensions.items():
         nd = dst.row_dimensions[idx]
         nd.height = dim.height
         nd.hidden = dim.hidden
-    # 合并单元格
+    # 先复制普通单元格再重建合并区域，避免合并单元格占位对象干扰写值。
     for rng in list(src.merged_cells.ranges):
         dst.merge_cells(str(rng))
-    # 冻结窗格 & 视图
+    # 视图层只保留业务最常用的冻结与网格线，其他窗口状态不跨簿复制。
     dst.freeze_panes = src.freeze_panes
     dst.sheet_view.showGridLines = src.sheet_view.showGridLines
 
 
 def merge_books(files, out_dir=None, out_name="合并工作簿.xlsx",
                 keep_formula=False, log=None):
-    """多个工作簿合并为一个:每个源 sheet 成为结果里的一个 sheet。
+    """把多个工作簿的所有页签合并进一个新工作簿。
 
-    keep_formula=False(默认):公式转为计算后的值,数值稳妥、不会引用错乱。
-    keep_formula=True:保留公式原文;但因工作表被重命名为「文件名-原表名」,
-        跨表公式(如 =表二!A1)会指向旧表名而失效,仅表内公式安全。
-    sheet 名用「文件名-原sheet名」并去重、限长。返回 {out_file, out_dir}。"""
+    结果页签按“源文件名-原页签名”命名并安全去重。默认 ``keep_formula=False``，
+    xlsx/xlsm 读取公式缓存值，可避免页签改名后跨页公式仍引用旧名称；开启后保留
+    公式原文，仅能保证表内公式安全。现代格式复制基础样式，xls/CSV 则明确降级为
+    仅数据。至少需要两个文件，返回输出文件、目录和统一 ``out_files`` 列表。
+    """
     log = log or (lambda *_: None)
     if len(files) < 2:
         raise ExcelToolError("合并至少需要 2 个 Excel 文件")
     out_dir = out_dir or _paths.resolve_output_dir("excel_tools")
     wb = openpyxl.Workbook()
+    # 新工作簿的默认空页没有业务意义，先删除再按源页签顺序创建。
     wb.remove(wb.active)
     used = set()
     total = 0
@@ -158,8 +176,7 @@ def merge_books(files, out_dir=None, out_name="合并工作簿.xlsx",
         stem = os.path.splitext(os.path.basename(f))[0]
         ext = os.path.splitext(f)[1].lower()
         if ext in (".xlsx", ".xlsm"):
-            # 带格式复制:逐个源工作表 → 新工作表
-            # data_only=False 时 cell.value 返回公式原文,由 _copy_sheet 原样搬运
+            # data_only 的取值与 keep_formula 相反：保留公式时读取公式文本，否则读缓存值。
             src_wb = openpyxl.load_workbook(f, data_only=not keep_formula)
             for sn in src_wb.sheetnames:
                 title = _safe_sheet_title("%s-%s" % (stem, sn), used)
@@ -171,7 +188,7 @@ def merge_books(files, out_dir=None, out_name="合并工作簿.xlsx",
                    "、保留公式" if keep_formula else ""))
             src_wb.close()
         else:
-            # .xls/.csv 无法带格式,退回仅值
+            # 旧 xls 与 CSV 不具备可由 openpyxl 跨簿复制的样式模型，只写值并记录降级。
             sheets = _read_sheets(f)
             for name, rows in sheets:
                 title = _safe_sheet_title("%s-%s" % (stem, name), used)
@@ -185,31 +202,36 @@ def merge_books(files, out_dir=None, out_name="合并工作簿.xlsx",
 
 
 def split_sheets(file, out_dir=None, log=None):
-    """把一个工作簿的每个 sheet 拆成单独 .xlsx 文件,保留原格式。
+    """把一个多页工作簿拆成每页一个 xlsx 文件。
 
-    .xlsx/.xlsm:整簿载入后只留目标表再另存,列宽/合并/字体/图表/图片全保留;
-    .xls:openpyxl 不能读,退回仅数据。返回 {out_files, out_dir}。"""
+    xlsx/xlsm 先完整载入一次，再为每个目标页深复制整本工作簿并删除其他页，这比
+    跨簿复制更能保留图表、图片和复杂对象，也避免为每个页签反复从磁盘读取原文件。
+    xls 只能按值重建。单页工作簿直接提示无需拆分；输出文件名会过滤 Windows 与
+    Excel 文件名中的非法字符。
+    """
     log = log or (lambda *_: None)
     out_dir = out_dir or _paths.resolve_output_dir("excel_tools")
     stem = os.path.splitext(os.path.basename(file))[0]
     ext = os.path.splitext(file)[1].lower()
 
     def _safe(name):
+        """过滤 Windows 文件名非法字符，同时保留可读的原页签名称。"""
         return "".join("_" if c in '\\/:*?"<>|' else c for c in name)
 
     outs = []
     if ext in (".xlsx", ".xlsm"):
-        # 只载入一次整簿(保留全部格式/绘图),之后每个目标表用 deepcopy 复用,避免 O(N²) 反复读盘
+        # 只读盘一次；每个输出在内存深复制，保留绘图关系并减少磁盘解析次数。
         full = openpyxl.load_workbook(file)
         names = list(full.sheetnames)
         if len(names) < 2:
             full.close()
             raise ExcelToolError("该工作簿只有 1 个工作表,无需拆分")
         for target in names:
-            wb = _copy.deepcopy(full)      # 深拷贝脱离原簿,删掉其余表再存
+            wb = _copy.deepcopy(full)
             for sn in list(wb.sheetnames):
                 if sn != target:
                     del wb[sn]
+            # 原页可能是隐藏页；作为唯一页签时 Excel 要求至少一个可见页，因此强制可见。
             wb[target].sheet_state = "visible"
             wb.active = 0
             of = os.path.join(out_dir, "%s_%s.xlsx" % (stem, _safe(target)))
@@ -236,22 +258,25 @@ def split_sheets(file, out_dir=None, log=None):
 
 
 def _read_csv(path, log=None):
-    """读 CSV → [row,...]。尝试 utf-8-sig,失败退回 gbk。
+    """读取 CSV 行值，并在常见中文编码间按顺序降级。
 
-    gbk 几乎能"解码"任意字节,异编码会静默乱码,故解码成功后再抽样校验:
-    若出现替换符/大量不可见控制字符,log 提示编码可能不对,请人工核对。"""
+    首选 ``utf-8-sig`` 以兼容 Excel 导出的 BOM，其次尝试 GBK 和普通 UTF-8。
+    GBK 对任意字节都较宽容，可能“成功”得到乱码，因此解码后抽样检查替代字符和
+    异常控制字符；可疑时记录警告但保留结果，让用户仍有机会检查和转换文件。
+    """
     log = log or (lambda *_: None)
     for enc in ("utf-8-sig", "gbk", "utf-8"):
         try:
             with open(path, "r", encoding=enc, newline="") as f:
                 rows = [row for row in csv.reader(f)]
         except (UnicodeDecodeError, UnicodeError):
+            # 只有编码错误才尝试下一编码；文件不存在等 I/O 错误应原样上抛。
             continue
-        # 抽样前若干单元格,统计替换符�与异常控制字符占比
+        # 最多抽取前 50 行、5000 字符，足以发现明显乱码且不随大文件线性增加开销。
         sample = "".join(str(c) for r in rows[:50] for c in r)[:5000]
         if sample:
             bad = sum(1 for ch in sample
-                      if ch == "�" or (ord(ch) < 32 and ch not in "\t\n\r"))
+                      if ord(ch) == 0xFFFD or (ord(ch) < 32 and ch not in "\t\n\r"))
             if bad and bad / float(len(sample)) > 0.02:
                 log("警告:%s 以 %s 解码后疑似乱码,编码可能不是 utf-8/gbk,请核对"
                     % (os.path.basename(path), enc))
@@ -260,11 +285,13 @@ def _read_csv(path, log=None):
 
 
 def convert(files, target, out_dir=None, log=None):
-    """格式转换。target in {'xlsx','csv'}。
+    """批量执行 xlsx 与 CSV 方向的值级格式转换。
 
-    · target='xlsx': 每个 .xls/.csv → 一个 .xlsx(多 sheet 的 xls 全部并入)
-    · target='csv' : 每个 Excel 的每个 sheet → 一个 .csv(utf-8-sig,Excel 友好)
-    返回 {out_files, out_dir}。"""
+    目标为 xlsx 时，每个源文件生成一本工作簿，xls 的全部页签都会保留为独立页；
+    目标为 CSV 时，每个 Excel 页签各生成一个 UTF-8 BOM 文件，多页工作簿在文件名
+    中追加页签名。转换只保证数据值，不承诺公式、样式或绘图对象。与目标格式相同
+    的 CSV 会跳过；若最终没有任何输出则给出明确业务提示。
+    """
     log = log or (lambda *_: None)
     if not files:
         raise ExcelToolError("请先选择文件")
@@ -274,10 +301,11 @@ def convert(files, target, out_dir=None, log=None):
         ext = os.path.splitext(f)[1].lower()
         stem = os.path.splitext(os.path.basename(f))[0]
         if target == "xlsx":
+            # 删除 openpyxl 默认页，后续按源结构创建，避免多出一个空 Sheet。
             wb = openpyxl.Workbook(); wb.remove(wb.active); used = set()
             if ext == ".csv":
                 ws = wb.create_sheet(_safe_sheet_title(stem, used))
-                _write_rows(ws, _read_csv(f, log))   # 传 log,乱码兜底可提示
+                _write_rows(ws, _read_csv(f, log))
             else:
                 for name, rows in _read_sheets(f):
                     _write_rows(wb.create_sheet(_safe_sheet_title(name, used)), rows)
@@ -286,11 +314,12 @@ def convert(files, target, out_dir=None, log=None):
             log("%s → %s" % (os.path.basename(f), os.path.basename(of)))
         else:  # csv
             if ext == ".csv":
-                continue                # 已是 csv,跳过
+                continue  # 同格式转换既不产生新内容，也避免覆盖原文件。
             sheets = _read_sheets(f)
             for name, rows in sheets:
                 suffix = ("_" + name) if len(sheets) > 1 else ""
                 of = os.path.join(out_dir, "%s%s.csv" % (stem, suffix))
+                # utf-8-sig 带 BOM，可让 Windows Excel 默认按 UTF-8 打开中文内容。
                 with open(of, "w", encoding="utf-8-sig", newline="") as fh:
                     w = csv.writer(fh)
                     for r in rows:
@@ -304,10 +333,13 @@ def convert(files, target, out_dir=None, log=None):
 
 def stack_tables(files, has_header=True, out_dir=None,
                  out_name="纵向合并.xlsx", log=None):
-    """多个同结构表纵向拼接成一张大表(取每个文件的第一个 sheet)。
+    """把多个同结构文件的首个页签纵向合并为一张可追溯明细表。
 
-    has_header=True 时保留第一个文件的表头,其余文件跳过首行;并新增
-    「来源文件」列便于追溯。返回 {out_file, out_dir}。"""
+    有表头模式下，以首个有效文件建立基准字段；后续表头经清理空白和大小写后必须
+    与基准字段集合一致，顺序不同会按列名重排，缺列或新增列则拒绝合并，避免数据
+    静默错位。无表头模式只按首行列数对齐。每条输出记录追加“来源文件”，便于追溯
+    原始数据。行列数异常会补空或截断，并通过日志提示。
+    """
     log = log or (lambda *_: None)
     if len(files) < 2:
         raise ExcelToolError("纵向合并至少需要 2 个文件")
@@ -319,8 +351,10 @@ def stack_tables(files, has_header=True, out_dir=None,
     base_keys = None
 
     def header_keys(header, filename):
+        """生成忽略空白和大小写的字段键，并拒绝同表内重复字段。"""
         keys, seen = [], set()
         for index, value in enumerate(header, 1):
+            # 空字段使用位置占位，确保两个模板的空列只有在相同位置才被视为一致。
             text = "".join(_common.clean_str(value).split()).lower()
             key = text or "__blank_%d" % index
             if key in seen:
@@ -340,6 +374,7 @@ def stack_tables(files, has_header=True, out_dir=None,
         reorder = None
         if has_header:
             if not header_written:
+                # 第一份有效表决定输出的可读表头、字段顺序和基准列数。
                 ws.append(list(rows[0]) + ["来源文件"])
                 header_written = True
                 base_cols = len(rows[0])
@@ -347,6 +382,7 @@ def stack_tables(files, has_header=True, out_dir=None,
             else:
                 keys = header_keys(rows[0], f)
                 if set(keys) != set(base_keys):
+                    # 集合不一致意味着无法无损对齐；报出双方差异而不是按位置硬拼。
                     missing = [base_keys[i] for i in range(len(base_keys))
                                if base_keys[i] not in keys]
                     extra = [key for key in keys if key not in base_keys]
@@ -364,8 +400,9 @@ def stack_tables(files, has_header=True, out_dir=None,
         for r in rows[start:]:
             row = list(r)
             if reorder is not None:
+                # 短行缺失的尾部单元格按 None 补齐，避免索引越界并保持列语义。
                 row = [row[index] if index < len(row) else None for index in reorder]
-            # 列数与首表不一致→告警(不静默),并补齐/截断到基准列数保持对齐
+            # 行宽异常不能改变后续“来源文件”列的位置，因此显式补齐或截断到基准宽度。
             if base_cols is not None and len(row) != base_cols:
                 log("警告:%s 某行列数为 %d,与首表 %d 列不一致,已补齐/截断对齐"
                     % (os.path.basename(f), len(row), base_cols))

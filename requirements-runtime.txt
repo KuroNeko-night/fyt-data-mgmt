@@ -1,0 +1,5 @@
+# Web 容器和 Linux 服务端运行时依赖；构建工具保留在 requirements.txt 中。
+openpyxl==3.1.5
+Pillow==11.3.0
+xlrd==2.0.2
+pypdf==6.14.2

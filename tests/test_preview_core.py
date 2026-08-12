@@ -17,10 +17,16 @@ warnings.filterwarnings("ignore", message="Workbook contains no default style")
 
 
 class _Tmp(unittest.TestCase):
+    """为 xlsx、CSV 和错误路径预览提供临时文件根。"""
+
     def setUp(self):
+        """创建临时目录。"""
+
         self._tmp = tempfile.mkdtemp(prefix="fyt_prev_")
 
     def tearDown(self):
+        """删除合成预览文件。"""
+
         import shutil
         shutil.rmtree(self._tmp, ignore_errors=True)
 
@@ -40,6 +46,8 @@ class _Tmp(unittest.TestCase):
 
 
 class TestXlsx(_Tmp):
+    """验证 Excel 表头、行截断和工作表切换预览。"""
+
     def test_reads_header_and_rows(self):
         p = self._xlsx({"S1": [["编码", "名称", "数量"],
                                ["A1", "甲", 10], ["A2", "乙", 20]]})
@@ -66,6 +74,8 @@ class TestXlsx(_Tmp):
 
 
 class TestCsvAndErrors(_Tmp):
+    """验证 UTF-8/GBK CSV、自定义错误和不支持格式。"""
+
     def test_csv_comma(self):
         p = os.path.join(self._tmp, "t.csv")
         with open(p, "w", encoding="utf-8-sig", newline="") as f:

@@ -17,7 +17,11 @@ warnings.filterwarnings("ignore", message="Workbook contains no default style")
 
 
 class TestClassify(unittest.TestCase):
+    """验证工作表形状分类枚举和别名。"""
+
     def test_kinds(self):
+        """分类器应区分常见横表、竖表、矩阵和未知结构。"""
+
         self.assertEqual(S.classify_value(None), "empty")
         self.assertEqual(S.classify_value("   "), "empty")
         self.assertEqual(S.classify_value(123), "number")
@@ -32,14 +36,22 @@ class TestClassify(unittest.TestCase):
 
 
 class _Tmp(unittest.TestCase):
+    """提供可控制多行表头的临时工作表。"""
+
     def setUp(self):
+        """创建临时目录。"""
+
         self._tmp = tempfile.mkdtemp(prefix="fyt_shape_")
 
     def tearDown(self):
+        """删除合成工作簿。"""
+
         import shutil
         shutil.rmtree(self._tmp, ignore_errors=True)
 
     def _ws(self, rows):
+        """写入行并返回加载后的活动工作表与工作簿。"""
+
         p = os.path.join(self._tmp, "t.xlsx")
         wb = openpyxl.Workbook(); ws = wb.active
         for row in rows:
@@ -60,7 +72,11 @@ _PROFILE = [
 
 
 class TestDetect(_Tmp):
+    """验证陌生表头回退、必需角色、可信度阈值和识别日志。"""
+
     def test_fallback_when_headers_alien(self):
+        """表头别名陌生但形状特征充分时，应通过结构评分回退识别。"""
+
         # 表头文字完全不同(乱码/英文),仍应按数据形态兜底命中 code/qty/text
         rows = [[" colA", "colB", "colC" ]]
         for i in range(8):
@@ -75,6 +91,8 @@ class TestDetect(_Tmp):
         self.assertGreater(conf, 0.4)
 
     def test_missing_required_returns_none(self):
+        """缺少业务必需角色时即使部分特征命中也不能接受布局。"""
+
         # 没有任何"像编码"的列 -> 必需 code 缺失 -> 不采用
         rows = [["h1", "h2"]]
         for i in range(6):
@@ -107,7 +125,11 @@ class TestDetect(_Tmp):
 
 
 class TestDeliveryWrapper(_Tmp):
+    """验证送货业务包装层报告形状识别来源。"""
+
     def test_wrapper_reports_source(self):
+        """送货包装层应在结果中标明列映射来自形状回退，便于人工判断可信度。"""
+
         from core import delivery_core as D
         # 正常表头 -> source == 'header'
         rows = [["物料号", "物料名称", "需求数"]]

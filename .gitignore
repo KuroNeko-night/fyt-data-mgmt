@@ -1,0 +1,63 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+build/
+dist/
+
+# React / Tauri
+tauri-app/node_modules/
+tauri-app/dist/
+tauri-app/src-tauri/target/
+tauri-app/src-tauri/binaries/*.exe
+tauri-app/src-tauri/gen/
+tauri-app/*.tsbuildinfo
+tauri-app/vite.config.js
+tauri-app/vite.config.d.ts
+web-app/node_modules/
+web-app/dist/
+web-app/*.tsbuildinfo
+
+# Web 服务本地数据
+web-data/
+docker-data/
+secrets/*
+!secrets/admin-password.example.txt
+
+# Docker 和本地同步配置
+.docker-compose.override.yml
+docker-compose.override.yml
+
+# 本地环境、凭据与运行残留
+.env
+.env.*
+!.env.example
+*.log
+*.pid
+*.part
+*.bak
+*.sqlite
+*.sqlite3
+*.db
+*.pem
+*.key
+*.cer
+*.crt
+*.pfx
+*.p12
+*.secret
+*.token
+*.zip
+
+# Local tools
+.codex-audit/
+.playwright-mcp/
+.reasonix/
+.pytest_cache/
+.coverage
+tmp/
+baseline-*.jpeg
+baseline-*.jpg
+baseline-*.png
+tmp/art-generation/
+assets/generated/_source/

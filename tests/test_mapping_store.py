@@ -10,13 +10,19 @@ from core import common_core, mapping_store
 
 
 class TestMappingStore(unittest.TestCase):
+    """验证字段映射的持久化、替换、自动应用和清理。"""
+
     def setUp(self):
+        """把映射索引隔离到临时 JSON。"""
+
         self.tmp = tempfile.TemporaryDirectory(prefix="fyt_mapping_")
         self.path = os.path.join(self.tmp.name, "mapping.json")
         self.old = os.environ.get("FYT_MAPPING_STORE_PATH")
         os.environ["FYT_MAPPING_STORE_PATH"] = self.path
 
     def tearDown(self):
+        """恢复映射路径并删除临时索引。"""
+
         if self.old is None:
             os.environ.pop("FYT_MAPPING_STORE_PATH", None)
         else:
@@ -24,6 +30,8 @@ class TestMappingStore(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_save_find_replace_and_delete(self):
+        """同模板映射应可保存、查找、替换并按标识删除，索引不产生重复活动项。"""
+
         rows = [["姓名", "日期", "实际工时"], ["张三", "2026-07-01", 8]]
         saved = mapping_store.save_mapping(
             "考勤模板", "rec_source", "Sheet1", 1,
@@ -47,6 +55,8 @@ class TestMappingStore(unittest.TestCase):
         self.assertEqual(opts.resolve_roles(r"C:\other\a.xlsx"), {"name": 1, "work": 4})
 
     def test_auto_apply_by_template_fingerprint(self):
+        """结构指纹一致时自动应用映射，表头变化则不能误套旧列位置。"""
+
         book = os.path.join(self.tmp.name, "本月总表.xlsx")
         wb = openpyxl.Workbook(); ws = wb.active; ws.title = "总表"
         ws.append(["姓名", "所属公司", "出勤工时"])

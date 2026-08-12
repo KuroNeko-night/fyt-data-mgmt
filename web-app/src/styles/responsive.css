@@ -1,0 +1,20 @@
+/* 此文件由 scripts/sync-design-tokens.mjs 生成，请勿手工修改。 */
+@media (max-width: 1199px) {
+  .fyt-content-container { width: min(var(--fyt-layout-content-max), calc(100% - (var(--fyt-layout-gutter-tablet) * 2))); }
+}
+
+@media (max-width: 767px) {
+  .fyt-content-container { width: calc(100% - (var(--fyt-layout-gutter-mobile) * 2)); }
+  .fyt-icon-button[data-size="sm"] { width: var(--fyt-control-target-min); height: var(--fyt-control-target-min); }
+  .fyt-page { padding-block: var(--fyt-space-6) var(--fyt-space-10); }
+  .fyt-page-header { flex-direction: column; gap: var(--fyt-space-4); }
+  .fyt-page-header h1 { font-size: var(--fyt-type-title-mobile); }
+  .fyt-page-header-actions { width: 100%; justify-content: flex-start; }
+  .fyt-page-header-actions > * { min-height: var(--fyt-control-target-min); }
+  .fyt-task-row, .fyt-file-row { align-items: flex-start; }
+  .fyt-task-actions, .fyt-file-actions { align-self: center; }
+  .fyt-dialog, .fyt-drawer { max-height: calc(100vh - 32px); }
+  .fyt-overlay { padding: var(--fyt-space-4); }
+  .fyt-dialog-foot, .fyt-drawer-foot { flex-wrap: wrap; }
+  .fyt-dialog-foot .fyt-button, .fyt-drawer-foot .fyt-button { flex: 1 1 140px; }
+}

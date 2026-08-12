@@ -1,18 +1,12 @@
 # -*- coding: utf-8 -*-
-"""
-销售表透视核心逻辑（从 arrival_table_app.pyw 抽出，与 GUI 解耦）
-================================================================
-复刻 PurchaseProc.bas：定位表头、清洗数据、统一单位/规格、按
-材料编号/名称/规格/单位 分组汇总最终采购数量，并生成 Excel 原生
-数据透视表（OOXML）。两阶段：analyze_workbooks(收集决策点) →
-apply_plan(应用选择、写出结果 + 可信度报告)。
+"""销售采购表的识别、清洗、人工复核、聚合与原生透视表生成。
 
-改动点（相对原程序）：
-· 输出目录改由统一 paths 系统解析（见 run）；
-· 与到料明细共用同一套输出/命名规范；
-· 纯逻辑，无 tkinter 依赖。
+处理采用严格的两阶段协议：``analyze_workbooks`` 只读源文件并收集页签选择、疑似被删
+行、单位冲突和规格归并等决策点；``apply_plan`` 根据最终选择生成清洗数据、静态汇总和
+Excel 原生 OOXML 透视对象。结构化可信度分析随结果返回双端前端，不再依赖单独报告。
 
-兼容 Windows 10/11 + Python 3.13。
+本模块是透视业务算法的唯一事实源，不依赖界面。它还负责公式缓存提示、主数据补空、
+增量缓存和 Web 任务产物隔离，但不会覆盖源文件。
 """
 import os
 import re
@@ -33,7 +27,27 @@ from . import paths as _paths
 from . import settings as _settings
 from . import common_core                    # Progress 进度上报辅助
 from . import incremental_cache
+from . import material_catalog
+from . import pivot_reporting
 from .common_core import warn_if_uncached   # 公式未刷新检测(读关键表前告警)
+from .pivot_ooxml import (
+    DATA_FIELD,
+    FIELD_LABELS,
+    ROW_FIELDS,
+    _code_order_key,
+    _is_blank,
+    _num,
+    build_fields_meta,
+    cache_definition_xml,
+    cache_records_xml,
+    inject_pivots,
+    meta_by_idx,
+    pivot_table_xml,
+)
+
+# 可信度评分与兼容文本报告位于独立渲染层；保留原名称兼容旧调用。
+assess_confidence = pivot_reporting.assess_confidence
+write_confidence_report = pivot_reporting.write_confidence_report
 
 L_VER   = "版本序号"
 L_CODE  = "材料编号"
@@ -55,13 +69,18 @@ VER_ALIASES   = ("版本序号", "版本")
 QTY_EXACT     = ("数量", "单套数量", "单车数量")
 
 def _match_anchor(t, aliases):
-    """锚点匹配: 相等, 或包含别名且长度接近(避免误抓长文本)"""
+    """判断短表头是否可作为字段锚点。
+
+    完全相等最可靠；包含别名时限制额外长度，兼容“材料编号编码”等轻微扩展，同时避免
+    在长说明文本中偶然出现“编码”便误判整行是表头。
+    """
     for a in aliases:
         if t == a or (a in t and len(t) <= len(a) + 8):
             return True
     return False
 
 def _contains_any(t, aliases):
+    """判断文本是否命中任一字段别名。"""
     return any(a in t for a in aliases)
 PIVOT_BASE = "数据透视表"
 SUM_PREFIX = "求和项:"
@@ -76,17 +95,14 @@ MAX_BLOCKS = 12
 
 # ---- helpers ----
 def _has_chinese(s):
+    """判断文本中是否包含常用中文字符。"""
     for ch in str(s):
         if '一' <= ch <= '鿿':
             return True
     return False
 
-def _is_blank(v):
-    if v is None:
-        return True
-    return str(v).strip() == ""
-
 def _is_zero(v):
+    """判断非空单元格能否解析为数值零。"""
     if _is_blank(v):
         return False
     try:
@@ -108,6 +124,7 @@ def _norm(v):
 
 
 def _cell(ws, r, c):
+    """按行列坐标读取工作表单元格值。"""
     return ws.cell(row=r, column=c).value
 
 
@@ -116,6 +133,7 @@ class _PreviewCell:
     __slots__ = ("value",)
 
     def __init__(self, value):
+        """保存单个预览值，提供与 openpyxl Cell 一致的最小读取属性。"""
         self.value = value
 
 
@@ -124,12 +142,14 @@ class _SheetPreview:
     __slots__ = ("title", "_rows", "max_row", "max_column")
 
     def __init__(self, title, rows):
+        """根据顺序读取的前若干行构造轻量工作表接口。"""
         self.title = title
         self._rows = rows
         self.max_row = len(rows)
         self.max_column = max((len(row) for row in rows), default=1)
 
     def cell(self, row, column):
+        """按 openpyxl 的一基坐标读取预览值，越界时返回空轻量单元格。"""
         if row < 1 or column < 1 or row > len(self._rows):
             return _PreviewCell(None)
         values = self._rows[row - 1]
@@ -154,45 +174,94 @@ def _last_col(ws, r):
             last = c
     return last
 
-def find_all_blocks(ws):
+
+def _header_anchor_columns(ws, row, last_col):
+    """返回表头行中所有材料编码锚点列，供并排区块逐一解析。"""
+    anchors = []
+    for column in range(1, last_col + 1):
+        text = _norm(_cell(ws, row, column))
+        if text and _match_anchor(text, CODE_ALIASES):
+            anchors.append(column)
+    return anchors
+
+
+def _assign_block_column(columns, text, column):
+    """按业务优先级把一个表头单元格分配给区块字段。
+
+    “最终采购数量”同时包含“数量”，因此必须先判断最终数量，再判断普通数量；名称、
+    规格和单位同样只接受首次命中，避免备注区或后续重复标题覆盖靠近编码锚点的列。
     """
-    找出表内所有数据块(支持并排). 每块锚定于'材料编号'表头单元格,
-    向右解析 7 个字段列. 返回 [{'hdr':行, 'cols':[ver,code,name,spec,qty,unit,final]}]
-    cols 中 0 表示该字段缺失.
+    if not text:
+        return
+    if columns["name"] == 0 and _contains_any(text, NAME_ALIASES):
+        columns["name"] = column
+    elif columns["spec"] == 0 and _contains_any(text, SPEC_ALIASES):
+        columns["spec"] = column
+    elif columns["final"] == 0 and _contains_any(text, FINAL_ALIASES):
+        columns["final"] = column
+    elif columns["qty"] == 0 and (text in QTY_EXACT or "数量" in text):
+        # 放宽的“含数量”匹配兼容“二级包装规格\n数量”等合并导出表头。
+        columns["qty"] = column
+    elif columns["unit"] == 0 and _contains_any(text, UNIT_ALIASES):
+        columns["unit"] = column
+
+
+def _block_from_anchor(ws, row, anchor, last_col):
+    """从一个材料编码锚点解析字段列；缺少最终采购数量时返回 ``None``。"""
+    columns = {
+        "version": 0,
+        "code": anchor,
+        "name": 0,
+        "spec": 0,
+        "qty": 0,
+        "unit": 0,
+        "final": 0,
+    }
+    if anchor > 1:
+        previous = _norm(_cell(ws, row, anchor - 1))
+        if _contains_any(previous, VER_ALIASES):
+            columns["version"] = anchor - 1
+
+    # 与旧逻辑一致扫描到本行末尾；字段仅记录首次命中，因此并排模板仍由各自锚点解析。
+    for column in range(anchor, last_col + 1):
+        _assign_block_column(columns, _norm(_cell(ws, row, column)), column)
+    if columns["final"] == 0:
+        return None
+    return {
+        "hdr": row,
+        "cols": [
+            columns["version"], columns["code"], columns["name"],
+            columns["spec"], columns["qty"], columns["unit"], columns["final"],
+        ],
+    }
+
+
+def find_all_blocks(ws):
+    """识别工作表中所有可能并排的数据区块。
+
+    每个区块以材料编码表头为锚点，从该列向右解析版本、编码、名称、规格、数量、单位和
+    最终采购数量七个字段。返回项包含表头行和列号数组，列号零表示可选字段缺失。只有
+    编码与最终采购数量同时存在才构成有效区块，并限制最多十二块防止异常表头组合爆炸。
     """
     blocks = []
     scan = min(HEADER_SCAN_ROWS, ws.max_row or 1)
-    for r in range(1, scan + 1):
-        lc = _last_col(ws, r)
-        for c in range(1, lc + 1):
-            t = _norm(_cell(ws, r, c))
-            # 锚点: 匹配任一"材料编号"别名
-            if t != "" and _match_anchor(t, CODE_ALIASES):
-                cVer=0; cCode=c; cName=0; cSpec=0; cUnit=0; cFinal=0; cQty=0
-                if c - 1 >= 1 and _contains_any(_norm(_cell(ws, r, c - 1)), VER_ALIASES):
-                    cVer = c - 1
-                for cc in range(c, lc + 1):
-                    tt = _norm(_cell(ws, r, cc))
-                    if tt == "":
-                        continue
-                    if cName == 0 and _contains_any(tt, NAME_ALIASES): cName = cc; continue
-                    if cSpec == 0 and _contains_any(tt, SPEC_ALIASES): cSpec = cc; continue
-                    if cFinal == 0 and _contains_any(tt, FINAL_ALIASES): cFinal = cc; continue
-                    # 数量: 先精确, 再放宽到"含'数量'"以匹配 KD 合并表头(如
-                    # "二级包装规格\n数量" 归一化后为"二级包装规格数量")。因 名称/规格/
-                    # 最终采购数量 已在前面各分支先行消费, 此处剩余的 *数量* 即真·数量列。
-                    if cQty == 0 and (tt in QTY_EXACT or "数量" in tt): cQty = cc; continue
-                    if cUnit == 0 and _contains_any(tt, UNIT_ALIASES): cUnit = cc; continue
-                if cCode > 0 and cFinal > 0:
-                    blocks.append({'hdr': r,
-                        'cols': [cVer, cCode, cName, cSpec, cQty, cUnit, cFinal]})
-                    if len(blocks) >= MAX_BLOCKS:
-                        return blocks
+    for row in range(1, scan + 1):
+        last_col = _last_col(ws, row)
+        for anchor in _header_anchor_columns(ws, row, last_col):
+            block = _block_from_anchor(ws, row, anchor, last_col)
+            if block is None:
+                continue
+            blocks.append(block)
+            if len(blocks) >= MAX_BLOCKS:
+                return blocks
     return blocks
 
 def _looks_like_pivot_output(ws):
-    """判断该表是否本身就是"透视结果表"(避免把已生成的透视表当源数据重复统计)。
-       特征: 表头出现"求和项:"前缀, 或存在"(全部)"页字段筛选行。"""
+    """判断工作表是否已经是透视结果，避免把输出再次当作源数据。
+
+    “求和项:”是 Excel 透视度量字段前缀，“(全部)”常见于页字段筛选。命中任一特征就
+    排除该页，否则重复处理会把已经汇总的数量再次求和。
+    """
     scan = min(HEADER_SCAN_ROWS, ws.max_row or 1)
     for r in range(1, scan + 1):
         lc = _last_col(ws, r)
@@ -208,15 +277,12 @@ def _looks_like_pivot_output(ws):
 EXCLUDE_SHEET_TOKENS = ("客供", "客户供", "客户提供")
 
 def _is_excluded_sheet(ws):
-    name = ""
-    try:
-        name = str(ws.title)
-    except Exception:
-        name = ""
-    name = name.replace(" ", "")
+    """排除说明、汇总和历史输出等非原始数据工作表。"""
+    name = str(getattr(ws, "title", "") or "").replace(" ", "")
     return any(tok in name for tok in EXCLUDE_SHEET_TOKENS)
 
 def is_data_sheet(ws):
+    """判断工作表是否包含可识别的销售数据区块。"""
     if _is_excluded_sheet(ws):
         return False
     if _looks_like_pivot_output(ws):
@@ -240,12 +306,11 @@ NAME_EXCLUDE   = ("客供", "客户供", "客户提供", "货物清单", "变更
                   "CASE组托数据", "组托数据")
 
 def _sheet_name(ws):
-    try:
-        return str(ws.title).replace(" ", "")
-    except Exception:
-        return ""
+    """返回去除空格后的工作表名称。"""
+    return str(getattr(ws, "title", "") or "").replace(" ", "")
 
 def _has_token(name, tokens):
+    """判断工作表名称是否包含任一规范化关键字。"""
     return any(t.replace(" ", "") in name for t in tokens)
 
 
@@ -253,10 +318,35 @@ def _has_token(name, tokens):
 F_VER, F_CODE, F_NAME, F_SPEC, F_QTY, F_UNIT, F_FINAL = 0, 1, 2, 3, 4, 5, 6
 
 
+def _complete_rows_from_catalog(rows, resolver, fill_counts=None):
+    """在聚类前用同一主数据快照补全名称、规格和单位。
+
+    补全发生在规格和单位聚类之前，否则同一材料的空字段会形成独立组。解析器只返回源
+    行空缺项，已有报表值保持最高优先级；计数用于任务日志说明主数据库参与程度。
+    """
+    for rec in rows:
+        additions = resolver.complete_material(
+            rec[F_CODE],
+            {"name": rec[F_NAME], "spec": rec[F_SPEC], "unit": rec[F_UNIT]},
+            fields=("name", "spec", "unit"),
+            counts=fill_counts,
+        )
+        if "name" in additions:
+            rec[F_NAME] = additions["name"]
+        if "spec" in additions:
+            rec[F_SPEC] = additions["spec"]
+        if "unit" in additions:
+            rec[F_UNIT] = additions["unit"]
+    return rows
+
+
 def classify_sheet(ws):
-    """判定一张表的类型与可信度依据。返回 dict:
-       {name, use(bool), kind, reason, confidence(0-100), cols, missing[], blocks}
-       kind ∈ 包装方案汇总 / 组托辅材 / 组托辅材(PFEP) / 通用数据表 / 排除:xxx"""
+    """判定工作表类型、默认是否纳入以及识别置信度。
+
+    返回结构包含名称、类型、理由、字段列、缺失字段、区块数和默认选择。判定顺序是明确
+    排除页、已有透视输出、无数据区，再进入表名与字段结构分类；这使人工复核既能看到
+    系统为何排除，也能在结构确实存在时重新勾选纳入。
+    """
     name = _sheet_name(ws)
     blocks = find_all_blocks(ws)
     info = {"name": name, "use": False, "kind": "", "reason": "",
@@ -276,7 +366,7 @@ def classify_sheet(ws):
                     reason="未找到'材料编号+最终采购数量'数据区")
         return info
 
-    # 有数据区: 取首个块的字段映射, 判定具体类型
+    # 同一页的并排区块共享模板结构，分类依据取首个区块，实际读取仍处理全部区块。
     cols = blocks[0]["cols"]     # [ver,code,name,spec,qty,unit,final]
     info["cols"] = cols
     missing = [FIELD_CN[i] for i in (KEY_FIELDS + INFO_FIELDS) if cols[i] == 0]
@@ -317,7 +407,11 @@ def _classify_by_name_and_cols(ws, name, cols, blocks, info):
     return info
 
 def normalize_rows(ws):
-    """把所有块的数据行读入统一的 7 字段列表(合并并排块)"""
+    """把普通工作表全部并排区块读成统一七字段列表。
+
+    缺失可选列填 ``None``，整条七字段均为空的行跳过。区块按表头扫描顺序、行按工作表
+    顺序追加，使后续“首次出现”平局规则具有确定性。
+    """
     blocks = find_all_blocks(ws)
     if not blocks:
         return []
@@ -338,7 +432,11 @@ def normalize_rows(ws):
 
 
 def normalize_stream_rows(ws, blocks):
-    """按已识别数据块流式提取 7 个业务字段，保持 ``normalize_rows`` 的行序。"""
+    """从只读工作表按已识别区块流式提取七个业务字段。
+
+    ``values_only`` 避免创建大量 Cell 对象，列号从一基转换为元组零基索引。输出行序与
+    :func:`normalize_rows` 一致，因此人工复核编号和聚类平局结果不会因读取模式改变。
+    """
     rows = []
     for block in blocks:
         cols = block["cols"]
@@ -357,7 +455,12 @@ def normalize_stream_rows(ws, blocks):
     return rows
 
 def clean_rows(rows):
-    """步骤1: 删版本序号 空/0/含中文(仅当存在版本列时); 步骤2: 删最终采购数=0/空(名称含原厂保留)"""
+    """按正式口径清洗版本与采购数量，并返回两步删除计数。
+
+    只有版本列存在有效值时才启用版本规则，避免无版本模板被整表删除。最终采购数量为空
+    或零的行通常排除，但材料名称含“原厂”时保留，这是现行业务例外。该函数用于无需
+    人工复核的兼容路径；两阶段流程使用 :func:`clean_rows_ex` 额外保留疑似真实行。
+    """
     d1 = d2 = 0
     # 若整列版本序号都为空, 说明该表无版本列(如辅材表), 跳过步骤1避免全删
     has_ver = any(not _is_blank(rec[F_VER]) for rec in rows)
@@ -406,7 +509,11 @@ def clean_rows_ex(rows):
                  版本序号为空 / 版本序号为0 / 版本序号含文字 / (备用)采购量规则
                默认不纳入(与现有行为一致)。为便于人工判断, 另附 has_code(是否有有效编码)。
        d1/d2 : 步骤1/步骤2 删除计数(保持与旧统计口径一致)。
-       返回 (kept, held, d1, d2); held 元素为 {"rec","reason","has_code"}。"""
+       返回 (kept, held, d1, d2); held 元素为 {"rec","reason","has_code"}。
+
+       ``held`` 默认仍不纳入，保持自动处理口径不变；它只把有采购量或疑似公式未刷新的
+       被删行暴露给人工选择，禁止通过隐藏入口绕过复核直接加入。
+       """
     d1 = d2 = 0
     held = []
     has_ver = any(not _is_blank(rec[F_VER]) for rec in rows)
@@ -501,19 +608,24 @@ def _spec_base(sp):
 
 
 def _spec_keyof(rec):
+    """提取记录的材料编码、名称和规格原始键。"""
     code = str(rec[F_CODE]).strip() if rec[F_CODE] is not None else ""
     nm = str(rec[F_NAME]).strip() if rec[F_NAME] is not None else ""
     sp = str(rec[F_SPEC]).strip() if rec[F_SPEC] is not None else ""
     return code, nm, sp
 
 def _spec_gkey(code, nm, sp):
+    """生成忽略格式差异的材料规格分组键。"""
     # 归一化分组键: 编码/名称/规格基准全部走 _norm_key
     return (_norm_key(code), _norm_key(nm), _norm_key(_spec_base(sp)))
 
 def compute_spec_canon(rows):
-    """计算规格归并: 返回 (canon, variants)。
-       canon[gk]    = 系统默认采用的规格写法
-       variants[gk] = OrderedDict(写法->出现次数), 供复核展示与人工改选。"""
+    """计算规格归并的默认写法、变体频次和展示样例。
+
+    分组键使用编码、名称和去包装注释后的规格。默认值按出现次数降序、文本长度升序、
+    首次出现顺序选择，既倾向主流写法，也保证同样输入产生稳定结果；原始变体完整保留
+    给人工复核。
+    """
     from collections import defaultdict, OrderedDict
     groups = defaultdict(lambda: OrderedDict())
     sample = {}
@@ -526,7 +638,7 @@ def compute_spec_canon(rows):
         sample.setdefault(gk, (code, nm))
     canon = {}
     for k, spm in groups.items():
-        pos = {sp: i for i, sp in enumerate(spm.keys())}
+        pos = {sp: i for i, sp in enumerate(spm.keys())}  # OrderedDict 顺序提供最终稳定平局规则。
         canon[k] = min(spm.keys(), key=lambda sp: (-spm[sp], len(sp), pos[sp]))
     return canon, groups, sample
 
@@ -577,6 +689,7 @@ def _name_unit_prior(rows):
 
 
 def _unit_gkey(rec):
+    """生成单位检查使用的材料键；全空记录不参与统计。"""
     code = _norm_key(rec[F_CODE]); nm = _norm_key(rec[F_NAME]); sp = _norm_key(rec[F_SPEC])
     if code == "" and nm == "" and sp == "":
         return None
@@ -595,7 +708,12 @@ def _unit_key_sample(rec, spec_canon=None):
 
 
 def _compute_unit_best(rows_factory, spec_canon=None):
-    """从可重放行迭代器计算单位选择，支持只读套用规格规范值。"""
+    """从可重放行迭代器计算每个材料规格组的默认单位。
+
+    需要两遍数据：第一遍建立名称级单位先验，第二遍统计规格组分布，因此参数是每次返回
+    新迭代器的工厂。优先非空非复合单位；严格多数直接胜出，平票再使用名称先验，最后
+    依据单位简单度和首次出现顺序选择。规格规范值只参与键计算，不修改复核计划原始行。
+    """
     from collections import defaultdict, OrderedDict
     prior = _name_unit_prior(rows_factory())
     counts = defaultdict(lambda: OrderedDict())
@@ -626,6 +744,7 @@ def _compute_unit_best(rows_factory, spec_canon=None):
             if name_prior in tied:
                 best[key] = name_prior
             elif name_prior:
+                # 即使先验未出现在当前平票集合，也用跨表名称先验统一同名材料口径。
                 best[key] = name_prior
             else:
                 best[key] = min(tied,
@@ -657,15 +776,6 @@ def unify_units(rows, overrides=None):
     return rows
 
 
-def _code_order_key(code):
-    """材料编号排序键: 无字母(A-Za-z)前缀的编码(如纯数字 8891167589)整体排最前,
-       其余按字符串升序。返回 (组序, 编码串): 组序0=无字母前缀, 1=有字母前缀。
-       用于 aggregate 及透视 <items>/pos_map, 三处必须一致以保证行序对齐。"""
-    s = "" if code is None else str(code)
-    has_letter_prefix = len(s) > 0 and (("A" <= s[0] <= "Z") or ("a" <= s[0] <= "z"))
-    return (1 if has_letter_prefix else 0, s)
-
-
 def drop_blank_code_rows(rows):
     """剔除"材料编号为空"的行: 这类行无法归属到任何物料, 在透视里会并成一个
        无意义的 (空白) 组; 且会给行字段引入空项。返回 (保留行, 被剔除数)。
@@ -675,7 +785,11 @@ def drop_blank_code_rows(rows):
 
 
 def aggregate(rows):
-    """按 编码/名称/规格/单位 分组, 对最终采购数量求和. 返回有序分组列表"""
+    """按编码、名称、规格和单位分组并汇总最终采购数量。
+
+    非数字度量按零参与，与透视缓存的空值策略保持一致。排序使用统一编码规则，确保静态
+    A 至 E 列、OOXML ``items`` 和 ``rowItems`` 三处行序完全对齐。
+    """
     from collections import OrderedDict
     groups = OrderedDict()
     for rec in rows:
@@ -711,6 +825,7 @@ _FONT_B = Font(name=_FONT_NAME, size=11, bold=True)
 _BLUE = PatternFill(patternType='solid', fgColor=Color(theme=4, tint=0.3999755851924192))
 
 def _st(cell, bold=False, fill=False):
+    """为透视输出单元格应用统一边框、对齐和可选强调样式。"""
     cell.border = _BORDER
     cell.alignment = _CENTER
     cell.font = _FONT_B if bold else _FONT
@@ -718,8 +833,11 @@ def _st(cell, bold=False, fill=False):
         cell.fill = _BLUE
 
 def write_clean_sheet(ws, rows):
-    """把清洗+统一单位后的数据写回源表(原样式清空): 行1空, 行2表头, 行3起数据, 列A-G.
-       无任何主题样式(默认字体/无填充/无边框), 与样例一致."""
+    """用规范七字段重写清洗数据工作表。
+
+    原合并区域和旧内容全部移除，第一行保留为空、第二行写表头、第三行开始写数据。这里
+    不复制源样式，确保动态透视的数据源是连续、无合并且结构确定的 A 至 G 列区域。
+    """
     # 解除合并并清空原内容
     for mc in list(ws.merged_cells.ranges):
         ws.unmerge_cells(str(mc))
@@ -735,8 +853,12 @@ def write_clean_sheet(ws, rows):
         r += 1
 
 def write_pivot_sheet(wb, base_name, agg):
-    """在 wb 里新建透视结果表(无样式, 与样例一致). 列: 编码/名称/规格/单位/
-       求和项:最终采购数量 + 供应商/汇总/差异(公式)/实收/日期; 末尾总计行."""
+    """创建静态可读的透视结果页，并返回实际唯一页名。
+
+    前五列由原生透视对象接管，后五列是业务人员后续维护区。即使 OOXML 注入失败，静态
+    聚合仍可直接使用；汇总列引用同行透视度量而不是写死数值，避免 Excel 刷新重排行时
+    与实收、差异等静态列错位。
+    """
     name = base_name
     i = 1
     while name in wb.sheetnames:
@@ -780,418 +902,18 @@ def write_pivot_sheet(wb, base_name, agg):
     return name
 
 
-# ==================== 动态透视表(原生OOXML, 兼容Excel/WPS) ====================
-def _esc(s):
-    return (str(s).replace("&", "&amp;").replace("<", "&lt;")
-            .replace(">", "&gt;").replace('"', "&quot;"))
-
-def _num(v):
-    # bool 是 int 子类, float(True)=1.0 会把 TRUE/FALSE 当 1/0 求和, 先排除
-    if isinstance(v, bool):
-        return None
-    # 文本先清洗(全角数字/句点→半角、去千分位逗号与零宽), 再转数
-    if isinstance(v, str):
-        v = common_core._num_str(v)
-    try:
-        f = float(v)
-        return int(f) if f == int(f) else f
-    except (ValueError, TypeError):
-        return None
-
-# 归一化字段: 0版本 1编码 2名称 3规格 4数量 5单位 6最终采购数量
-FIELD_LABELS = ["版本序号", "材料编号", "材料名称", "规格", "数量", "单位", "最终采购数量"]
-# 行字段(进透视): 编码(1) 名称(2) 规格(3) 单位(5); 度量: 最终采购数量(6)
-ROW_FIELDS = [1, 2, 3, 5]
-DATA_FIELD = 6
-
-def build_fields_meta(rows):
-    """对7个字段, 分组字段建 sharedItems 及 值->索引 映射; 度量算min/max"""
-    meta = []
-    for fi in range(7):
-        col = [r[fi] for r in rows]
-        is_group = fi in ROW_FIELDS
-        info = {"idx": fi, "group": is_group, "shared": [], "map": {},
-                "has_blank": False, "has_num": False, "has_str": False,
-                "vmin": None, "vmax": None}
-        if is_group:
-            seen = {}
-            for v in col:
-                key = "" if _is_blank(v) else str(v).strip()
-                if key not in seen:
-                    seen[key] = len(info["shared"])
-                    info["shared"].append(key)
-            info["map"] = seen
-            info["has_blank"] = "" in seen
-        else:
-            for v in col:
-                if _is_blank(v):
-                    info["has_blank"] = True
-                elif _num(v) is not None:
-                    info["has_num"] = True
-                    n = _num(v)
-                    info["vmin"] = n if info["vmin"] is None else min(info["vmin"], n)
-                    info["vmax"] = n if info["vmax"] is None else max(info["vmax"], n)
-                elif fi == DATA_FIELD:
-                    # 度量列(最终采购数量)混入的非数字文本(如"见附表")按空处理:
-                    # aggregate 也把它当 0 求和; 若因此把整个度量字段标成字符串,
-                    # Excel 透视刷新后该字段求和会归零, 与静态总计背离。故不置 has_str。
-                    info["has_blank"] = True
-                else:
-                    info["has_str"] = True
-        meta.append(info)
-    return meta
-
-
-def cache_definition_xml(meta, record_count, rid_records):
-    """pivotCacheDefinition: 声明字段与 sharedItems。
-       注意: 不设 refreshOnLoad。它会让 Excel 打开即重建并按自身排序重排行,
-       覆盖我们写入的 rowItems 顺序(无字母前缀置顶等), 且重排后 A-E 与静态列
-       F-J(汇总/差异…)错位、末行 G/H 落空。46A 标准透视表同样不带 refreshOnLoad——
-       透视渲染值已由 openpyxl 写入表格单元格, Excel 打开时直接显示该缓存状态即可。"""
-    parts = []
-    parts.append('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>')
-    parts.append('<pivotCacheDefinition xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
-                 'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" '
-                 'r:id="%s" refreshedBy="prog" refreshedDate="0" '
-                 'createdVersion="3" refreshedVersion="3" minRefreshableVersion="3" '
-                 'recordCount="%d">' % (rid_records, record_count))
-    parts.append('<cacheSource type="worksheet"><worksheetSource ref="__SRC_REF__" sheet="__SRC_SHEET__"/></cacheSource>')
-    parts.append('<cacheFields count="7">')
-    for m in meta:
-        name = _esc(FIELD_LABELS[m["idx"]])
-        if m["group"]:
-            items = []
-            for s in m["shared"]:
-                items.append("<m/>" if s == "" else '<s v="%s"/>' % _esc(s))
-            # 含空项(<m/>)时必须声明 containsBlank="1", 否则 Excel 判定
-            # sharedItems 与实际内容不符 -> 打开报"内容有问题"并自动修复。
-            blank_attr = ' containsBlank="1"' if m["has_blank"] else ''
-            parts.append('<cacheField name="%s" numFmtId="0">' % name)
-            parts.append('<sharedItems%s count="%d">%s</sharedItems>'
-                         % (blank_attr, len(items), "".join(items)))
-            parts.append('</cacheField>')
-        else:
-            attrs = []
-            if m["has_str"]:
-                attrs.append('containsString="1"')
-            else:
-                attrs.append('containsString="0"')
-            if m["has_blank"]:
-                attrs.append('containsBlank="1"')
-            if m["has_num"] and not m["has_str"]:
-                attrs.append('containsNumber="1"')
-                if m["vmin"] is not None and float(m["vmin"]) == int(m["vmin"]) and \
-                   m["vmax"] is not None and float(m["vmax"]) == int(m["vmax"]):
-                    attrs.append('containsInteger="1"')
-                attrs.append('minValue="%s"' % m["vmin"])
-                attrs.append('maxValue="%s"' % m["vmax"])
-            parts.append('<cacheField name="%s" numFmtId="0">' % name)
-            parts.append('<sharedItems %s/>' % " ".join(attrs))
-            parts.append('</cacheField>')
-    parts.append('</cacheFields>')
-    parts.append('</pivotCacheDefinition>')
-    return "".join(parts)
-
-
-def cache_records_xml(rows, meta):
-    """pivotCacheRecords: 每行7字段. 分组字段用<x v=索引/>, 其他数值<n>/文本<s>/空<m>"""
-    parts = ['<?xml version="1.0" encoding="UTF-8" standalone="yes"?>']
-    parts.append('<pivotCacheRecords xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
-                 'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" '
-                 'count="%d">' % len(rows))
-    for r in rows:
-        cells = []
-        for m in meta:
-            v = r[m["idx"]]
-            if m["group"]:
-                key = "" if _is_blank(v) else str(v).strip()
-                cells.append('<x v="%d"/>' % m["map"][key])
-            else:
-                n = _num(v)
-                if _is_blank(v):
-                    cells.append("<m/>")
-                elif n is not None and not m["has_str"]:
-                    cells.append('<n v="%s"/>' % n)
-                elif m["idx"] == DATA_FIELD:
-                    # 度量列的非数字文本按空(<m/>)缓存,与 has_str 不提升、
-                    # 与 aggregate 的"文本计 0"保持一致,避免刷新后求和归零。
-                    cells.append("<m/>")
-                else:
-                    cells.append('<s v="%s"/>' % _esc(v))
-        parts.append("<r>%s</r>" % "".join(cells))
-    parts.append('</pivotCacheRecords>')
-    return "".join(parts)
-
-
-def pivot_table_xml(meta, agg, cache_id, name="数据透视表"):
-    """
-    pivotTable 定义. 行字段 编码/名称/规格/单位, 度量=求和最终采购数量.
-    agg: [[code,name,spec,unit,sum], ...] 已排序. 单元格数值另由 openpyxl 渲染.
-    布局: 表格式(outline=0), 无分类汇总, 重复所有标签(fillDownLabels).
-    ref 覆盖 A1 到 E(行数+2)(表头1行 + 数据N行 + 总计1行).
-    """
-    n = len(agg)
-    last_row = 1 + n + 1                       # 表头+数据+总计
-    ref = "A1:E%d" % last_row
-
-    # 各行字段的 值->共享索引 映射
-    mp = {fi: meta_by_idx(meta, fi)["map"] for fi in ROW_FIELDS}
-
-    # 关键: rowItems 里 <x v="N"/> 的 N 是"该字段 <items> 排序列表中的位置",
-    # 不是缓存共享索引(cache shared index)。<items> 按 shared 值升序排列(见下方
-    # pivotFields), 若这里误写缓存索引, Excel 会判定引用越界/错乱 ->
-    # 打开报"内容有问题"并自动修复, 修复后 A-E 行序被打乱, 与静态列 F-J 错位。
-    # 故先按与 <items> 完全一致的排序, 建 缓存索引->位置 映射。
-    orders = {}       # fi -> [cache_idx,...] 按 <items> 顺序
-    pos_map = {}      # fi -> {cache_idx: 位置}
-    for fi in ROW_FIELDS:
-        m = meta_by_idx(meta, fi)
-        # 材料编号(F_CODE)用 _code_order_key: 无字母前缀编码排最前, 与 aggregate 一致;
-        # 其余字段按 shared 值字符串升序。
-        if fi == F_CODE:
-            keyf = lambda i: _code_order_key(m["shared"][i])
-        else:
-            keyf = lambda i: m["shared"][i]
-        od = sorted(range(len(m["shared"])), key=keyf)
-        orders[fi] = od
-        pos_map[fi] = {ci: p for p, ci in enumerate(od)}
-
-    # rowItems: 每个数据行一个 <i>, 末尾一个 grand total <i t="grand">
-    ritems = []
-    prev = [None, None, None, None]
-    for grp in agg:
-        vals = [grp[0], grp[1], grp[2], grp[3]]   # code,name,spec,unit
-        rcommon = 0
-        while rcommon < 4 and prev[rcommon] == vals[rcommon]:
-            rcommon += 1
-        xs = "".join(
-            '<x v="%d"/>' % pos_map[ROW_FIELDS[k]][
-                mp[ROW_FIELDS[k]][("" if _is_blank(vals[k]) else str(vals[k]).strip())]]
-            for k in range(rcommon, 4))
-        if rcommon == 0:
-            ritems.append("<i>%s</i>" % xs)
-        else:
-            ritems.append('<i r="%d">%s</i>' % (rcommon, xs))
-        prev = vals
-    ritems.append('<i t="grand"><x/></i>')
-
-    # pivotFields: 7个字段, 行字段标 axis="axisRow" 并列出其 items
-    pf = []
-    for m in meta:
-        fi = m["idx"]
-        if fi in ROW_FIELDS:
-            cnt = len(m["shared"])
-            # 复用上面 rowItems 用的同一排序(orders[fi]), 保证 <items> 顺序
-            # 与 pos_map 位置一一对应, 二者绝不能各自 sort 以免错位。
-            items = "".join('<item x="%d"/>' % i for i in orders[fi])
-            pf.append('<pivotField axis="axisRow" showAll="0" outline="0" compact="0" '
-                      'subtotalTop="0" defaultSubtotal="0">'
-                      '<items count="%d">%s</items></pivotField>' % (cnt, items))
-        elif fi == DATA_FIELD:
-            pf.append('<pivotField dataField="1" showAll="0"/>')
-        else:
-            pf.append('<pivotField showAll="0"/>')
-
-    rowfields = "".join('<field x="%d"/>' % fi for fi in ROW_FIELDS)
-
-    parts = ['<?xml version="1.0" encoding="UTF-8" standalone="yes"?>']
-    parts.append('<pivotTableDefinition xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
-                 'name="%s" cacheId="%d" applyNumberFormats="0" applyBorderFormats="0" '
-                 'applyFontFormats="0" applyPatternFormats="0" applyAlignmentFormats="0" '
-                 'applyWidthHeightFormats="1" dataCaption="值" '
-                 'updatedVersion="3" minRefreshableVersion="3" createdVersion="3" '
-                 'indent="0" outline="0" outlineData="0" compactData="0" multipleFieldFilters="0" '
-                 'rowGrandTotals="1" colGrandTotals="0">' % (_esc(name), cache_id))
-    parts.append('<location ref="%s" firstHeaderRow="1" firstDataRow="1" firstDataCol="4"/>' % ref)
-    parts.append('<pivotFields count="7">%s</pivotFields>' % "".join(pf))
-    parts.append('<rowFields count="%d">%s</rowFields>' % (len(ROW_FIELDS), rowfields))
-    parts.append('<rowItems count="%d">%s</rowItems>' % (len(ritems), "".join(ritems)))
-    parts.append('<colItems count="1"><i/></colItems>')
-    parts.append('<dataFields count="1">'
-                 '<dataField name="求和项:最终采购数量" fld="%d" baseField="0" baseItem="0"/>'
-                 '</dataFields>' % DATA_FIELD)
-    parts.append('<pivotTableStyleInfo name="PivotStyleLight16" showRowHeaders="1" '
-                 'showColHeaders="1" showRowStripes="0" showColStripes="0" showLastColumn="1"/>')
-    parts.append('</pivotTableDefinition>')
-    return "".join(parts)
-
-
-def meta_by_idx(meta, fi):
-    for m in meta:
-        if m["idx"] == fi:
-            return m
-    return None
-
-
-def _attr(tag, name):
-    m = re.search(r'\b' + name + r'="([^"]*)"', tag)
-    return m.group(1) if m else None
-
-def _sheet_target_for(zin_names, data):
-    """从 workbook.xml + rels 找到 sheet 名 -> 归档内 worksheet 路径(如 xl/worksheets/sheet3.xml).
-       兼容属性任意顺序与绝对/相对 Target."""
-    wb = data["xl/workbook.xml"].decode("utf-8")
-    rels = data["xl/_rels/workbook.xml.rels"].decode("utf-8")
-    # sheet name -> r:id (属性顺序无关)
-    name2rid = {}
-    for m in re.finditer(r'<sheet\b[^>]*/?>', wb):
-        tag = m.group(0)
-        nm = _attr(tag, "name"); rid = _attr(tag, "r:id")
-        if nm and rid:
-            name2rid[nm] = rid
-    # r:id -> target (属性顺序无关)
-    rid2t = {}
-    for m in re.finditer(r'<Relationship\b[^>]*/?>', rels):
-        tag = m.group(0)
-        rid = _attr(tag, "Id"); tgt = _attr(tag, "Target")
-        if rid and tgt:
-            rid2t[rid] = tgt
-    out = {}
-    for nm, rid in name2rid.items():
-        t = rid2t.get(rid, "")
-        if not t:
-            continue
-        if t.startswith("/"):
-            arc = t.lstrip("/")               # 绝对: /xl/worksheets/sheet3.xml
-        else:
-            arc = "xl/" + t                   # 相对于 xl/
-        arc = re.sub(r'/[^/]+/\.\./', '/', arc)
-        out[nm] = arc
-    return out
-
-
-def inject_pivots(xlsx_path, pivots):
-    """
-    pivots: [{'sheet':透视sheet名, 'src_sheet':源sheet名, 'src_ref':'A2:G100',
-              'rows':清洗行, 'agg':聚合, 'name':透视表名}]
-    就地把动态透视表部件写入 xlsx.
-    """
-    with zipfile.ZipFile(xlsx_path, "r") as z:
-        names = z.namelist()
-        data = {n: z.read(n) for n in names}
-
-    sheet_target = _sheet_target_for(names, data)
-    new_parts = {}
-    ct_overrides = []
-    wb_caches = []          # (cacheId, rId) for workbook.xml
-    wb_rels_add = []        # workbook.xml.rels 新增
-
-    # 现有 workbook rels 里最大 rId
-    wb_rels = data["xl/_rels/workbook.xml.rels"].decode("utf-8")
-    used = [int(x) for x in re.findall(r'Id="rId(\d+)"', wb_rels)]
-    next_rid = max(used) + 1 if used else 1
-
-    for i, pv in enumerate(pivots, start=1):
-        cache_id = 1000 + i
-        cdef = "xl/pivotCache/pivotCacheDefinition%d.xml" % i
-        crec = "xl/pivotCache/pivotCacheRecords%d.xml" % i
-        ptbl = "xl/pivotTables/pivotTable%d.xml" % i
-
-        meta = build_fields_meta(pv["rows"])
-        # cacheDefinition (rid 指向 records, 局部 rId1)
-        cdx = cache_definition_xml(meta, len(pv["rows"]), "rId1")
-        cdx = cdx.replace("__SRC_REF__", _esc(pv["src_ref"])).replace("__SRC_SHEET__", _esc(pv["src_sheet"]))
-        new_parts[cdef] = cdx.encode("utf-8")
-        new_parts[crec] = cache_records_xml(pv["rows"], meta).encode("utf-8")
-        new_parts["xl/pivotCache/_rels/pivotCacheDefinition%d.xml.rels" % i] = (
-            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
-            '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/'
-            'relationships/pivotCacheRecords" Target="pivotCacheRecords%d.xml"/></Relationships>' % i
-        ).encode("utf-8")
-
-        new_parts[ptbl] = pivot_table_xml(meta, pv["agg"], cache_id, pv["name"]).encode("utf-8")
-        new_parts["xl/pivotTables/_rels/pivotTable%d.xml.rels" % i] = (
-            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
-            '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/'
-            'relationships/pivotCacheDefinition" Target="../pivotCache/pivotCacheDefinition%d.xml"/>'
-            '</Relationships>' % i
-        ).encode("utf-8")
-
-        ct_overrides.append('<Override PartName="/%s" ContentType="application/vnd.openxmlformats-'
-            'officedocument.spreadsheetml.pivotCacheDefinition+xml"/>' % cdef)
-        ct_overrides.append('<Override PartName="/%s" ContentType="application/vnd.openxmlformats-'
-            'officedocument.spreadsheetml.pivotCacheRecords+xml"/>' % crec)
-        ct_overrides.append('<Override PartName="/%s" ContentType="application/vnd.openxmlformats-'
-            'officedocument.spreadsheetml.pivotTable+xml"/>' % ptbl)
-
-        rid = "rId%d" % next_rid; next_rid += 1
-        wb_caches.append((cache_id, rid))
-        wb_rels_add.append('<Relationship Id="%s" Type="http://schemas.openxmlformats.org/'
-            'officeDocument/2006/relationships/pivotCacheDefinition" '
-            'Target="pivotCache/pivotCacheDefinition%d.xml"/>' % (rid, i))
-
-        # sheet rels: 透视 sheet -> pivotTable
-        st = sheet_target.get(pv["sheet"])
-        if st:
-            base = os.path.basename(st)
-            relpath = os.path.dirname(st) + "/_rels/" + base + ".rels"
-            if relpath in data:
-                sr = data[relpath].decode("utf-8")
-                sused = [int(x) for x in re.findall(r'Id="rId(\d+)"', sr)]
-                srid = "rId%d" % ((max(sused)+1) if sused else 1)
-                add = ('<Relationship Id="%s" Type="http://schemas.openxmlformats.org/officeDocument/'
-                       '2006/relationships/pivotTable" Target="../pivotTables/pivotTable%d.xml"/>' % (srid, i))
-                data[relpath] = sr.replace("</Relationships>", add + "</Relationships>").encode("utf-8")
-            else:
-                data[relpath] = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-                    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
-                    '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/'
-                    'relationships/pivotTable" Target="../pivotTables/pivotTable%d.xml"/></Relationships>' % i
-                    ).encode("utf-8")
-
-    # [Content_Types].xml
-    ct = data["[Content_Types].xml"].decode("utf-8")
-    data["[Content_Types].xml"] = ct.replace("</Types>", "".join(ct_overrides) + "</Types>").encode("utf-8")
-
-    # workbook.xml.rels
-    data["xl/_rels/workbook.xml.rels"] = wb_rels.replace(
-        "</Relationships>", "".join(wb_rels_add) + "</Relationships>").encode("utf-8")
-
-    # workbook.xml: 插入 <pivotCaches>; 确保根元素声明 xmlns:r
-    wbx = data["xl/workbook.xml"].decode("utf-8")
-    if "xmlns:r=" not in wbx[:wbx.find(">")+1]:
-        wbx = wbx.replace("<workbook ",
-            '<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" ', 1)
-    caches_xml = '<pivotCaches>' + "".join(
-        '<pivotCache cacheId="%d" r:id="%s"/>' % (cid, rid) for cid, rid in wb_caches) + '</pivotCaches>'
-    # OOXML schema 要求 pivotCaches 必须在 calcPr 之后(顺序: sheets, definedNames,
-    # calcPr, ..., pivotCaches, extLst). 顺序错会导致 Excel 报"文件损坏".
-    m = re.search(r'<calcPr\b[^>]*/>', wbx)
-    if m:
-        wbx = wbx[:m.end()] + caches_xml + wbx[m.end():]
-    else:
-        m2 = re.search(r'</calcPr>', wbx)
-        if m2:
-            wbx = wbx[:m2.end()] + caches_xml + wbx[m2.end():]
-        elif "<extLst" in wbx:
-            wbx = wbx.replace("<extLst", caches_xml + "<extLst", 1)
-        else:
-            wbx = wbx.replace("</workbook>", caches_xml + "</workbook>", 1)
-    data["xl/workbook.xml"] = wbx.encode("utf-8")
-
-    for p, b in new_parts.items():
-        data[p] = b
-
-    tmp = xlsx_path + ".tmp"
-    with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as z:
-        for n, b in data.items():
-            z.writestr(n, b)
-    os.replace(tmp, xlsx_path)
-
-
-
+# 原生透视缓存和 OOXML 归档注入位于 pivot_ooxml.py；本模块通过顶部导入保留原公开名。
 def process_workbook(in_path, out_path=None, log=None):
     """
     复刻 RunProcess: 打开工作簿, 对每张数据表清洗并生成一张透视结果表.
     不改动原文件(输出到 out_path, 默认在原名后加 _透视结果).
-    返回 {'processed':n, 'skipped':n, 'sheets':[(源表名,透视表名,d1,d2,组数,总计)], 'out':路径}
+    返回处理、跳过数量、逐表汇总、输出路径和动态透视注入错误。该兼容入口没有人工决策
+    阶段，适用于旧调用；新双端流程应使用 ``analyze_workbooks`` 与 ``apply_plan``。
     """
     import os
     # 跳过源文件内嵌透视缓存的解析(只读单元格值,透视表另经 inject_pivots 写出)
     wb = common_core.load_data_only(in_path)
-    src_names = list(wb.sheetnames)   # 先快照, 避免扫到新建的透视表
+    src_names = list(wb.sheetnames)   # 先快照，避免循环时扫描到本函数新建的透视页。
     processed = 0; skipped = 0; detail = []; pivot_jobs = []
     for sn in src_names:
         ws = wb[sn]
@@ -1220,7 +942,7 @@ def process_workbook(in_path, out_path=None, log=None):
         d = os.path.dirname(in_path)
         base = os.path.splitext(os.path.basename(in_path))[0]
         out_path = os.path.join(d, base + "_透视结果.xlsx")
-    wb.save(out_path)
+    wb.save(out_path)  # 先保存完整静态结果，OOXML 注入失败时仍有可交付文件。
     # 3) 注入原生 OOXML 动态透视表(兼容 Excel/WPS); 失败则保留静态表
     pivot_error = ""
     if pivot_jobs:
@@ -1236,7 +958,10 @@ def process_workbook(in_path, out_path=None, log=None):
 
 
 def _safe_sheet_name(wb, base):
-    """生成 Excel 合法且唯一的工作表名(<=31字符, 去非法字符)。"""
+    """生成不含 Excel 禁用字符且不重复的工作表名。
+
+    基础名称预留三位给数字后缀，最终始终不超过 31 字符；空名称回退为“数据”。
+    """
     for ch in '[]:*?/\\':
         base = base.replace(ch, ' ')
     base = base.strip() or "数据"
@@ -1249,219 +974,13 @@ def _safe_sheet_name(wb, base):
     return name
 
 
-def assess_confidence(res):
-    """扣分制评估透视结果是否可信。返回 {level, score, issues[]}
-       level ∈ 可信 / 需复核 / 存疑。100 分起扣。"""
-    score = 100
-    issues = []          # (等级, 说明)  等级: 严重/警告/提示
-    used = [a for a in res["audit"] if a["use"]]
-    kinds = [a["kind"] for a in used]
+# 可信度与兼容文本报告实现位于 pivot_reporting.py。
+def _analyze_stream_sheet(ws, fname, sid, resolver=None, fill_counts=None):
+    """分析一张只读工作表并生成稳定的人工复核记录。
 
-    # 1) 完全没识别到任何数据表 -> 存疑
-    if res["processed"] == 0 or res["clean_rows"] == 0:
-        score = 0
-        issues.append(("严重", "未识别到任何有效数据表, 无法生成可信透视表"))
-    # 2) 未识别到包装方案汇总(核心源)
-    if not any("包装方案汇总" in k for k in kinds):
-        score -= 35
-        issues.append(("严重", "未识别到'包装方案汇总'类表(通常是采购量核心来源), 结果可能严重缺料"))
-    # 3) 未识别到组托辅材
-    if not any("组托辅材" in k for k in kinds):
-        score -= 12
-        issues.append(("警告", "未识别到'组托辅材'类表, 若本单本应含组托数据则会漏项"))
-    # 4) 逐文件: 某文件 0 张数据表
-    by_file = {}
-    for a in res["audit"]:
-        by_file.setdefault(a["file"], []).append(a)
-    for f, arr in by_file.items():
-        if not any(x["use"] for x in arr):
-            score -= 15
-            issues.append(("警告", "文件[%s]未识别出任何数据表, 请确认是否选错文件" % f))
-    # 5) 字段缺失
-    for a in used:
-        if a["missing"]:
-            miss = "/".join(a["missing"])
-            key_miss = any(m in ("材料编号", "最终采购数量") for m in a["missing"])
-            score -= (10 if key_miss else 4)
-            issues.append(("严重" if key_miss else "提示",
-                           "表[%s/%s]缺失字段: %s" % (a["file"], a["sheet"], miss)))
-        if a["use"] and a["confidence"] and a["confidence"] < 75:
-            issues.append(("提示", "表[%s/%s]为低置信识别(%d分, %s)" %
-                           (a["file"], a["sheet"], a["confidence"], a["kind"])))
-    # 6) 总计为 0
-    if res["clean_rows"] > 0 and res["total"] == 0:
-        score -= 30
-        issues.append(("严重", "透视总计为 0, 数据虽有行但最终采购数量全为空/0, 请核对源列"))
-    # 7) 勾稽: 透视分组数应 <= 清洗行数
-    if res["groups"] > res["clean_rows"] and res["clean_rows"] > 0:
-        score -= 20
-        issues.append(("严重", "分组数(%d)大于清洗行数(%d), 逻辑异常" %
-                       (res["groups"], res["clean_rows"])))
-
-    score = max(0, min(100, score))
-    level = "可信" if score >= 85 else ("需复核" if score >= 60 else "存疑")
-    return {"level": level, "score": score, "issues": issues}
-
-
-def _fmt_cols(cols):
-    """把字段列映射渲染为可读文本: 编码=K列 名称=L列 ..."""
-    if not cols:
-        return "(无)"
-    names = ["版本", "编码", "名称", "规格", "数量", "单位", "最终采购数量"]
-    parts = []
-    for i, c in enumerate(cols):
-        if c:
-            parts.append("%s=%s列" % (names[i], get_column_letter(c)))
-    return "  ".join(parts) if parts else "(无)"
-
-
-def write_confidence_report(out_path, in_paths, res):
-    """生成独立的可信度分析报告 .txt, 与透视结果同目录。返回报告路径。"""
-    import os
-    base = os.path.splitext(os.path.basename(out_path))[0]
-    rpt = os.path.join(os.path.dirname(out_path), base + "_可信度分析报告.txt")
-    L = []
-    bar = "=" * 66
-    L.append(bar)
-    L.append("           销售表透视 · 可信度分析报告")
-    L.append(bar)
-    L.append("生成时间   : %s" % (datetime.datetime.now(datetime.timezone.utc) +
-                                  datetime.timedelta(hours=8)).strftime("%Y-%m-%d %H:%M:%S"))
-    L.append("透视结果   : %s" % os.path.basename(out_path))
-    L.append("")
-    L.append("【总体结论】  可信度: %s   评分: %d/100" % (res["level"], res["score"]))
-    tip = {"可信": "识别与汇总逻辑一致, 可直接使用(仍建议抽查关键料号)。",
-           "需复核": "存在需关注项, 请对照下方风险清单核对后使用。",
-           "存疑": "存在严重问题, 结果可能不可用, 务必人工核对源数据。"}
-    L.append("            %s" % tip.get(res["level"], ""))
-    L.append("")
-    _write_report_body(L, in_paths, res, bar)
-    with open(rpt, "w", encoding="utf-8") as f:
-        f.write("\n".join(L))
-    return rpt
-
-
-def _write_review_section(L, res, bar):
-    """报告【人工复核项】: 记录空白序号行、单位/规格聚类冲突及最终采用值,
-       并标注人工是否改动过默认, 便于日后快速核对。"""
-    rv = res.get("review")
-    if not rv:
-        return
-    L.append(bar)
-    L.append("【人工复核项】(生成前弹窗展示; 默认=系统选择)")
-    L.append(bar)
-    # A. 疑似真实但被删的行(有采购量却被清洗规则删除)
-    plan = rv.get("plan", {})
-    held = plan.get("held_index", []) if plan else []
-    L.append("● 疑似真实但被删的行 —— 有最终采购量却被清洗删除 (共 %d 条, 本次纳入 %d 条, 纳入采购量合计 %s):"
-             % (rv.get("held_total_n", 0), rv.get("held_kept_n", 0),
-                _fmt_num(rv.get("held_kept_total", 0))))
-    if not held:
-        L.append("    (无) 未发现此类行。")
-    else:
-        ch_held = rv.get("choices", {}).get("held", {})
-        for h in held:
-            r = h["rec"]; kept = ch_held.get((h["sid"], h["ridx"]), False)
-            nocode = "" if h.get("has_code") else " [无有效编码]"
-            L.append("    [%s] %s %s %s %s  采购量=%s  删除原因:%s%s  来源:%s"
-                     % ("已纳入" if kept else "已删除", r[F_CODE], r[F_NAME],
-                        r[F_SPEC], r[F_UNIT], _fmt_num(r[F_FINAL]),
-                        h.get("reason", "?"), nocode, h["sheet"]))
-    L.append("")
-    # B. 单位聚类冲突
-    uc = rv.get("unit_conflicts", [])
-    ov_u = rv.get("choices", {}).get("unit_overrides", {})
-    L.append("● 单位聚类冲突 (共 %d 处, 人工改动 %d 处):" % (len(uc), len(ov_u)))
-    if not uc:
-        L.append("    (无) 所有分组单位唯一。")
-    for c in uc:
-        gk = c["gk"]; final = ov_u.get(gk, c["default"])
-        dist = " / ".join("%s×%d" % (u if u else "(空)", n) for u, n in c["dist"].items())
-        flag = "  <-人工改" if gk in ov_u else ""
-        L.append("    %s %s %s | 分布: %s | 采用: %s%s"
-                 % (c["code"], c["name"], c["spec"], dist, final, flag))
-    L.append("")
-    # C. 规格聚类归并
-    sm = rv.get("spec_merges", [])
-    ov_s = rv.get("choices", {}).get("spec_overrides", {})
-    L.append("● 规格聚类归并 (共 %d 处, 人工改动 %d 处):" % (len(sm), len(ov_s)))
-    if not sm:
-        L.append("    (无) 无同料多写法归并。")
-    for c in sm:
-        gk = c["gk"]; final = ov_s.get(gk, c["default"])
-        variants = " / ".join("%s×%d" % (s, n) for s, n in c["variants"].items())
-        flag = "  <-人工改" if gk in ov_s else ""
-        L.append("    %s %s | 写法: %s | 采用: %s%s"
-                 % (c["code"], c["name"], variants, final, flag))
-    L.append("")
-
-
-def _write_report_body(L, in_paths, res, bar):
-    import os
-    # 1) 风险清单
-    L.append("【风险清单】")
-    if res["issues"]:
-        order = {"严重": 0, "警告": 1, "提示": 2}
-        for lv, msg in sorted(res["issues"], key=lambda x: order.get(x[0], 3)):
-            mark = {"严重": "✗", "警告": "!", "提示": "·"}.get(lv, "·")
-            L.append("  [%s] %s %s" % (lv, mark, msg))
-    else:
-        L.append("  (无) 未发现风险项。")
-    L.append("")
-    # 2) 数据来源与识别依据
-    L.append(bar)
-    L.append("【数据来源识别明细】(共扫描 %d 个文件)" % res["files"])
-    L.append(bar)
-    used = [a for a in res["audit"] if a["use"]]
-    skip = [a for a in res["audit"] if not a["use"]]
-    L.append("● 已纳入透视的数据表 (%d 张):" % len(used))
-    if not used:
-        L.append("    (无)")
-    for a in used:
-        L.append("  ─ [%s] 工作表《%s》" % (a["file"], a["sheet"]))
-        L.append("     类型: %s   置信度: %d" % (a["kind"], a["confidence"]))
-        L.append("     依据: %s" % a["reason"])
-        L.append("     字段: %s" % _fmt_cols(a["cols"]))
-        L.append("     贡献: 保留 %d 行 (清洗删除 版本%d / 采购量%d)" %
-                 (a["rows"], a["d1"], a["d2"]))
-        if a["missing"]:
-            L.append("     ⚠ 缺失字段: %s" % "/".join(a["missing"]))
-    L.append("")
-    L.append("● 已跳过的工作表 (%d 张):" % len(skip))
-    if not skip:
-        L.append("    (无)")
-    for a in skip:
-        L.append("  ─ [%s]《%s》: %s — %s" %
-                 (a["file"], a["sheet"], a["kind"], a["reason"]))
-    L.append("")
-    # 2.5) 人工复核项(供日后快速核对)
-    _write_review_section(L, res, bar)
-    # 3) 汇总与勾稽
-    L.append(bar)
-    L.append("【汇总与勾稽校验】")
-    L.append(bar)
-    tot = res["total"]
-    try:
-        if float(tot) == int(tot):
-            tot = int(tot)
-    except (ValueError, TypeError):
-        pass
-    L.append("  清洗后合并数据行 : %d 行" % res["clean_rows"])
-    L.append("  透视分组(去重后) : %d 组" % res["groups"])
-    L.append("  最终采购数量总计 : %s" % tot)
-    L.append("  清洗删除小计     : 版本序号 %d 行 / 最终采购量为空或0 %d 行"
-             % (res["d1"], res["d2"]))
-    chk = "通过" if (res["groups"] <= res["clean_rows"] and res["clean_rows"] > 0) else "异常"
-    L.append("  勾稽(分组数<=行数): %s" % chk)
-    L.append("")
-    L.append(bar)
-    L.append("说明: 本报告由程序按规则自动生成, 仅供复核参考。评分为扣分制,")
-    L.append("      严重项每项重扣、警告次之、提示轻扣; >=85 可信, 60-84 需复核, <60 存疑。")
-    L.append(bar)
-
-
-def _analyze_stream_sheet(ws, fname, sid):
-    """分析一张只读工作表，返回兼容人工复核面板的记录。"""
+    前若干行轻量快照只用于分类和列识别，真正数据通过流式读取。按表名提前排除的页只要
+    仍存在有效数据区，也会预读行数据，使管理员重新勾选时确实可以纳入，而不是空操作。
+    """
     preview = _preview_sheet(ws)
     cls = classify_sheet(preview)
     rec = {"id": sid, "file": fname, "sheet": ws.title, "use": cls["use"],
@@ -1477,6 +996,8 @@ def _analyze_stream_sheet(ws, fname, sid):
             rec["missing"] = [FIELD_CN[index] for index in (KEY_FIELDS + INFO_FIELDS)
                               if blocks[0]["cols"][index] == 0]
         rows = normalize_stream_rows(ws, blocks)
+        if resolver is not None:
+            _complete_rows_from_catalog(rows, resolver, fill_counts)
         kept, held, d1, d2 = clean_rows_ex(rows)
         rec.update(kept=kept, held=held, d1=d1, d2=d2)
         if cls["use"] and not kept and not held:
@@ -1487,7 +1008,7 @@ def _analyze_stream_sheet(ws, fname, sid):
     return rec
 
 
-def analyze_workbooks(in_paths, on_file=None):
+def analyze_workbooks(in_paths, on_file=None, resolver=None, fill_counts=None):
     """第一阶段: 只读文件、分类、清洗, 收集所有"待人工复核的决策点", 不写任何文件。
 
        on_file(done, total): 可选回调, 每处理完一个文件调用一次, 供进度条使用。
@@ -1497,8 +1018,11 @@ def analyze_workbooks(in_paths, on_file=None):
          plan['held_index']     扁平化的空白序号行 [{sid,ridx,rec,file,sheet}]
          plan['unit_conflicts'] 单位冲突组 [{gk,code,name,spec,dist,default}]
          plan['spec_merges']    规格归并组 [{gk,code,name,variants,default}]
-       默认选择 = 现有系统行为(use=分类结果, held 全不纳入)。"""
+       默认选择等于自动分类结果，所有 ``held`` 行默认不纳入。分析阶段不创建输出文件，
+       也不修改源工作簿；调用方必须把计划展示给人工后再进入 ``apply_plan``。
+       """
     import os
+    resolver = resolver or material_catalog.CatalogResolver()
     sheets = []
     sid = 0
     _total = len(in_paths)
@@ -1509,6 +1033,7 @@ def analyze_workbooks(in_paths, on_file=None):
             # 避免部分业务导出表被静默截成一行。
             wb = common_core.load_data_only_stream(in_path)
         except Exception:
+            # 整个文件打不开时仍生成一条可见审计记录，其他文件继续分析。
             sheets.append({"id": sid, "file": os.path.basename(in_path), "sheet": "(整个文件)",
                            "use": False, "openable": False, "kind": "排除:无法打开",
                            "confidence": 0, "reason": "openpyxl 打开失败, 可能非法xlsx或被占用",
@@ -1516,7 +1041,8 @@ def analyze_workbooks(in_paths, on_file=None):
             sid += 1; continue
         try:
             for sn in list(wb.sheetnames):
-                sheets.append(_analyze_stream_sheet(wb[sn], fname, sid))
+                sheets.append(_analyze_stream_sheet(
+                    wb[sn], fname, sid, resolver=resolver, fill_counts=fill_counts))
                 sid += 1
         finally:
             wb.close()
@@ -1533,6 +1059,7 @@ def analyze_workbooks(in_paths, on_file=None):
 
     # 冲突收集:在默认纳入行上建立可重放迭代视图，不复制也不修改复核计划原始行。
     def default_rows():
+        """每次调用都重新遍历系统默认纳入页的已保留行。"""
         for sheet in sheets:
             if sheet["use"]:
                 yield from sheet["kept"]
@@ -1560,7 +1087,11 @@ def analyze_workbooks(in_paths, on_file=None):
 
 
 def _default_choices(plan):
-    """由 plan 生成"系统默认选择"(人工不改时即用这套, 等价于现有行为)。"""
+    """根据分析计划生成完整的系统默认选择。
+
+    页签沿用分类结果，疑似被删行全部保持排除，规格和单位不设置人工覆盖。这样人工未
+    修改任何项目时，第二阶段与自动处理口径一致。
+    """
     return {
         "sheets": {s["id"]: bool(s["use"]) for s in plan["sheets"]},
         "held":   {(h["sid"], h["ridx"]): False for h in plan["held_index"]},
@@ -1569,107 +1100,214 @@ def _default_choices(plan):
     }
 
 
-def apply_plan(plan, choices, out_path, log=None):
-    """第二阶段: 按人工最终选择合并、聚类、聚合并写出透视结果与报告。
-       choices 见 _default_choices。返回结果 dict(兼容旧结构 + review 明细)。"""
-    import os
-    sheets = plan["sheets"]
-    audit = []
-    detail = []
-    processed = 0; skipped = 0
-    d1_sum = d2_sum = 0
-    all_rows = []
-    held_kept_total = 0.0
-    held_kept_n = 0
+def _sheet_audit_record(sheet, use):
+    """构造单个页签的审计记录，后续只更新实际行数和人工保留数。"""
+    return {
+        "file": sheet["file"],
+        "sheet": sheet["sheet"],
+        "use": use,
+        "kind": sheet["kind"],
+        "confidence": sheet["confidence"],
+        "reason": sheet["reason"],
+        "cols": sheet["cols"],
+        "missing": sheet["missing"],
+        "rows": 0,
+        "d1": sheet["d1"],
+        "d2": sheet["d2"],
+        "held_kept": 0,
+    }
 
-    sel_sheets = choices.get("sheets", {})
-    sel_held = choices.get("held", {})
 
-    for s in sheets:
-        use = sel_sheets.get(s["id"], s["use"])
-        rec = {"file": s["file"], "sheet": s["sheet"], "use": use, "kind": s["kind"],
-               "confidence": s["confidence"], "reason": s["reason"],
-               "cols": s["cols"], "missing": s["missing"], "rows": 0,
-               "d1": s["d1"], "d2": s["d2"], "held_kept": 0}
-        if not use:
-            audit.append(rec); skipped += 1; continue
-        rows = [list(r) for r in s["kept"]]
-        # 追加人工勾选保留的"疑似真实但被删"的行
-        hk = 0
-        for ridx, hd in enumerate(s["held"]):
-            if sel_held.get((s["id"], ridx), False):
-                hrec = hd["rec"]
-                rows.append(list(hrec)); hk += 1
-                try: held_kept_total += float(hrec[F_FINAL])
-                except (TypeError, ValueError): pass
-        held_kept_n += hk
-        if not rows:
-            rec.update(use=False, kind="排除:未选中任何行")
-            audit.append(rec); skipped += 1; continue
-        all_rows.extend(rows)
-        d1_sum += s["d1"]; d2_sum += s["d2"]
-        rec.update(rows=len(rows), held_kept=hk)
-        audit.append(rec)
-        detail.append(("%s / %s" % (s["file"], s["sheet"]), len(rows), s["d1"], s["d2"]))
-        processed += 1
+def _selected_sheet_rows(sheet, selected_held):
+    """复制页签默认保留行，并追加人工明确恢复的疑似删除行。
 
-    out_wb = openpyxl.Workbook()
-    default_ws = out_wb.active
-    groups = 0; total = 0
-    if all_rows:
-        all_rows = unify_specs(all_rows, overrides=choices.get("spec_overrides") or None)
-        all_rows = unify_units(all_rows, overrides=choices.get("unit_overrides") or None)
-        all_rows, _dbc = drop_blank_code_rows(all_rows)   # 剔除空编码行, 避免 (空白) 组
-        agg = aggregate(all_rows)
-        groups = len(agg)
-        total = sum((x[4] for x in agg), 0)
-        clean_name = _safe_sheet_name(out_wb, "清洗数据")
-        cws = out_wb.create_sheet(title=clean_name)
-        write_clean_sheet(cws, all_rows)
-        pv_name = write_pivot_sheet(out_wb, PIVOT_BASE, agg)
-        src_ref = "A2:G%d" % (2 + len(all_rows))
-        pivot_jobs = [{"sheet": pv_name, "src_sheet": clean_name, "src_ref": src_ref,
-                       "rows": all_rows, "agg": agg, "name": pv_name}]
-        if len(out_wb.sheetnames) > 1 and default_ws.title in out_wb.sheetnames:
-            out_wb.remove(default_ws)
-    else:
-        pivot_jobs = []
-
-    out_wb.save(out_path)
-    pivot_error = ""
-    if pivot_jobs:
+    返回复制后的行、人工恢复条数和这些恢复行的最终采购数量合计。所有行都复制为新
+    列表，确保第二阶段规格/单位归并不会反向修改第一阶段的只读分析计划。
+    """
+    rows = [list(row) for row in sheet["kept"]]
+    kept_count = 0
+    kept_total = 0.0
+    for row_index, held in enumerate(sheet["held"]):
+        if not selected_held.get((sheet["id"], row_index), False):
+            continue
+        row = list(held["rec"])
+        rows.append(row)
+        kept_count += 1
         try:
-            inject_pivots(out_path, pivot_jobs)
-        except Exception as e:
-            # 不再静默吞掉: 保留静态汇总值, 但至少报一句异常摘要, 便于发现透视表未生成
-            pivot_error = "%s: %s" % (type(e).__name__, e)
-            if log:
-                log("⚠ 动态透视表注入失败(已保留静态汇总值): %s" % pivot_error)
+            kept_total += float(row[F_FINAL])
+        except (TypeError, ValueError):
+            # 选择本身仍然有效；无法解析的数量由后续清洗和可信度结果继续反映。
+            pass
+    return rows, kept_count, kept_total
 
-    result = {'processed': processed, 'skipped': skipped, 'sheets': detail,
-              'pivot_error': pivot_error,
-              'out': out_path, 'files': plan["files"], 'groups': groups,
-              'total': total, 'd1': d1_sum, 'd2': d2_sum, 'audit': audit,
-              'clean_rows': len(all_rows),
-              'review': {'plan': plan, 'choices': choices, 'details_cached': True,
-                         'held_kept_n': held_kept_n, 'held_kept_total': held_kept_total,
-                         'held_total_n': len(plan["held_index"]),
-                         'unit_conflicts': plan["unit_conflicts"],
-                         'spec_merges': plan["spec_merges"]}}
-    verdict = assess_confidence(result)
-    result.update(verdict)
+
+def _collect_selected_plan_rows(plan, choices):
+    """汇总第二阶段实际入选的页签和数据行，并生成页签级审计信息。"""
+    selected_sheets = choices.get("sheets", {})
+    selected_held = choices.get("held", {})
+    summary = {
+        "audit": [],
+        "detail": [],
+        "rows": [],
+        "processed": 0,
+        "skipped": 0,
+        "d1": 0,
+        "d2": 0,
+        "held_kept_n": 0,
+        "held_kept_total": 0.0,
+    }
+
+    for sheet in plan["sheets"]:
+        use = selected_sheets.get(sheet["id"], sheet["use"])
+        audit_record = _sheet_audit_record(sheet, use)
+        if not use:
+            summary["audit"].append(audit_record)
+            summary["skipped"] += 1
+            continue
+
+        rows, kept_count, kept_total = _selected_sheet_rows(sheet, selected_held)
+        summary["held_kept_n"] += kept_count
+        summary["held_kept_total"] += kept_total
+        if not rows:
+            # 页签被勾选但没有任何可用行时，结果审计应反映最终未参与处理的事实。
+            audit_record.update(use=False, kind="排除:未选中任何行")
+            summary["audit"].append(audit_record)
+            summary["skipped"] += 1
+            continue
+
+        summary["rows"].extend(rows)
+        summary["d1"] += sheet["d1"]
+        summary["d2"] += sheet["d2"]
+        audit_record.update(rows=len(rows), held_kept=kept_count)
+        summary["audit"].append(audit_record)
+        summary["detail"].append((
+            "%s / %s" % (sheet["file"], sheet["sheet"]),
+            len(rows),
+            sheet["d1"],
+            sheet["d2"],
+        ))
+        summary["processed"] += 1
+    return summary
+
+
+def _build_selected_pivot_workbook(selected_rows, choices):
+    """规范化入选行并构造静态清洗页、汇总页和待注入透视任务。"""
+    workbook = openpyxl.Workbook()
+    default_sheet = workbook.active
+    if not selected_rows:
+        return workbook, [], [], 0, 0
+
+    rows = unify_specs(
+        selected_rows,
+        overrides=choices.get("spec_overrides") or None,
+    )
+    rows = unify_units(
+        rows,
+        overrides=choices.get("unit_overrides") or None,
+    )
+    rows, _blank_code_count = drop_blank_code_rows(rows)
+    aggregated = aggregate(rows)
+    groups = len(aggregated)
+    total = sum((item[4] for item in aggregated), 0)
+
+    clean_name = _safe_sheet_name(workbook, "清洗数据")
+    clean_sheet = workbook.create_sheet(title=clean_name)
+    write_clean_sheet(clean_sheet, rows)
+    pivot_name = write_pivot_sheet(workbook, PIVOT_BASE, aggregated)
+    source_ref = "A2:G%d" % (2 + len(rows))
+    pivot_jobs = [{
+        "sheet": pivot_name,
+        "src_sheet": clean_name,
+        "src_ref": source_ref,
+        "rows": rows,
+        "agg": aggregated,
+        "name": pivot_name,
+    }]
+    if default_sheet.title in workbook.sheetnames:
+        workbook.remove(default_sheet)
+    return workbook, rows, pivot_jobs, groups, total
+
+
+def _inject_pivot_jobs(out_path, pivot_jobs, log):
+    """尝试注入 Excel 原生透视对象，失败时返回摘要而不破坏静态结果。"""
+    if not pivot_jobs:
+        return ""
     try:
-        report_path = write_confidence_report(out_path, plan["in_paths"], result)
-        result['report'] = report_path
-    except Exception as e:
-        result['report'] = ""
-        result['report_error'] = str(e)
+        inject_pivots(out_path, pivot_jobs)
+        return ""
+    except Exception as error:
+        pivot_error = "%s: %s" % (type(error).__name__, error)
+        if log:
+            log("⚠ 动态透视表注入失败(已保留静态汇总值): %s" % pivot_error)
+        return pivot_error
+
+
+def _build_apply_result(plan, choices, out_path, selection, clean_rows,
+                        groups, total, pivot_error):
+    """组装第二阶段稳定返回协议，并附加可信度结论和人工复核摘要。"""
+    result = {
+        "processed": selection["processed"],
+        "skipped": selection["skipped"],
+        "sheets": selection["detail"],
+        "pivot_error": pivot_error,
+        "out": out_path,
+        "files": plan["files"],
+        "groups": groups,
+        "total": total,
+        "d1": selection["d1"],
+        "d2": selection["d2"],
+        "audit": selection["audit"],
+        "clean_rows": len(clean_rows),
+        "review": {
+            "plan": plan,
+            "choices": choices,
+            "details_cached": True,
+            "held_kept_n": selection["held_kept_n"],
+            "held_kept_total": selection["held_kept_total"],
+            "held_total_n": len(plan["held_index"]),
+            "unit_conflicts": plan["unit_conflicts"],
+            "spec_merges": plan["spec_merges"],
+        },
+    }
+    result.update(assess_confidence(result))
+    # 可信度和逐表依据已由结构化结果承载，不再生成需要用户另行打开的辅助文本。
+    result["report"] = ""
     return result
 
 
+def apply_plan(plan, choices, out_path, log=None):
+    """按人工最终选择合并、规范化、聚合并写出透视结果。
+
+    每张页先复制已保留行，再追加人工明确勾选的 ``held`` 行；规格和单位覆盖在所有入选
+    行合并后统一应用。函数先保存静态清洗页和汇总页，再尝试注入原生透视对象。注入失败
+    只记录 ``pivot_error``，不把已经可用的静态结果改判失败。返回值含审计、可信度和复核
+    明细，供双端直接展示。
+    """
+    selection = _collect_selected_plan_rows(plan, choices)
+    workbook, clean_rows, pivot_jobs, groups, total = _build_selected_pivot_workbook(
+        selection["rows"], choices,
+    )
+    # 静态结果先落盘，保证动态透视对象注入失败时仍有可交付的清洗页和汇总页。
+    workbook.save(out_path)
+    pivot_error = _inject_pivot_jobs(out_path, pivot_jobs, log)
+    return _build_apply_result(
+        plan,
+        choices,
+        out_path,
+        selection,
+        clean_rows,
+        groups,
+        total,
+        pivot_error,
+    )
+
+
 def process_workbooks(in_paths, out_path, choices=None):
-    """整合入口(向后兼容): analyze -> (默认或给定 choices) -> apply。
-       不传 choices 时等价于现有全自动行为。"""
+    """兼容旧调用的一步式“分析后立即应用”入口。
+
+    未传选择时使用系统默认决策，因此不会提供人工确认停顿；Web/Tauri 人工复核流程应
+    分别调用两阶段入口。
+    """
     plan = analyze_workbooks(in_paths)
     if choices is None:
         choices = _default_choices(plan)
@@ -1685,7 +1323,12 @@ def _fmt_num(v):
 
 
 def _cacheable_result(result):
-    """生成销售透视缓存快照，排除逐行复核计划与含元组键的 choices。"""
+    """生成可 JSON 持久化的销售透视缓存快照。
+
+    完整复核计划体积大且 ``choices`` 含元组键，不能直接写 JSON。缓存仅保留汇总数量、
+    冲突列表和“详细计划未缓存”标记；再次命中缓存时前端仍能展示业务结果，但不会把旧
+    逐行计划误当成当前可编辑决策。
+    """
     compact = dict(result)
     review = result.get("review")
     if isinstance(review, dict):
@@ -1701,7 +1344,11 @@ def _cacheable_result(result):
 
 
 def _materialize_web_cache(cached, out_dir):
-    """把同一用户的缓存产物复制进当前 Web 任务目录，保持任务文件隔离。"""
+    """把同一用户缓存产物复制到当前 Web 任务输出目录。
+
+    缓存索引可跨任务复用，但下载路径必须属于当前任务运行目录。每个存在的产物使用
+    ``unique_path`` 复制并改写结果路径，避免不同任务共享绝对文件引用。
+    """
     import shutil
 
     result = dict(cached)
@@ -1716,21 +1363,23 @@ def _materialize_web_cache(cached, out_dir):
     result["out_dir"] = out_dir
     return result
 
-# ---------------- 统一入口（与其它三功能同构：接受统一 out_dir）----------------
+# 统一运行入口供 Tauri 与 Web 桥接调用，包含缓存、进度、主数据补空和正式两阶段执行。
 def run(in_paths, choices=None, out_dir=None, log=None, progress=None):
-    """销售表透视统一入口。
-    in_paths : 采购数据表路径列表。
-    choices  : 人工复核选择；None=全自动默认。
-    out_dir  : 输出目录；不传则用统一 paths 系统。
-    progress : 可选进度回调(0~100)；Worker 按 run 是否有此形参自动注入。
-    返回 apply_plan 的结果 dict（含 out/report/level/score 等）。
+    """执行销售表透视并返回输出、可信度和结构化复核结果。
+
+    输入可为单路径或路径列表。增量缓存键包含文件内容、人工选择、输出作用域、主数据
+    签名和算法版本；Web 命中缓存后仍会复制产物到当前用户任务目录。缓存故障只回退完整
+    处理，不影响业务。未提供人工选择时使用默认选择，输出目录由统一路径系统解析。
     """
     log = log or (lambda *a, **k: None)
     st = _settings.get_settings()
     if isinstance(in_paths, str):
         in_paths = [in_paths]
+    resolver = material_catalog.CatalogResolver()
+    fill_counts: dict[str, int] = {}
     cache_key = ""
     web_root = os.environ.get("FYT_WEB_OUTPUT_ROOT", "").strip()
+    # 输出作用域进入缓存键，避免桌面自定义目录与 Web 用户缓存互相复用绝对路径。
     cache_scope = (os.path.abspath(out_dir) if out_dir is not None else
                    "web-user-cache" if web_root else
                    {"mode": st.output_mode,
@@ -1739,8 +1388,9 @@ def run(in_paths, choices=None, out_dir=None, log=None, progress=None):
         try:
             cache_key = incremental_cache.make_key(
                 "pivot", in_paths,
-                {"choices": choices, "output": cache_scope},
-                engine_version="pivot-v2")
+                {"choices": choices, "output": cache_scope,
+                 "catalog": resolver.signature},
+                engine_version="pivot-v3")
             cached = incremental_cache.get(cache_key)
             if cached:
                 if web_root:
@@ -1755,7 +1405,7 @@ def run(in_paths, choices=None, out_dir=None, log=None, progress=None):
             log("[缓存] 无法读取缓存，已回退完整处理：%s" % error)
     if out_dir is None:
         out_dir = _paths.resolve_output_dir("pivot", **st.output_kwargs())
-    # 进度分两段:①读文件分析占 55%(按文件数细分)、②聚合写出占 45%。
+    # 读取与分类通常占主要耗时，按文件细分五成五；聚合和写盘占剩余阶段。
     prog = common_core.Progress(progress, stages=[("analyze", 55), ("apply", 45)])
     fname = "%s透视结果.xlsx" % _beijing_date()
     out_path = common_core.unique_path(os.path.join(out_dir, fname))  # 同日重跑不覆盖
@@ -1765,7 +1415,9 @@ def run(in_paths, choices=None, out_dir=None, log=None, progress=None):
         warn_if_uncached(p, log, what="最终采购数量")
     log("① 分析 %d 个文件..." % len(in_paths))
     prog.stage("analyze")
-    plan = analyze_workbooks(in_paths, on_file=prog.tick)
+    plan = analyze_workbooks(
+        in_paths, on_file=prog.tick, resolver=resolver, fill_counts=fill_counts)
+    material_catalog.log_fill_summary(log, "销售透视", fill_counts)
     if choices is None:
         choices = _default_choices(plan)
     log("② 应用选择、聚合并写出...")
@@ -1790,17 +1442,25 @@ def run(in_paths, choices=None, out_dir=None, log=None, progress=None):
 def analyze(in_paths, log=None, progress=None):
     """仅第一阶段：分析并返回决策计划（供界面做人工复核）。
 
-    可选 log/progress:供后台 Worker 调用时上报进度、避免界面卡死(分析要读全部
-    源文件,大表/多文件可达数秒)。二者缺省则为纯函数,行为与旧调用一致。"""
+    ``log`` 与 ``progress`` 只报告状态，不改变分析结果。该入口读取全部源文件并返回
+    人工复核计划，不创建输出文件。
+    """
     if log:
         log("正在分析 %d 个文件…" % len(in_paths))
     on_file = None
     if progress:
         def on_file(done, total):
+            """把按文件完成数转换为整数百分比。"""
             progress(int(done * 100 / total) if total else 100)
-    return analyze_workbooks(in_paths, on_file=on_file)
+    resolver = material_catalog.CatalogResolver()
+    fill_counts: dict[str, int] = {}
+    result = analyze_workbooks(
+        in_paths, on_file=on_file, resolver=resolver, fill_counts=fill_counts)
+    material_catalog.log_fill_summary(log, "销售透视", fill_counts)
+    return result
 
 
 def _beijing_date():
+    """返回北京时间的紧凑日期字符串，用于输出文件命名。"""
     return (datetime.datetime.now(datetime.timezone.utc) +
             datetime.timedelta(hours=8)).strftime("%Y%m%d")

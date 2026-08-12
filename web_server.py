@@ -1,218 +1,1007 @@
-"""峰运通数据管理系统局域网 Web 服务端。
+"""峰运通数据管理系统局域网 Web 服务端组合入口。
 
-运行于 Windows 10/11 + Python 3.13。使用标准库提供静态文件托管、SQLite
-账号管理、注册审核与会话认证，避免给桌面端增加 Web 运行时依赖。
+运行于 Python 3.13，使用标准库 HTTP 服务托管同源 React 前端和 API。业务服务、路由、
+数据库初始化与生命周期已拆分到 ``web_backend/``；本文件保留全局配置、依赖装配、
+独立 Core 桥接进程和历史公开入口，避免部署脚本与测试在拆分期间失效。
+
+所有业务任务按用户 ID 隔离上传、输出、缓存和运行目录。HTTP 线程不直接执行耗时 Excel
+逻辑，而是通过标准流协议启动 ``core.tauri_bridge`` 子进程，以便取消、记录进度并隔离
+第三方库异常。绝对文件路径只在服务端持久化，对浏览器响应会转换为受控下载 URL。
 """
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import hmac
 import json
-import mimetypes
 import os
 import secrets
-import shutil
 import sqlite3
 import subprocess
-import sys
 import threading
-import time
-import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from http import HTTPStatus
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, quote, urlparse
+import urllib.request
+
+from core.version import VERSION
+from core import arrival_core
+from core import daily_report_core
+from core import daily_production_plan_core
+from core import daily_safety_check_core
+from core import library as core_library
+from core import material_catalog
+from core import master_data_import_core
+from core import report_center_core
+from core import storage_lock as core_storage_lock
+from core import workshop_issue_core
+
+from web_backend import config as server_config
+from web_backend import presenters
+from web_backend import server_runtime
+from web_backend.database import DB_LOCK as _DB_LOCK
+from web_backend.database import ManagedConnection as _ManagedConnection
+from web_backend.database import db as _db
+from web_backend.database.initializer import initialize as initialize_database
+from web_backend.errors import ApiError as _ApiError
+from web_backend.http import context as request_context
+from web_backend.http import static_files
+from web_backend.http.handler import ApiHandler, HandlerBindings
+from web_backend.serializers import json_list as _json_list_from_backend
+from web_backend.serializers import json_object as _json_object_from_backend
+from web_backend.serializers import json_value as _json_value_from_backend
+from web_backend.services import auth as auth_service
+from web_backend.services import maintenance as maintenance_service
+from web_backend.services import daily_report as daily_report_service
+from web_backend.services import admin_accounts as admin_account_service
+from web_backend.services import notifications as notification_service
+from web_backend.services import library as library_service
+from web_backend.services import workshop as workshop_service
+from web_backend.services import jobs as jobs_service
+from web_backend.services import daily_management as daily_management_service
+from web_backend.services import backups as backup_service
+from web_backend.services import admin_data as admin_data_service
+from web_backend.services import trash as trash_service
+from web_backend.services import master_data as master_data_service
+from web_backend.services import reports as report_service
+from web_backend.services import dashboard as dashboard_service
+from web_backend.services import uploads as upload_service
+from web_backend.tasks import actions as task_actions
+from web_backend.tasks import bridge as task_bridge
+from web_backend.tasks import results as task_results
+from web_backend.tasks import runner as task_runner
 
 
-ROOT = Path(__file__).resolve().parent
-WEB_ROOT = ROOT / "web-app"
-STATIC_ROOT = WEB_ROOT / "dist"
-DATA_ROOT = Path(os.environ.get("FYT_WEB_DATA", ROOT / "web-data"))
-DB_PATH = DATA_ROOT / "accounts.sqlite3"
-HOST = os.environ.get("FYT_WEB_HOST", "0.0.0.0")
-PORT = int(os.environ.get("FYT_WEB_PORT", "8787"))
-SESSION_DAYS = 7
-PBKDF2_ROUNDS = 240_000
-MAX_UPLOAD_BYTES = 200 * 1024 * 1024
-DB_LOCK = threading.RLock()
+ROOT = server_config.ROOT
+WEB_ROOT = server_config.WEB_ROOT
+STATIC_ROOT = server_config.STATIC_ROOT
+
+DATA_ROOT = server_config.DATA_ROOT
+DB_PATH = server_config.DB_PATH
+HOST = server_config.HOST
+PORT = server_config.PORT
+SESSION_DAYS = server_config.SESSION_DAYS
+SESSION_TOUCH_INTERVAL_SECONDS = server_config.SESSION_TOUCH_INTERVAL_SECONDS
+PBKDF2_ROUNDS = server_config.PBKDF2_ROUNDS
+MAX_UPLOAD_BYTES = server_config.MAX_UPLOAD_BYTES
+MAX_MASTER_DATA_UPLOAD_BYTES = server_config.MAX_MASTER_DATA_UPLOAD_BYTES
+MAX_JSON_BODY_BYTES = server_config.MAX_JSON_BODY_BYTES
+MAX_WORKSHOP_IMAGE_BYTES = server_config.MAX_WORKSHOP_IMAGE_BYTES
+MAX_WORKSHOP_IMAGES = server_config.MAX_WORKSHOP_IMAGES
+MAX_WORKSHOP_EXPORT_DAYS = server_config.MAX_WORKSHOP_EXPORT_DAYS
+WORKSHOP_DRAFT_RETENTION_HOURS = server_config.WORKSHOP_DRAFT_RETENTION_HOURS
+LIBRARY_USER_QUOTA_BYTES = server_config.LIBRARY_USER_QUOTA_BYTES
+LOGIN_FAILURE_LIMIT = server_config.LOGIN_FAILURE_LIMIT
+LOGIN_WINDOW_SECONDS = server_config.LOGIN_WINDOW_SECONDS
+LOGIN_LOCK_SECONDS = server_config.LOGIN_LOCK_SECONDS
+OUTPUT_RETENTION_COUNT = server_config.OUTPUT_RETENTION_COUNT
+TRASH_RETENTION_DAYS = server_config.TRASH_RETENTION_DAYS
+BUSINESS_TZ = server_config.BUSINESS_TZ
+MAINTENANCE_INTERVAL_SECONDS = server_config.MAINTENANCE_INTERVAL_SECONDS
+BACKUP_ROOT = server_config.BACKUP_ROOT
+TRASH_ROOT = server_config.TRASH_ROOT
+AUTO_BACKUP_KEEP = server_config.AUTO_BACKUP_KEEP
+NOTIFY_WEBHOOK_URL = server_config.NOTIFY_WEBHOOK_URL
+
+ROLE_LABELS = server_config.ROLE_LABELS
+ROLE_CHOICES = server_config.ROLE_CHOICES
+LIBRARY_ROLES = server_config.LIBRARY_ROLES
+DAILY_PERSON_TYPES = server_config.DAILY_PERSON_TYPES
+DAILY_BRIEF_CATEGORIES = server_config.DAILY_BRIEF_CATEGORIES
+DAILY_BRIEF_STATUSES = server_config.DAILY_BRIEF_STATUSES
+WORKSHOP_ISSUE_CATEGORIES = server_config.WORKSHOP_ISSUE_CATEGORIES
+WORKSHOP_ISSUE_SEVERITIES = server_config.WORKSHOP_ISSUE_SEVERITIES
+WORKSHOP_ISSUE_TEMPLATE_FIELDS = server_config.WORKSHOP_ISSUE_TEMPLATE_FIELDS
+
+
+def role_label(role: object) -> str:
+    """兼容旧调用名，转由配置模块返回中文角色名称。"""
+    return server_config.role_label(role)
+
+
+def notify_webhook(title: str, content: str) -> None:
+    """异步向企业微信/钉钉兼容的 text webhook 推送消息。
+
+    通知是辅助功能，网络超时或第三方响应异常不能改变业务任务结果，因此独立守护线程
+    最多等待五秒并吞掉异常。消息内容不包含密码、会话令牌或文件绝对路径。
+    """
+    url = NOTIFY_WEBHOOK_URL
+    if not url:
+        return
+
+    def send() -> None:
+        """在守护线程中发送一次 webhook，并把所有外部网络失败降级为静默失败。
+
+        该闭包只捕获已经清理过的标题、正文和固定地址，不接触数据库事务。读取响应体可
+        促使连接正常结束，但第三方返回内容不参与业务判断。
+        """
+        try:
+            payload = json.dumps(
+                {"msgtype": "text", "text": {"content": f"{title}\n{content}"}},
+                ensure_ascii=False,
+            ).encode("utf-8")
+            request = urllib.request.Request(
+                url, data=payload,
+                headers={"Content-Type": "application/json"}, method="POST",
+            )
+            with urllib.request.urlopen(request, timeout=5) as response:
+                response.read()
+        except Exception:
+            pass  # 外部通知失败不回滚已经完成的本地业务事务。
+
+    threading.Thread(target=send, daemon=True).start()  # 守护线程不会阻止服务进程退出。
+
+
+# 数据库锁保护同一进程内的 SQLite 复合操作；其余锁分别隔离任务进程表、文件事务和
+# 需要临时改写环境变量的主数据 Core。拆开锁域可避免大型文件操作阻塞普通登录查询。
+DB_LOCK = _DB_LOCK
 JOB_LOCK = threading.RLock()
+STORAGE_LOCK = threading.RLock()
+MASTER_DATA_LOCK = threading.RLock()
 JOB_PROCESSES: dict[str, subprocess.Popen[str]] = {}
+ManagedConnection = _ManagedConnection
+ApiError = _ApiError
 
-WEB_ACTIONS = {
-    "attendance.run", "reconcile.run", "pivot.run", "purchase.run",
-    "delivery.run", "library.import", "rename.apply", "pdf.run",
-    "excel.run", "currency.convert", "text.transform",
-    "web.arrival", "web.invoice", "web.compare",
-}
 
-# 需要人工确认的业务先运行只读分析，确认后把同一个任务切回最终动作。
-REVIEW_ACTIONS = {
-    "web.reconcile.review": "reconcile.run",
-    "web.pivot.review": "pivot.run",
-    "web.invoice.review": "web.invoice",
-    "web.compare.review": "web.compare",
-}
-WEB_ACTIONS.update(REVIEW_ACTIONS)
+def db() -> sqlite3.Connection:
+    """使用当前服务数据路径创建连接，保留测试和部署时的路径注入能力。"""
+    return _db(DATA_ROOT, DB_PATH)
+
+
+def master_data_import_root() -> Path:
+    """返回 Web 服务共享的主数据导入元数据目录。"""
+    return DATA_ROOT / "master-data-imports"
+
+
+@contextlib.contextmanager
+def web_master_data_environment():
+    """为直接调用 Core 的管理员接口临时设置 Web 主数据路径。
+
+    Core 通过环境变量定位主数据文件，进程内环境变量又是全局状态，因此必须在专用锁内
+    保存旧值、设置 Web 路径并在 ``finally`` 中恢复。这样测试、桌面端嵌入调用或异常
+    中断都不会把随后任务永久指向错误的数据目录。
+    """
+    catalog_key = "FYT_CATALOG_PATH"
+    import_key = "FYT_MASTER_DATA_IMPORT_ROOT"
+    with MASTER_DATA_LOCK:
+        old_catalog = os.environ.get(catalog_key)
+        old_import = os.environ.get(import_key)
+        os.environ[catalog_key] = str(DATA_ROOT / "catalog.json")
+        os.environ[import_key] = str(master_data_import_root())
+        try:
+            yield
+        finally:
+            # 区分“原来不存在”和“原来为空字符串”，精确恢复调用前的进程环境。
+            if old_catalog is None:
+                os.environ.pop(catalog_key, None)
+            else:
+                os.environ[catalog_key] = old_catalog
+            if old_import is None:
+                os.environ.pop(import_key, None)
+            else:
+                os.environ[import_key] = old_import
+
+WEB_ACTIONS = server_config.WEB_ACTIONS
+REVIEW_ACTIONS = server_config.REVIEW_ACTIONS
 
 
 def feature_key_for_action(action: object) -> str:
-    """从普通或 Web 复核动作中提取看板使用的业务功能键。"""
-    parts = str(action or "").split(".")
-    if parts[0] == "web" and len(parts) > 1:
-        return parts[1]
-    return parts[0]
+    """兼容旧调用名，转由配置模块解析业务功能键。"""
+    return server_config.feature_key_for_action(action)
 
 
 def is_review_pending(row: sqlite3.Row) -> bool:
-    """判断任务是否已完成分析、正在等待人工确认。"""
-    return row["action"] in REVIEW_ACTIONS and row["status"] == "completed"
+    """兼容旧调用名，转由配置模块判断是否等待人工复核。"""
+    return server_config.is_review_pending(row)
 
-FEATURES = [
-    {"key": "attendance", "title": "考勤填报", "group": "人事", "description": "自动整理打卡数据并生成工时填报表"},
-    {"key": "reconcile", "title": "工时对账", "group": "人事", "description": "多方工时核对与异常汇总"},
-    {"key": "arrival", "title": "到料明细", "group": "业务", "description": "根据送货计划追踪到料进度"},
-    {"key": "pivot", "title": "销售透视", "group": "业务", "description": "清洗、汇总并输出可信度报告"},
-    {"key": "purchase", "title": "采购对账", "group": "业务", "description": "供应商采购数量逐行比对"},
-    {"key": "delivery", "title": "送货计划", "group": "业务", "description": "从物料清单生成送货计划"},
-    {"key": "library", "title": "数据仓库", "group": "数据", "description": "集中归档、检索与复用业务表格"},
-    {"key": "invoice", "title": "发票统计", "group": "财务", "description": "扫描 PDF 发票并按月汇总"},
-    {"key": "rename", "title": "批量重命名", "group": "工具", "description": "规则化改名并下载处理后的文件"},
-    {"key": "text", "title": "文本工具", "group": "工具", "description": "文本去重、排序、清理与内容提取"},
-    {"key": "pdf", "title": "PDF 工具", "group": "工具", "description": "PDF 合并、拆分、提取与删页"},
-    {"key": "excel", "title": "Excel 工具", "group": "工具", "description": "表格合并、拆分、转换与纵向汇总"},
-    {"key": "compare", "title": "表格比对", "group": "工具", "description": "按关键列定位新增、删除与差异"},
-    {"key": "currency", "title": "金额大写", "group": "财务", "description": "人民币金额转换为中文大写"},
-]
-
-
-class ManagedConnection(sqlite3.Connection):
-    """让 ``with db()`` 在提交后同时释放 Windows 文件句柄。"""
-
-    def __exit__(self, *args):
-        try:
-            return super().__exit__(*args)
-        finally:
-            self.close()
+FEATURES = server_config.FEATURES
+"""前端工作台功能目录。"""
 
 
 def now_iso() -> str:
+    """返回秒精度 UTC ISO 时间，作为数据库排序和并发版本的统一格式。"""
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def business_today() -> date:
+    """业务时区下的今天。用于按「哪一天」分桶的统计。"""
+    return datetime.now(BUSINESS_TZ).date()
+
+
+def business_date(value: str) -> str:
+    """把库里的 UTC 时间戳转成业务时区的日期字符串（YYYY-MM-DD）。
+
+    直接对时间戳做 value[:10] 取到的是 UTC 日期，与前端按本地时区渲染出的
+    日期不一致——本地 00:00-07:59 的任务会掉进前一天，导致「今天 0 件」。
+    """
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    try:
+        stamp = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return text[:10]
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    return stamp.astimezone(BUSINESS_TZ).date().isoformat()
+
+
+def business_day_bounds(value: date) -> tuple[str, str]:
+    """返回业务日期对应的 UTC 左闭右开时间范围。
+
+    数据库存 UTC，管理看板按业务时区分日；把本地午夜转换为 UTC 后查询 ``[start, end)``
+    能正确处理跨日边界，并避免相邻日期同时包含恰好午夜的记录。
+    """
+    start = datetime.combine(value, datetime.min.time(), tzinfo=BUSINESS_TZ)
+    end = start + timedelta(days=1)
+    return (
+        start.astimezone(timezone.utc).isoformat(timespec="seconds"),
+        end.astimezone(timezone.utc).isoformat(timespec="seconds"),
+    )
+
+
+def path_is_within(root: Path, target: Path) -> bool:
+    """判断目标路径是否位于指定目录内，避免字符串前缀和符号链接误判。"""
+    try:
+        root_resolved = root.resolve()
+        target_resolved = target.resolve()
+    except OSError:
+        return False
+    return target_resolved == root_resolved or root_resolved in target_resolved.parents
+
+
+def write_audit(actor_id: int, action: str) -> None:
+    """写入一条管理审计记录，供管理页“管理记录”查询。"""
+    with DB_LOCK, db() as connection:
+        connection.execute(
+            "INSERT INTO audit_log(actor_id, action, created_at) VALUES (?, ?, ?)",
+            (actor_id, action[:200], now_iso()),
+        )
+
+
+REPORT_RANGE_LABELS = report_service.REPORT_RANGE_LABELS
+
+
+def build_web_report_file(range_key: str, user_id: int | None, scope_all: bool) -> Path:
+    """保留原公开入口，委托报表服务生成业务报表。"""
+    return report_service.build_web_report_file(
+        _report_dependencies(), range_key, user_id, scope_all,
+    )
+
+
+def auto_weekly_report_if_due() -> str:
+    """保留原公开入口，执行每周业务报表任务。"""
+    return report_service.auto_weekly_report_if_due(_report_dependencies())
+
+
+def auto_monthly_report_if_due() -> str:
+    """保留原公开入口，执行每月业务报表任务。"""
+    return report_service.auto_monthly_report_if_due(_report_dependencies())
+
+
 def hash_password(password: str, salt: bytes | None = None) -> tuple[str, str]:
+    """使用 PBKDF2 生成密码盐值和摘要，二者均以十六进制持久化。
+
+    新密码默认生成 16 字节随机盐；校验旧密码时显式传入数据库盐。迭代轮数来自统一配置，
+    便于未来提升强度而不在认证服务中散落常量。
+    """
     salt = salt or secrets.token_bytes(16)
-    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, PBKDF2_ROUNDS)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, PBKDF2_ROUNDS)  # 密码始终按 UTF-8 编码，支持中文但不依赖系统代码页。
     return salt.hex(), digest.hex()
 
 
 def verify_password(password: str, salt_hex: str, digest_hex: str) -> bool:
+    """以恒定时间比较校验登录密码，避免摘要比较泄漏信息。"""
     _, candidate = hash_password(password, bytes.fromhex(salt_hex))
     return hmac.compare_digest(candidate, digest_hex)
 
 
-def db() -> sqlite3.Connection:
-    DATA_ROOT.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(DB_PATH, check_same_thread=False, factory=ManagedConnection)
-    connection.row_factory = sqlite3.Row
-    return connection
+def password_policy_error(password: str) -> str:
+    """返回面向用户的密码策略错误，空字符串表示通过。"""
+    if len(password) < 10:
+        return "密码至少 10 位"
+    if len(password) > 128:
+        return "密码不能超过 128 位"
+    if not any(char.isalpha() for char in password) or not any(char.isdigit() for char in password):
+        return "密码需同时包含字母和数字"
+    return ""
+
+
+def _daily_management_dependencies() -> daily_management_service.DailyManagementDependencies:
+    """组装日清维护、成品资料上传、快照和报告导出服务依赖。
+
+    这里把业务时区、上传上限、Core 解析器、统一投影和存储锁集中注入领域服务。日清
+    服务因此无需反向导入入口全局变量，测试可替换日期、数据目录和表格解析器，也能保证
+    到料、安全检查与生产计划始终复用 Core 的唯一业务规则。
+    """
+    return daily_management_service.DailyManagementDependencies(
+        db_lock=DB_LOCK,
+        db=db,
+        storage_lock=STORAGE_LOCK,
+        data_root=DATA_ROOT,
+        request_max_upload_bytes=MAX_UPLOAD_BYTES,
+        max_upload_bytes=MAX_MASTER_DATA_UPLOAD_BYTES,
+        person_types=DAILY_PERSON_TYPES,
+        brief_categories=DAILY_BRIEF_CATEGORIES,
+        brief_statuses=DAILY_BRIEF_STATUSES,
+        now_iso=now_iso,
+        business_today=business_today,
+        report_date=daily_report_date,
+        safe_name=safe_name,
+        daily_person_public=daily_person_public,
+        production_group_public=daily_production_group_public,
+        daily_attendance_public=daily_attendance_public,
+        production_attendance_public=daily_production_attendance_public,
+        daily_brief_public=daily_brief_public,
+        production_plan_public=production_plan_public,
+        source_upload_public=daily_source_upload_public,
+        production_plan_core=daily_production_plan_core,
+        arrival_core=arrival_core,
+        safety_check_core=daily_safety_check_core,
+        daily_report_core=daily_report_core,
+        build_daily_report_snapshot=build_daily_report_snapshot,
+        tree_size=_tree_size,
+        write_audit=write_audit,
+    )
+
+
+def _request_context_dependencies() -> request_context.RequestContextDependencies:
+    """组装会话读取、账号识别和角色权限服务依赖。"""
+    return request_context.RequestContextDependencies(
+        db_lock=DB_LOCK,
+        db=db,
+        now_iso=now_iso,
+        touch_interval_seconds=SESSION_TOUCH_INTERVAL_SECONDS,
+        role_label=role_label,
+    )
+
+
+def _static_file_dependencies() -> static_files.StaticFileDependencies:
+    """组装前端静态资源服务依赖。"""
+    return static_files.StaticFileDependencies(static_root=STATIC_ROOT)
+
+
+def _dashboard_dependencies() -> dashboard_service.DashboardDependencies:
+    """组装工作台概览与个人看板聚合服务依赖。"""
+    return dashboard_service.DashboardDependencies(
+        db_lock=DB_LOCK,
+        db=db,
+        now_iso=now_iso,
+        business_today=business_today,
+        business_date=business_date,
+        is_review_pending=is_review_pending,
+        feature_key_for_action=feature_key_for_action,
+        features=FEATURES,
+        json_list=_json_list,
+        user_public=user_public,
+        notification_public=notification_public,
+    )
+
+
+def _upload_dependencies() -> upload_service.UploadDependencies:
+    """组装临时业务上传与上传句柄解析服务依赖。"""
+    return upload_service.UploadDependencies(
+        db_lock=DB_LOCK,
+        db=db,
+        data_root=DATA_ROOT,
+        max_upload_bytes=MAX_UPLOAD_BYTES,
+        now_iso=now_iso,
+        safe_name=safe_name,
+    )
+
+
+def _bridge_dependencies() -> task_bridge.BridgeDependencies:
+    """组装 Core 子进程执行依赖，并保留测试动态替换数据根的能力。
+
+    这里不缓存依赖对象，因为测试、部署启动器和备份恢复流程会在运行期替换
+    ``DATA_ROOT``。每次调用读取当前全局值，才能保证任务仍写入当前账号的数据目录。
+    """
+    return task_bridge.BridgeDependencies(
+        root=ROOT,
+        data_root=DATA_ROOT,
+        job_lock=JOB_LOCK,
+        job_processes=JOB_PROCESSES,
+        append_job_log=append_job_log,
+        update_job=update_job,
+    )
+
+
+def _result_dependencies() -> task_results.ResultDependencies:
+    """组装任务结果投影、版本查询和受控下载路径依赖。"""
+    return task_results.ResultDependencies(
+        data_root=DATA_ROOT,
+        db_lock=DB_LOCK,
+        db=db,
+        json_list=_json_list,
+        json_value=_json_value,
+        is_review_pending=is_review_pending,
+    )
+
+
+def _runner_dependencies() -> task_runner.RunnerDependencies:
+    """组装后台任务状态机依赖，辅助维护失败不影响业务完成状态。"""
+    return task_runner.RunnerDependencies(
+        db_lock=DB_LOCK,
+        db=db,
+        now_iso=now_iso,
+        update_job=update_job,
+        execute_action=execute_action,
+        collect_result_files=collect_result_files,
+        public_result=public_result,
+        enforce_output_retention=enforce_output_retention,
+        notify_webhook=notify_webhook,
+        review_actions=REVIEW_ACTIONS,
+    )
+
+
+def _job_dependencies() -> jobs_service.JobDependencies:
+    """组装任务、人工复核和分享服务依赖。"""
+    return jobs_service.JobDependencies(
+        db_lock=DB_LOCK,
+        db=db,
+        job_lock=JOB_LOCK,
+        job_processes=JOB_PROCESSES,
+        web_actions=WEB_ACTIONS,
+        review_actions=REVIEW_ACTIONS,
+        now_iso=now_iso,
+        resolve_uploads=resolve_uploads,
+        run_web_job=run_web_job,
+        job_public=job_public,
+        json_list=_json_list,
+        json_object=_json_object,
+        owned_result_path=_owned_result_path,
+        write_audit=write_audit,
+    )
+
+
+def _workshop_dependencies() -> workshop_service.WorkshopDependencies:
+    """组装现场问题模板、图片存储、权限投影和导出服务依赖。
+
+    五类模板字段和图片限制来自统一配置，编辑、闭环、删除权限及公开投影由集中函数
+    注入。领域服务只使用这些显式能力，不读取入口内部状态，便于合成测试覆盖账号隔离、
+    目录穿越防护和模板导出规则。
+    """
+    return workshop_service.WorkshopDependencies(
+        db_lock=DB_LOCK,
+        db=db,
+        storage_lock=STORAGE_LOCK,
+        data_root=DATA_ROOT,
+        max_image_bytes=MAX_WORKSHOP_IMAGE_BYTES,
+        max_images=MAX_WORKSHOP_IMAGES,
+        categories=WORKSHOP_ISSUE_CATEGORIES,
+        template_fields=WORKSHOP_ISSUE_TEMPLATE_FIELDS,
+        now_iso=now_iso,
+        safe_name=safe_name,
+        issue_date=workshop_issue_date,
+        export_range=workshop_issue_export_range,
+        issue_dir=workshop_issue_dir,
+        resolve_image_path=resolve_workshop_image_path,
+        can_edit=workshop_issue_can_edit,
+        can_resolve=workshop_issue_can_resolve,
+        can_delete=workshop_issue_can_delete,
+        issue_public=workshop_issue_public,
+        tree_size=_tree_size,
+        write_audit=write_audit,
+        workshop_core=workshop_issue_core,
+    )
+
+
+def _library_dependencies() -> library_service.LibraryDependencies:
+    """组装共享文件数据库服务依赖。"""
+    return library_service.LibraryDependencies(
+        db_lock=DB_LOCK,
+        db=db,
+        data_root=DATA_ROOT,
+        storage_lock=STORAGE_LOCK,
+        max_upload_bytes=MAX_UPLOAD_BYTES,
+        user_quota_bytes=LIBRARY_USER_QUOTA_BYTES,
+        allowed_roles=LIBRARY_ROLES,
+        now_iso=now_iso,
+        safe_name=safe_name,
+        library_scope=library_scope,
+        library_category=library_category,
+        library_category_catalog=library_category_catalog,
+        classify_library_file=classify_library_file,
+        library_file_public=library_file_public,
+        resolve_library_path=resolve_library_path,
+        write_audit=write_audit,
+        unknown_category=core_library.UNKNOWN,
+    )
+
+
+def _notification_dependencies() -> notification_service.NotificationDependencies:
+    """组装消息和公告服务依赖。"""
+    return notification_service.NotificationDependencies(
+        db_lock=DB_LOCK,
+        db=db,
+        now_iso=now_iso,
+        announcement_public=announcement_public,
+        notification_public=notification_public,
+    )
+
+
+def _admin_account_dependencies() -> admin_account_service.AdminAccountDependencies:
+    """组装管理员账号服务依赖，保留当前数据路径和任务进程状态。"""
+    return admin_account_service.AdminAccountDependencies(
+        db_lock=DB_LOCK,
+        db=db,
+        now_iso=now_iso,
+        role_choices=ROLE_CHOICES,
+        user_public=user_public,
+        password_policy_error=password_policy_error,
+        hash_password=hash_password,
+        create_web_backup=create_web_backup,
+        job_lock=JOB_LOCK,
+        job_processes=JOB_PROCESSES,
+        data_root=DATA_ROOT,
+    )
+
+
+def _backup_dependencies() -> backup_service.BackupDependencies:
+    """组装备份创建、校验和恢复服务依赖。"""
+    return backup_service.BackupDependencies(
+        db_lock=DB_LOCK,
+        db=db,
+        data_root=DATA_ROOT,
+        db_path=DB_PATH,
+        job_lock=JOB_LOCK,
+        job_processes=JOB_PROCESSES,
+        auto_backup_keep=AUTO_BACKUP_KEEP,
+        version=VERSION,
+        now_iso=now_iso,
+        master_data_import_root=master_data_import_root,
+        catalog_file_lock=core_storage_lock.file_lock,
+        init_db=init_db,
+        write_audit=write_audit,
+    )
+
+
+def _admin_data_dependencies() -> admin_data_service.AdminDataDependencies:
+    """组装管理员数据总览、审计和资料维护服务依赖。"""
+    return admin_data_service.AdminDataDependencies(
+        db_lock=DB_LOCK,
+        db=db,
+        storage_lock=STORAGE_LOCK,
+        data_root=DATA_ROOT,
+        job_lock=JOB_LOCK,
+        job_processes=JOB_PROCESSES,
+        now_iso=now_iso,
+        user_public=user_public,
+        json_list=_json_list,
+        move_job_to_trash=move_job_to_trash,
+    )
+
+
+def _trash_dependencies() -> trash_service.TrashDependencies:
+    """组装回收站分类恢复服务依赖。"""
+    return trash_service.TrashDependencies(
+        db_lock=DB_LOCK,
+        db=db,
+        storage_lock=STORAGE_LOCK,
+        data_root=DATA_ROOT,
+        now_iso=now_iso,
+        json_value=_json_value,
+        json_list=_json_list,
+        library_categories=tuple(core_library.CATEGORIES),
+        library_unknown=core_library.UNKNOWN,
+        workshop_template_fields=tuple(WORKSHOP_ISSUE_TEMPLATE_FIELDS),
+        workshop_core=workshop_issue_core,
+    )
+
+
+def _master_data_dependencies() -> master_data_service.MasterDataDependencies:
+    """组装主数据正式档案与表格学习服务依赖。"""
+    return master_data_service.MasterDataDependencies(
+        db_lock=DB_LOCK,
+        db=db,
+        data_root=DATA_ROOT,
+        max_upload_bytes=MAX_MASTER_DATA_UPLOAD_BYTES,
+        now_iso=now_iso,
+        safe_name=safe_name,
+        environment=web_master_data_environment,
+        import_core=master_data_import_core,
+        catalog_core=material_catalog,
+    )
+
+
+def _report_dependencies() -> report_service.ReportDependencies:
+    """组装报表中心、批次跟踪与周期报表服务依赖。"""
+    return report_service.ReportDependencies(
+        db_lock=DB_LOCK,
+        db=db,
+        data_root=DATA_ROOT,
+        now_iso=now_iso,
+        json_value=_json_value,
+        collect_result_files=collect_result_files,
+        feature_key_for_action=feature_key_for_action,
+        path_is_within=path_is_within,
+        report_core=report_center_core,
+    )
+
+
+def _auth_dependencies() -> auth_service.AuthDependencies:
+    """按当前 Web 运行配置组装认证服务依赖，支持测试注入临时数据库。"""
+    return auth_service.AuthDependencies(
+        db=db,
+        db_lock=DB_LOCK,
+        now_iso=now_iso,
+        hash_password=hash_password,
+        verify_password=verify_password,
+        password_policy_error=password_policy_error,
+        user_public=user_public,
+        session_days=SESSION_DAYS,
+        touch_interval_seconds=SESSION_TOUCH_INTERVAL_SECONDS,
+        login_failure_limit=LOGIN_FAILURE_LIMIT,
+        login_window_seconds=LOGIN_WINDOW_SECONDS,
+        login_lock_seconds=LOGIN_LOCK_SECONDS,
+    )
+
+
+def _tree_size(path: Path) -> int:
+    """统计文件或目录树中普通文件的字节数，供配额和回收站展示使用。"""
+    if path.is_file():
+        return path.stat().st_size
+    if not path.is_dir():
+        return 0
+    return sum(item.stat().st_size for item in path.rglob("*") if item.is_file())  # 目录本身元数据不计入用户可理解的文件容量。
+
+
+def create_web_backup(created_by: int | None = None, auto: bool = False) -> dict[str, object]:
+    """保留原公开入口，委托备份服务创建可校验快照。"""
+    global BACKUP_ROOT
+    BACKUP_ROOT = DATA_ROOT / "backups"
+    return backup_service.create_web_backup(_backup_dependencies(), created_by, auto)
+
+
+def auto_backup_if_due() -> str:
+    """保留原公开入口，执行每日备份与滚动清理。"""
+    global BACKUP_ROOT
+    BACKUP_ROOT = DATA_ROOT / "backups"
+    return backup_service.auto_backup_if_due(_backup_dependencies())
+
+
+def verify_web_backup(path: Path) -> dict[str, object]:
+    """保留原公开入口，委托备份服务完成完整性校验。"""
+    return backup_service.verify_web_backup(path)
 
 
 def init_db() -> None:
-    with DB_LOCK, db() as connection:
-        connection.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT NOT NULL UNIQUE,
-                display_name TEXT NOT NULL,
-                salt TEXT NOT NULL,
-                password_hash TEXT NOT NULL,
-                role TEXT NOT NULL DEFAULT 'user',
-                status TEXT NOT NULL DEFAULT 'pending',
-                created_at TEXT NOT NULL,
-                approved_at TEXT
-            );
-            CREATE TABLE IF NOT EXISTS sessions (
-                token TEXT PRIMARY KEY,
-                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                expires_at INTEGER NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS audit_log (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                actor_id INTEGER,
-                action TEXT NOT NULL,
-                target_user_id INTEGER,
-                created_at TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS uploads (
-                handle TEXT PRIMARY KEY,
-                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                group_id TEXT NOT NULL,
-                name TEXT NOT NULL,
-                path TEXT NOT NULL,
-                size INTEGER NOT NULL,
-                created_at TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS web_jobs (
-                id TEXT PRIMARY KEY,
-                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                action TEXT NOT NULL,
-                title TEXT NOT NULL,
-                status TEXT NOT NULL,
-                progress INTEGER NOT NULL DEFAULT 0,
-                logs TEXT NOT NULL DEFAULT '[]',
-                result TEXT,
-                error TEXT,
-                files TEXT NOT NULL DEFAULT '[]',
-                cancelled INTEGER NOT NULL DEFAULT 0,
-                payload TEXT NOT NULL DEFAULT '{}',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            );
-            """
-        )
-        # 老版本数据库没有任务 payload，使用幂等迁移以保留已有任务记录。
-        columns = {row["name"] for row in connection.execute("PRAGMA table_info(web_jobs)").fetchall()}
-        if "payload" not in columns:
-            connection.execute("ALTER TABLE web_jobs ADD COLUMN payload TEXT NOT NULL DEFAULT '{}'")
-        admin = connection.execute("SELECT id FROM users WHERE username = ?", ("admin",)).fetchone()
-        if admin is None:
-            salt, digest = hash_password(os.environ.get("FYT_ADMIN_PASSWORD", "admin123456"))
-            connection.execute(
-                "INSERT INTO users(username, display_name, salt, password_hash, role, status, created_at, approved_at) VALUES (?, ?, ?, ?, 'admin', 'approved', ?, ?)",
-                ("admin", "系统管理员", salt, digest, now_iso(), now_iso()),
-            )
-        connection.execute("DELETE FROM sessions WHERE expires_at < ?", (int(time.time()),))
-        connection.execute(
-            "UPDATE web_jobs SET status = 'interrupted', error = ? "
-            "WHERE status IN ('queued', 'running')",
-            ("服务端重启，任务已中断",),
-        )
+    """初始化当前配置指向的 Web 数据库，保留旧入口兼容测试和部署脚本。"""
+    initialize_database(
+        db_lock=DB_LOCK,
+        db_factory=db,
+        now_iso=now_iso,
+        hash_password=hash_password,
+        password_policy_error=password_policy_error,
+        workshop_issue_template_fields=WORKSHOP_ISSUE_TEMPLATE_FIELDS,
+    )
 
 
-def user_public(row: sqlite3.Row) -> dict[str, object]:
-    return {
-        "id": row["id"], "username": row["username"], "display_name": row["display_name"],
-        "role": row["role"], "status": row["status"], "created_at": row["created_at"],
-        "approved_at": row["approved_at"],
-    }
+def _maintenance_dependencies() -> maintenance_service.MaintenanceDependencies:
+    """组装输出保留、回收站、草稿和主数据自动维护的运行时依赖。
+
+    数据库锁、存储锁、保留周期和路径函数在此统一交给维护服务；主数据合并额外包裹 Web
+    环境上下文。维护模块因此既不依赖启动入口，也能在测试中注入固定时间和临时目录。
+    """
+    def merge_ready_batches(limit: int) -> dict[str, object]:
+        """在 Web 主数据隔离环境中自动合并已确认且仍无冲突的批次。
+
+        周期维护只传入处理上限，真正的状态复核和原子合并仍由 Core 完成。环境上下文
+        确保自动任务不会读取桌面端的本地主数据目录。
+        """
+        with web_master_data_environment():
+            return master_data_import_core.merge_ready_batches(limit=limit)
+
+    return maintenance_service.MaintenanceDependencies(
+        db_lock=DB_LOCK,
+        db=db,
+        data_root=DATA_ROOT,
+        storage_lock=STORAGE_LOCK,
+        output_retention_count=OUTPUT_RETENTION_COUNT,
+        trash_retention_days=TRASH_RETENTION_DAYS,
+        workshop_draft_retention_hours=WORKSHOP_DRAFT_RETENTION_HOURS,
+        tree_size=_tree_size,
+        is_review_pending=is_review_pending,
+        workshop_issue_dir=workshop_issue_dir,
+        now_iso=now_iso,
+        merge_ready_batches=merge_ready_batches,
+        merge_environment=web_master_data_environment,
+    )
+
+
+def move_job_to_trash(
+    job_id: str,
+    deleted_by: int | None = None,
+    audit_action: str | None = None,
+) -> str | None:
+    """把任务记录及所属输出目录原子移入回收站。"""
+    return maintenance_service.move_job_to_trash(
+        _maintenance_dependencies(), job_id, deleted_by, audit_action,
+    )
+
+
+def enforce_output_retention(limit: int = OUTPUT_RETENTION_COUNT) -> int:
+    """每个账号仅保留最近若干个包含输出文件的已完成任务。"""
+    return maintenance_service.enforce_output_retention(
+        _maintenance_dependencies(), limit, move_job_to_trash,
+    )
+
+
+def purge_expired_trash(
+    retention_days: int = TRASH_RETENTION_DAYS,
+    current_time: datetime | None = None,
+) -> tuple[int, int]:
+    """彻底删除超过保留期的回收站数据，失败项目留待下次重试。"""
+    return maintenance_service.purge_expired_trash(
+        _maintenance_dependencies(), retention_days, current_time,
+    )
+
+
+def cleanup_stale_workshop_drafts(
+    retention_hours: int = WORKSHOP_DRAFT_RETENTION_HOURS,
+    current_time: datetime | None = None,
+) -> int:
+    """删除长期未发布的车间问题草稿及其临时图片。"""
+    return maintenance_service.cleanup_stale_workshop_drafts(
+        _maintenance_dependencies(), retention_hours, current_time,
+    )
+
+
+def merge_confirmed_master_data(limit: int = 5) -> dict[str, int]:
+    """定期合并管理员已确认的主数据批次，并记录系统审计。"""
+    return maintenance_service.merge_confirmed_master_data(_maintenance_dependencies(), limit)
+
+
+def run_storage_maintenance(
+    output_limit: int = OUTPUT_RETENTION_COUNT,
+    trash_retention_days: int = TRASH_RETENTION_DAYS,
+    current_time: datetime | None = None,
+) -> dict[str, int]:
+    """执行一次输出保留和回收站清理维护。"""
+    deps = _maintenance_dependencies()
+    return maintenance_service.run_storage_maintenance(
+        deps, output_limit, trash_retention_days, current_time,
+    )
+
+
+user_public = presenters.user_public
+daily_person_public = presenters.daily_person_public
+daily_attendance_public = presenters.daily_attendance_public
+daily_production_shift_public = presenters.daily_production_shift_public
+daily_production_group_public = presenters.daily_production_group_public
+daily_production_attendance_public = presenters.daily_production_attendance_public
+daily_brief_public = presenters.daily_brief_public
+production_plan_public = presenters.production_plan_public
+daily_source_upload_public = presenters.daily_source_upload_public
+notification_public = presenters.notification_public
+announcement_public = presenters.announcement_public
 
 
 def safe_name(value: str) -> str:
-    """把浏览器文件名收敛为服务端可安全保存的单层名称。"""
-    name = Path(value.replace("\\", "/")).name.strip().strip(".")
+    """把浏览器文件名收敛为服务端可安全保存的单层名称。
+
+    先同时按 Windows 与 URL 风格分隔符取 basename，再移除 Windows 禁止字符和控制字符；
+    结果限制 180 字符，为后续 UUID 目录、临时后缀和压缩包名称留出路径长度空间。
+    """
+    name = Path(value.replace("\\", "/")).name.strip().strip(".")  # ``C:\\a`` 在 Linux 也按 Windows 路径剥离目录。
     name = "".join(char for char in name if char not in '<>:"/\\|?*' and ord(char) >= 32)
     return name[:180] or "未命名文件"
 
 
+def library_scope(value: object) -> str:
+    """校验共享文件的可见范围。"""
+    scope = str(value or "team").strip().lower()
+    if scope not in {"team", "private"}:
+        raise ApiError(HTTPStatus.BAD_REQUEST, "文件可见范围无效")
+    return scope
+
+
+def library_category_catalog() -> list[dict[str, str]]:
+    """从 core 分类注册表生成 Web 可用分类，新增业务模块无需重复维护。"""
+    keys = [*core_library.CATEGORIES, core_library.UNKNOWN]
+    return [{"key": key, "title": core_library.CATEGORY_TITLES.get(key, key)} for key in keys]
+
+
+def library_category(value: object) -> str:
+    """校验分类键，避免客户端提交未注册分类污染索引。"""
+    category = str(value or core_library.UNKNOWN).strip()
+    valid = {item["key"] for item in library_category_catalog()}
+    if category not in valid:
+        raise ApiError(HTTPStatus.BAD_REQUEST, "数据库文件分类无效")
+    return category
+
+
+def classify_library_file(path: Path, log=None) -> dict[str, object]:
+    """调用桌面端同一分类器，并整理为可持久化的 Web 元数据。
+
+    分类属于辅助信息，失败时文件仍可进入数据库并标记为未知，管理员之后可以手动维护。
+    所有列表、分值和工作表名称都在这里限制类型与长度，不能把 Core 的任意对象直接写入
+    JSON 或返回给浏览器。
+    """
+    try:
+        info = core_library.classify(str(path), log=log)
+    except Exception as exc:  # 分类失败不应让已写入的文件变成孤儿文件
+        if log:
+            log(f"分类暂未完成：{type(exc).__name__}")
+        info = {
+            "category": core_library.UNKNOWN,
+            "confidence": 0,
+            "categories": [],
+            "signals": ["自动识别失败"],
+            "sheet": "",
+            "sheets": {},
+        }
+    category = library_category(info.get("category", core_library.UNKNOWN))
+    categories = [
+        value for value in info.get("categories", [])
+        if isinstance(value, str) and value in {item["key"] for item in library_category_catalog()}
+    ]
+    if not categories:
+        categories = [category]
+    signals = info.get("signals", [])
+    if not isinstance(signals, list):
+        signals = []
+    sheets = info.get("sheets", {})
+    if not isinstance(sheets, dict):
+        sheets = {}
+    return {
+        "category": category,
+        "categories": list(dict.fromkeys(categories)),  # 保持识别优先顺序并去重。
+        "confidence": max(0, min(100, int(info.get("confidence", 0) or 0))),
+        "signals": [str(value) for value in signals[:30]],
+        "sheet": str(info.get("sheet", "") or "")[:200],
+        "category_sheets": {str(key): str(value) for key, value in sheets.items() if isinstance(key, str)},
+    }
+
+
+def _json_list(value: object, fallback: list[object] | None = None) -> list[object]:
+    """兼容旧调用名，转由 ``web_backend.serializers`` 处理。"""
+    return _json_list_from_backend(value, fallback)
+
+
+def _json_value(value: object, fallback: object = None) -> object:
+    """兼容旧调用名，转由 ``web_backend.serializers`` 处理。"""
+    return _json_value_from_backend(value, fallback)
+
+
+def _json_object(value: object, fallback: dict[str, object] | None = None) -> dict[str, object]:
+    """兼容旧调用名，转由 ``web_backend.serializers`` 处理。"""
+    return _json_object_from_backend(value, fallback)
+
+
+library_file_public = presenters.library_file_public
+
+
+def resolve_library_path(row: sqlite3.Row) -> Path:
+    """把数据库路径限制在所属账号的共享文件目录内。"""
+    target = Path(row["path"]).resolve()
+    root = (DATA_ROOT / "users" / str(row["owner_id"]) / "library").resolve()
+    if root not in target.parents:
+        raise ApiError(HTTPStatus.BAD_REQUEST, "数据库文件路径无效")
+    return target
+
+
+def workshop_issue_date(value: object) -> str:
+    """校验问题日期并拒绝未来日期。"""
+    text = str(value or "").strip()
+    try:
+        parsed = datetime.strptime(text, "%Y-%m-%d").date()
+    except ValueError as exc:
+        raise ApiError(HTTPStatus.BAD_REQUEST, "问题日期无效") from exc
+    if parsed > business_today():
+        raise ApiError(HTTPStatus.BAD_REQUEST, "问题日期不能晚于今天")
+    return parsed.isoformat()
+
+
+def workshop_issue_export_range(query: dict[str, list[str]]) -> tuple[str, str]:
+    """读取现场问题导出日期范围，并兼容旧版单日 date 参数。"""
+    default_date = business_today().isoformat()
+    legacy_date = query.get("date", [default_date])[0]
+    start_date = workshop_issue_date(query.get("start_date", [legacy_date])[0])
+    end_date = workshop_issue_date(query.get("end_date", [start_date])[0])
+    parsed_start = datetime.strptime(start_date, "%Y-%m-%d").date()
+    parsed_end = datetime.strptime(end_date, "%Y-%m-%d").date()
+    if parsed_start > parsed_end:
+        raise ApiError(HTTPStatus.BAD_REQUEST, "开始日期不能晚于结束日期")
+    if (parsed_end - parsed_start).days + 1 > MAX_WORKSHOP_EXPORT_DAYS:
+        raise ApiError(HTTPStatus.BAD_REQUEST, f"单次最多导出 {MAX_WORKSHOP_EXPORT_DAYS} 天的问题报表")
+    return start_date, end_date
+
+
+def daily_report_date(value: object) -> str:
+    """校验日清报告日期，按业务时区拒绝未来日期。"""
+    text = str(value or "").strip()
+    try:
+        parsed = datetime.strptime(text, "%Y-%m-%d").date()
+    except ValueError as exc:
+        raise ApiError(HTTPStatus.BAD_REQUEST, "日清报告日期无效") from exc
+    if parsed > business_today():
+        raise ApiError(HTTPStatus.BAD_REQUEST, "日清报告日期不能晚于今天")
+    return parsed.isoformat()
+
+
+def _daily_report_dependencies() -> daily_report_service.DailyReportDependencies:
+    """组装日清快照查询依赖，避免服务模块反向导入启动入口。"""
+    return daily_report_service.DailyReportDependencies(
+        db_lock=DB_LOCK,
+        db=db,
+        business_day_bounds=business_day_bounds,
+        workshop_issue_select=workshop_service.workshop_issue_select,
+        attendance_rows=daily_management_service.attendance_rows,
+        production_attendance_rows=daily_management_service.production_attendance_rows,
+        daily_attendance_public=daily_attendance_public,
+        daily_production_attendance_public=daily_production_attendance_public,
+        daily_brief_public=daily_brief_public,
+        production_plan_public=production_plan_public,
+        daily_source_upload_public=daily_source_upload_public,
+        workshop_issue_public=workshop_issue_public,
+        build_snapshot=daily_report_core.build_snapshot,
+        now_iso=now_iso,
+    )
+
+
+def build_daily_report_snapshot(report_date: str, user: sqlite3.Row) -> dict[str, object]:
+    """查询全账号到料与现场问题，生成管理层日清快照。"""
+    return daily_report_service.build_daily_report_snapshot(
+        report_date, user, _daily_report_dependencies(),
+    )
+
+
+def workshop_issue_dir(user_id: int, issue_id: str) -> Path:
+    """返回指定账号和现场问题的隔离图片目录。"""
+    return DATA_ROOT / "users" / str(user_id) / "workshop-issues" / issue_id
+
+
+def resolve_workshop_image_path(row: sqlite3.Row) -> Path:
+    """把现场图片限制在问题上传者的隔离目录内。
+
+    数据库中的路径可能来自旧版本或备份恢复，使用前必须重新解析父目录；只比较字符串
+    前缀会把 ``user/1-old`` 错判为 ``user/1`` 的子目录。
+    """
+    target = Path(row["path"]).resolve()
+    root = workshop_issue_dir(int(row["user_id"]), str(row["issue_id"])).resolve()
+    if root not in target.parents:
+        raise ApiError(HTTPStatus.BAD_REQUEST, "现场图片路径无效")
+    return target
+
+
+workshop_issue_can_edit = presenters.workshop_issue_can_edit
+workshop_issue_can_resolve = presenters.workshop_issue_can_resolve
+workshop_issue_can_delete = presenters.workshop_issue_can_delete
+workshop_issue_public = presenters.workshop_issue_public
+
+
 def update_job(job_id: str, **values: object) -> None:
-    """原子更新 Web 任务状态。"""
+    """更新 Web 任务的一组受控字段，并统一刷新版本时间。
+
+    调用方传入的键只来自服务端内部状态机，不接受 HTTP 字段；值仍使用参数化 SQL。
+    一次语句更新全部字段，避免进度、状态和错误信息出现可观察的中间组合。
+    """
     if not values:
         return
     values["updated_at"] = now_iso()
-    columns = ", ".join(f"{key} = ?" for key in values)
+    columns = ", ".join(f"{key} = ?" for key in values)  # 键为内部常量，业务值不参与 SQL 拼接。
     with DB_LOCK, db() as connection:
         connection.execute(
             f"UPDATE web_jobs SET {columns} WHERE id = ?",
@@ -221,758 +1010,142 @@ def update_job(job_id: str, **values: object) -> None:
 
 
 def append_job_log(job_id: str, message: str) -> None:
-    """追加任务日志并限制历史长度，避免数据库无限增长。"""
+    """追加任务日志并仅保留最近 500 条，避免任务记录无限增长。"""
     with DB_LOCK, db() as connection:
         row = connection.execute("SELECT logs FROM web_jobs WHERE id = ?", (job_id,)).fetchone()
-        logs = json.loads(row["logs"] or "[]") if row else []
+        logs = _json_list(row["logs"] if row else "[]")
         logs.append(str(message))
         connection.execute(
             "UPDATE web_jobs SET logs = ?, updated_at = ? WHERE id = ?",
-            (json.dumps(logs[-500:], ensure_ascii=False), now_iso(), job_id),
+            (json.dumps(logs[-500:], ensure_ascii=False), now_iso(), job_id),  # 从尾部截取以保留最接近失败现场的日志。
         )
+
+
+def _owned_upload_path(path_value: str | Path, user_id: int) -> Path:
+    """保留原调用名，校验路径属于当前账号上传目录。"""
+    return upload_service.owned_upload_path(
+        _upload_dependencies(), path_value, user_id,
+    )
 
 
 def resolve_uploads(value: object, user_id: int) -> object:
-    """递归把用户上传句柄解析为所属文件路径，拒绝跨用户引用。"""
-    if isinstance(value, dict):
-        return {key: resolve_uploads(item, user_id) for key, item in value.items()}
-    if isinstance(value, list):
-        return [resolve_uploads(item, user_id) for item in value]
-    if not isinstance(value, str):
-        return value
-    if value.startswith("upload:"):
-        with DB_LOCK, db() as connection:
-            row = connection.execute(
-                "SELECT path FROM uploads WHERE handle = ? AND user_id = ?",
-                (value, user_id),
-            ).fetchone()
-        if row is None or not os.path.isfile(row["path"]):
-            raise ValueError("上传文件不存在或不属于当前账号")
-        return row["path"]
-    if value.startswith("upload-group:"):
-        group_id = value.split(":", 1)[1]
-        with DB_LOCK, db() as connection:
-            row = connection.execute(
-                "SELECT path FROM uploads WHERE group_id = ? AND user_id = ? LIMIT 1",
-                (group_id, user_id),
-            ).fetchone()
-        if row is None:
-            raise ValueError("上传批次不存在或不属于当前账号")
-        return str(Path(row["path"]).parent)
-    return value
+    """保留原调用名，递归解析当前账号的上传句柄。"""
+    return upload_service.resolve_uploads(
+        _upload_dependencies(), value, user_id,
+    )
 
 
 def run_bridge(job_id: str, user_id: int, action: str, payload: dict[str, object]) -> object:
-    """在独立 Python 进程执行桥接动作，并转发日志与进度。"""
-    env = os.environ.copy()
-    output_root = DATA_ROOT / "users" / str(user_id) / "jobs" / job_id / "outputs"
-    cache_path = DATA_ROOT / "users" / str(user_id) / "cache" / "增量缓存.json"
-    env.update({
-        "PYTHONIOENCODING": "utf-8", "FYT_BRIDGE_EVENTS": "1",
-        "FYT_REQUEST_ID": job_id, "FYT_WEB_OUTPUT_ROOT": str(output_root),
-        "FYT_INCREMENTAL_CACHE_PATH": str(cache_path),
-    })
-    process = subprocess.Popen(
-        [sys.executable, "-m", "core.tauri_bridge"],
-        cwd=ROOT,
-        env=env,
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
+    """通过独立 Core 子进程执行任务，并转发结构化日志与进度。
+
+    具体的环境隔离、标准流消费和进程清理位于任务桥接模块。本包装保留历史公开名称，
+    也确保测试在动态替换数据根后能够取得一份新的依赖快照。
+    """
+    return task_bridge.run_bridge(
+        job_id, user_id, action, payload, _bridge_dependencies(),
     )
-    with JOB_LOCK:
-        JOB_PROCESSES[job_id] = process
-    request = json.dumps({"action": action, "payload": payload}, ensure_ascii=False)
-    assert process.stdin is not None
-    process.stdin.write(request)
-    process.stdin.close()
-    stderr_lines: list[str] = []
-
-    def read_events() -> None:
-        assert process.stderr is not None
-        for raw in process.stderr:
-            line = raw.rstrip()
-            if line.startswith("__FYT_EVENT__"):
-                try:
-                    event = json.loads(line[len("__FYT_EVENT__"):])
-                    if event.get("kind") == "log":
-                        append_job_log(job_id, str(event.get("value", "")))
-                    elif event.get("kind") == "progress":
-                        update_job(job_id, progress=max(0, min(99, int(event.get("value", 0)))))
-                except (TypeError, ValueError, json.JSONDecodeError):
-                    continue
-            elif line:
-                stderr_lines.append(line)
-
-    reader = threading.Thread(target=read_events, daemon=True)
-    reader.start()
-    assert process.stdout is not None
-    raw_output = process.stdout.read()
-    return_code = process.wait()
-    reader.join(timeout=2)
-    process.stdout.close()
-    process.stderr.close()
-    with JOB_LOCK:
-        JOB_PROCESSES.pop(job_id, None)
-    if return_code != 0:
-        detail = stderr_lines[-1] if stderr_lines else "业务核心进程执行失败"
-        raise RuntimeError(detail)
-    response = json.loads(raw_output or "{}")
-    if not response.get("ok"):
-        raise RuntimeError(str(response.get("error") or "业务核心返回失败"))
-    return response.get("data")
 
 
 def execute_action(job_id: str, user_id: int, action: str, payload: dict[str, object]) -> object:
-    """执行直接桥接动作或 Web 端需要的多阶段组合动作。"""
-    if action == "web.reconcile.review":
-        return run_bridge(job_id, user_id, "reconcile.analyze", payload)
-    if action == "web.pivot.review":
-        return run_bridge(job_id, user_id, "pivot.analyze", payload)
-    if action == "web.compare.review":
-        base = {key: payload.get(key) for key in ("file1", "file2", "sheet1", "sheet2")}
-        return run_bridge(job_id, user_id, "compare.prepare", base)
-    if action == "web.invoice.review":
-        paths = [str(path) for path in payload.get("paths", []) if path]
-        if not paths:
-            raise ValueError("请上传至少一个 PDF 发票文件")
-        root = os.path.commonpath(paths)
-        if os.path.isfile(root):
-            root = os.path.dirname(root)
-        return run_bridge(job_id, user_id, "invoice.scan", {"root": root})
-    if action == "web.arrival":
-        prepared = run_bridge(job_id, user_id, "arrival.prepare", {"paths": payload.get("paths", [])})
-        return run_bridge(job_id, user_id, "arrival.run", {
-            "rows": prepared.get("rows", []) if isinstance(prepared, dict) else [],
-            "top_label": payload.get("top_label", ""),
-        })
-    if action == "web.compare":
-        base = {key: payload.get(key) for key in ("file1", "file2", "sheet1", "sheet2")}
-        prepared = run_bridge(job_id, user_id, "compare.prepare", base)
-        common = prepared.get("common", []) if isinstance(prepared, dict) else []
-        key = str(payload.get("key") or (common[0] if common else ""))
-        if not key:
-            raise ValueError("两张表没有可用于配对的公共列")
-        return run_bridge(job_id, user_id, "compare.run", {**base, "key": key})
-    if action == "web.invoice":
-        paths = [str(path) for path in payload.get("paths", []) if path]
-        if not paths:
-            raise ValueError("请上传至少一个 PDF 发票文件")
-        root = os.path.commonpath(paths)
-        if os.path.isfile(root):
-            root = os.path.dirname(root)
-        scanned_envelope = run_bridge(job_id, user_id, "invoice.scan", {"root": root})
-        scan = scanned_envelope.get("result", {}) if isinstance(scanned_envelope, dict) else {}
-        invoices = scan.get("invoices", []) if isinstance(scan, dict) else []
-        rows = payload.get("rows")
-        if not isinstance(rows, list):
-            include_normal = bool(payload.get("include_normal"))
-            rows = [{
-                "num": item.get("num"), "date": item.get("date"),
-                "seller": item.get("seller"), "item": item.get("item_seed") or "",
-                "amount": item.get("amount"), "tax": item.get("tax"),
-                "total": item.get("total"), "rate": item.get("rate"),
-                "note": item.get("note_seed") or "",
-            } for item in invoices if include_normal or item.get("special")]
-        if not rows:
-            raise ValueError("未识别到增值税专用发票")
-        month = str(payload.get("month") or scan.get("suggested_month") or "")
-        return run_bridge(job_id, user_id, "invoice.generate", {"scan": scan, "rows": rows, "month": month})
-    return run_bridge(job_id, user_id, action, payload)
+    """执行 Web 特殊两阶段动作，普通动作直接进入统一 Core 桥接层。"""
+    return task_actions.execute_action(job_id, user_id, action, payload, run_bridge)
 
 
 def collect_result_files(value: object) -> list[dict[str, object]]:
-    """从桥接结果提取可下载文件，目录结果递归展开。"""
-    found: dict[str, dict[str, object]] = {}
-
-    def add(path_value: str) -> None:
-        path = Path(path_value)
-        candidates = [path] if path.is_file() else list(path.rglob("*"))[:200] if path.is_dir() else []
-        for item in candidates:
-            if item.is_file():
-                resolved = str(item.resolve())
-                found[resolved] = {"name": item.name, "path": resolved, "size": item.stat().st_size}
-
-    def visit(item: object) -> None:
-        if isinstance(item, dict):
-            for child in item.values():
-                visit(child)
-        elif isinstance(item, list):
-            for child in item:
-                visit(child)
-        elif isinstance(item, str) and os.path.isabs(item) and os.path.exists(item):
-            add(item)
-
-    visit(value)
-    return list(found.values())
+    """发现任务结果文件；目录遍历达到两百项后立即停止。"""
+    return task_results.collect_result_files(value)
 
 
 def public_result(value: object) -> object:
-    """隐藏服务端绝对路径，只向浏览器返回文件名和业务数据。"""
-    if isinstance(value, dict):
-        return {key: public_result(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return [public_result(item) for item in value]
-    if isinstance(value, str) and os.path.isabs(value):
-        return Path(value).name
-    return value
+    """隐藏结果中的服务端绝对路径，保留业务数据和文件名。"""
+    return task_results.public_result(value)
 
 
 def job_public(row: sqlite3.Row) -> dict[str, object]:
-    """把持久化任务转换为浏览器可用结构。"""
-    files = json.loads(row["files"] or "[]")
-    review_pending = is_review_pending(row)
-    return {
-        "id": row["id"], "action": row["action"], "title": row["title"],
-        "status": row["status"], "progress": row["progress"],
-        "logs": json.loads(row["logs"] or "[]"),
-        "result": json.loads(row["result"]) if row["result"] else None,
-        "error": row["error"], "created_at": row["created_at"],
-        "updated_at": row["updated_at"],
-        "review_pending": review_pending,
-        "files": [{
-            "name": item["name"], "size": item["size"],
-            "url": f"/api/jobs/{row['id']}/files/{index}",
-        } for index, item in enumerate(files)],
-    }
+    """把任务、历史版本和统一业务展示模型投影为浏览器公开结构。"""
+    return task_results.job_public(row, _result_dependencies())
+
+
+def _bridge_command() -> list[str]:
+    """保留部署工具使用的桥接命令入口。"""
+    return task_bridge.bridge_command()
 
 
 def run_web_job(job_id: str, user_id: int, action: str, payload: dict[str, object]) -> None:
-    """后台执行 Web 任务并持久化结果。"""
-    update_job(job_id, status="running", progress=1)
-    try:
-        result = execute_action(job_id, user_id, action, payload)
-        with DB_LOCK, db() as connection:
-            row = connection.execute("SELECT cancelled FROM web_jobs WHERE id = ?", (job_id,)).fetchone()
-        if row and row["cancelled"]:
-            update_job(job_id, status="cancelled", error="任务已取消")
-            return
-        files = collect_result_files(result)
-        update_job(
-            job_id,
-            status="completed",
-            progress=100,
-            result=json.dumps(public_result(result), ensure_ascii=False),
-            files=json.dumps(files, ensure_ascii=False),
-        )
-    except Exception as exc:  # pragma: no cover - 具体业务异常由接口回传
-        with DB_LOCK, db() as connection:
-            row = connection.execute("SELECT cancelled FROM web_jobs WHERE id = ?", (job_id,)).fetchone()
-        update_job(
-            job_id,
-            status="cancelled" if row and row["cancelled"] else "failed",
-            error="任务已取消" if row and row["cancelled"] else str(exc),
-        )
+    """运行后台任务状态机并持久化结果、版本、取消和失败状态。"""
+    task_runner.run_web_job(
+        job_id, user_id, action, payload, _runner_dependencies(),
+    )
 
 
-class ApiError(Exception):
-    def __init__(self, status: int, message: str):
-        super().__init__(message)
-        self.status = status
-        self.message = message
+def _owned_result_path(path_value: object, user_id: int, job_id: str) -> Path:
+    """校验结果路径属于当前账号上传区或当前任务输出区。"""
+    return task_results.owned_result_path(
+        path_value, user_id, job_id, _result_dependencies(),
+    )
+def _handler_bindings() -> HandlerBindings:
+    """组装 HTTP 处理器依赖，领域工厂在每次请求时读取当前运行路径。
+
+    测试会动态替换数据根和静态目录，因此这里只固定工厂函数，不提前构造包含路径的
+    依赖对象。三个轻量包装也保留对入口全局函数的运行期查找能力。
+    """
+    return HandlerBindings(
+        version=VERSION,
+        max_json_body_bytes=MAX_JSON_BODY_BYTES,
+        now_iso=lambda: now_iso(),
+        user_public=lambda row: user_public(row),
+        resolve_uploads=lambda value, user_id: resolve_uploads(value, user_id),
+        request_context_dependencies=_request_context_dependencies,
+        static_file_dependencies=_static_file_dependencies,
+        dashboard_dependencies=_dashboard_dependencies,
+        upload_dependencies=_upload_dependencies,
+        library_dependencies=_library_dependencies,
+        workshop_dependencies=_workshop_dependencies,
+        job_dependencies=_job_dependencies,
+        daily_management_dependencies=_daily_management_dependencies,
+        auth_dependencies=_auth_dependencies,
+        admin_account_dependencies=_admin_account_dependencies,
+        backup_dependencies=_backup_dependencies,
+        master_data_dependencies=_master_data_dependencies,
+        admin_data_dependencies=_admin_data_dependencies,
+        trash_dependencies=_trash_dependencies,
+        report_dependencies=_report_dependencies,
+        notification_dependencies=_notification_dependencies,
+    )
 
 
-class Handler(BaseHTTPRequestHandler):
-    server_version = "FYTWeb/1.0"
+class Handler(ApiHandler):
+    """装配当前应用依赖的 HTTP Handler；协议实现位于独立 HTTP 模块。"""
 
-    def log_message(self, fmt: str, *args: object) -> None:
-        sys.stdout.write(f"[{datetime.now().strftime('%H:%M:%S')}] {self.address_string()} {fmt % args}\n")
+    bindings = _handler_bindings()
+# 保留历史导入名；实际服务生命周期实现位于 ``web_backend.server_runtime``。
+ThreadingHTTPServer = server_runtime.ThreadingHTTPServer
+MaintenanceHTTPServer = server_runtime.MaintenanceHTTPServer
 
-    def send_json(self, payload: object, status: int = HTTPStatus.OK) -> None:
-        raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(raw)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(raw)
 
-    def read_json(self) -> dict[str, object]:
-        try:
-            length = int(self.headers.get("Content-Length", "0"))
-            data = json.loads(self.rfile.read(length) or b"{}")
-            if not isinstance(data, dict):
-                raise ValueError
-            return data
-        except (ValueError, json.JSONDecodeError) as exc:
-            raise ApiError(HTTPStatus.BAD_REQUEST, "请求内容不是有效 JSON") from exc
+def _server_runtime_dependencies() -> server_runtime.ServerRuntimeDependencies:
+    """组装 HTTP 服务生命周期与周期维护依赖。
 
-    def current_user(self) -> sqlite3.Row | None:
-        token = self.headers.get("X-Session-Token", "")
-        if not token:
-            cookie = self.headers.get("Cookie", "")
-            token = next((part.split("=", 1)[1] for part in cookie.split("; ") if part.startswith("fyt_session=")), "")
-        if not token:
-            return None
-        with DB_LOCK, db() as connection:
-            return connection.execute(
-                "SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ? AND s.expires_at > ? AND u.status = 'approved'",
-                (token, int(time.time())),
-            ).fetchone()
-
-    def require_user(self, admin: bool = False) -> sqlite3.Row:
-        row = self.current_user()
-        if row is None:
-            raise ApiError(HTTPStatus.UNAUTHORIZED, "请先登录")
-        if admin and row["role"] != "admin":
-            raise ApiError(HTTPStatus.FORBIDDEN, "只有管理员可以执行此操作")
-        return row
-
-    def do_POST(self) -> None:
-        try:
-            path = urlparse(self.path).path
-            if path == "/api/files/upload":
-                self.upload_file()
-                return
-            body = self.read_json()
-            if path == "/api/auth/register":
-                self.register(body)
-            elif path == "/api/auth/login":
-                self.login(body)
-            elif path == "/api/auth/logout":
-                self.logout()
-            elif path == "/api/jobs":
-                self.create_job(body)
-            elif path.startswith("/api/jobs/") and path.endswith("/review"):
-                self.submit_review(path, body)
-            elif path.startswith("/api/jobs/") and path.endswith("/cancel"):
-                self.cancel_job(path)
-            elif path.startswith("/api/admin/users/") and path.endswith("/approve"):
-                self.review_user(path, "approved")
-            elif path.startswith("/api/admin/users/") and path.endswith("/reject"):
-                self.review_user(path, "rejected")
-            else:
-                raise ApiError(HTTPStatus.NOT_FOUND, "接口不存在")
-        except ApiError as exc:
-            self.send_json({"error": exc.message}, exc.status)
-        except Exception as exc:  # pragma: no cover - 兜底日志用于现场诊断
-            self.log_message("server error: %r", exc)
-            self.send_json({"error": "服务器内部错误"}, HTTPStatus.INTERNAL_SERVER_ERROR)
-
-    def do_GET(self) -> None:
-        try:
-            path = urlparse(self.path).path
-            if path == "/api/health":
-                self.send_json({"status": "ok", "app": "峰运通数据管理系统", "version": "1.2.1", "server_time": now_iso()})
-            elif path == "/api/auth/me":
-                user = self.current_user()
-                if user is None:
-                    raise ApiError(HTTPStatus.UNAUTHORIZED, "未登录")
-                self.send_json({"user": user_public(user)})
-            elif path == "/api/overview":
-                user = self.require_user()
-                with DB_LOCK, db() as connection:
-                    pending = connection.execute("SELECT COUNT(*) AS n FROM users WHERE status = 'pending'").fetchone()["n"]
-                    total_users = connection.execute("SELECT COUNT(*) AS n FROM users WHERE status = 'approved'").fetchone()["n"]
-                    output_jobs = connection.execute(
-                        "SELECT COUNT(*) AS n FROM web_jobs WHERE user_id = ? AND status = 'completed'",
-                        (user["id"],),
-                    ).fetchone()["n"]
-                self.send_json({"user": user_public(user), "features": FEATURES, "metrics": {"pending_users": pending, "approved_users": total_users, "output_jobs": output_jobs}})
-            elif path == "/api/dashboard":
-                self.dashboard()
-            elif path == "/api/admin/users":
-                self.require_user(admin=True)
-                with DB_LOCK, db() as connection:
-                    rows = connection.execute("SELECT * FROM users ORDER BY CASE status WHEN 'pending' THEN 0 ELSE 1 END, created_at DESC").fetchall()
-                self.send_json({"users": [user_public(row) for row in rows]})
-            elif path == "/api/jobs":
-                self.list_jobs()
-            elif path.startswith("/api/jobs/") and "/files/" in path:
-                self.download_job_file(path)
-            elif path.startswith("/api/jobs/"):
-                self.get_job(path)
-            elif path.startswith("/api/"):
-                raise ApiError(HTTPStatus.NOT_FOUND, "接口不存在")
-            else:
-                self.serve_static(path)
-        except ApiError as exc:
-            self.send_json({"error": exc.message}, exc.status)
-        except Exception as exc:  # pragma: no cover
-            self.log_message("server error: %r", exc)
-            self.send_json({"error": "服务器内部错误"}, HTTPStatus.INTERNAL_SERVER_ERROR)
-
-    def upload_file(self) -> None:
-        user = self.require_user()
-        parsed = urlparse(self.path)
-        query = parse_qs(parsed.query)
-        name = safe_name(query.get("name", [""])[0])
-        group_id = query.get("group", [uuid.uuid4().hex])[0]
-        if not group_id.replace("-", "").isalnum() or len(group_id) > 64:
-            raise ApiError(HTTPStatus.BAD_REQUEST, "上传批次编号无效")
-        try:
-            length = int(self.headers.get("Content-Length", "0"))
-        except ValueError as exc:
-            raise ApiError(HTTPStatus.BAD_REQUEST, "文件大小无效") from exc
-        if length <= 0:
-            raise ApiError(HTTPStatus.BAD_REQUEST, "上传文件为空")
-        if length > MAX_UPLOAD_BYTES:
-            raise ApiError(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "单个文件不能超过 200 MB")
-        handle = f"upload:{uuid.uuid4().hex}"
-        folder = DATA_ROOT / "users" / str(user["id"]) / "uploads" / group_id
-        folder.mkdir(parents=True, exist_ok=True)
-        target = folder / name
-        if target.exists():
-            target = folder / f"{target.stem}-{uuid.uuid4().hex[:8]}{target.suffix}"
-        remaining = length
-        with target.open("wb") as stream:
-            while remaining:
-                chunk = self.rfile.read(min(1024 * 1024, remaining))
-                if not chunk:
-                    target.unlink(missing_ok=True)
-                    raise ApiError(HTTPStatus.BAD_REQUEST, "文件上传不完整")
-                stream.write(chunk)
-                remaining -= len(chunk)
-        with DB_LOCK, db() as connection:
-            connection.execute(
-                "INSERT INTO uploads(handle, user_id, group_id, name, path, size, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (handle, user["id"], group_id, name, str(target), length, now_iso()),
-            )
-        self.send_json({
-            "handle": handle, "group": f"upload-group:{group_id}",
-            "name": name, "size": length,
-        }, HTTPStatus.CREATED)
-
-    def create_job(self, body: dict[str, object]) -> None:
-        user = self.require_user()
-        action = str(body.get("action") or "")
-        if action not in WEB_ACTIONS:
-            raise ApiError(HTTPStatus.BAD_REQUEST, "该功能未开放 Web 任务接口")
-        payload = body.get("payload") or {}
-        if not isinstance(payload, dict):
-            raise ApiError(HTTPStatus.BAD_REQUEST, "任务参数必须是对象")
-        try:
-            resolved = resolve_uploads(payload, int(user["id"]))
-        except ValueError as exc:
-            raise ApiError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
-        job_id = uuid.uuid4().hex
-        title = str(body.get("title") or action)[:80]
-        created = now_iso()
-        with DB_LOCK, db() as connection:
-            connection.execute(
-                "INSERT INTO web_jobs(id, user_id, action, title, status, payload, created_at, updated_at) VALUES (?, ?, ?, ?, 'queued', ?, ?, ?)",
-                (job_id, user["id"], action, title, json.dumps(payload, ensure_ascii=False), created, created),
-            )
-        threading.Thread(
-            target=run_web_job,
-            args=(job_id, int(user["id"]), action, resolved),
-            name=f"web-job-{job_id[:8]}",
-            daemon=True,
-        ).start()
-        self.send_json({"job_id": job_id}, HTTPStatus.ACCEPTED)
-
-    def list_jobs(self) -> None:
-        user = self.require_user()
-        with DB_LOCK, db() as connection:
-            rows = connection.execute(
-                "SELECT * FROM web_jobs WHERE user_id = ? ORDER BY created_at DESC LIMIT 50",
-                (user["id"],),
-            ).fetchall()
-        self.send_json({"jobs": [job_public(row) for row in rows]})
-
-    def dashboard(self) -> None:
-        """返回工作台看板所需的聚合数据，所有任务只限当前账号。"""
-        user = self.require_user()
-        with DB_LOCK, db() as connection:
-            job_rows = connection.execute(
-                "SELECT * FROM web_jobs WHERE user_id = ? ORDER BY created_at DESC LIMIT 500",
-                (user["id"],),
-            ).fetchall()
-            status_rows = connection.execute(
-                "SELECT status, COUNT(*) AS n FROM web_jobs WHERE user_id = ? GROUP BY status",
-                (user["id"],),
-            ).fetchall()
-            pending_users = connection.execute(
-                "SELECT COUNT(*) AS n FROM users WHERE status = 'pending'",
-            ).fetchone()["n"]
-            approved_users = connection.execute(
-                "SELECT COUNT(*) AS n FROM users WHERE status = 'approved'",
-            ).fetchone()["n"]
-
-        status_breakdown = {str(row["status"]): int(row["n"]) for row in status_rows}
-        review_pending_count = sum(1 for row in job_rows if is_review_pending(row))
-        if review_pending_count:
-            status_breakdown["completed"] = max(0, status_breakdown.get("completed", 0) - review_pending_count)
-            status_breakdown["review"] = review_pending_count
-        today = datetime.now(timezone.utc).date()
-        trend = {
-            (today - timedelta(days=offset)).isoformat():
-            {"total": 0, "completed": 0, "failed": 0}
-            for offset in range(6, -1, -1)
-        }
-        feature_counts: dict[str, int] = {}
-        for row in job_rows:
-            created = str(row["created_at"] or "")[:10]
-            if created in trend:
-                trend[created]["total"] += 1
-                if row["status"] == "completed" and not is_review_pending(row):
-                    trend[created]["completed"] += 1
-                elif row["status"] == "failed":
-                    trend[created]["failed"] += 1
-            feature_key = feature_key_for_action(row["action"])
-            feature_counts[feature_key] = feature_counts.get(feature_key, 0) + 1
-
-        feature_titles = {item["key"]: item["title"] for item in FEATURES}
-        feature_usage = [
-            {"key": key, "title": feature_titles.get(key, key), "count": count}
-            for key, count in sorted(feature_counts.items(), key=lambda pair: (-pair[1], pair[0]))[:6]
-        ]
-        recent_jobs = []
-        recent_files = []
-        for row in job_rows[:8]:
-            recent_jobs.append({
-                "id": row["id"], "action": row["action"], "title": row["title"],
-                "status": row["status"], "progress": row["progress"],
-                "error": row["error"], "created_at": row["created_at"],
-                "updated_at": row["updated_at"], "review_pending": is_review_pending(row),
-            })
-        for row in job_rows:
-            if row["status"] != "completed":
-                continue
-            try:
-                files = json.loads(row["files"] or "[]")
-            except json.JSONDecodeError:
-                files = []
-            for index, item in enumerate(files[:5]):
-                recent_files.append({
-                    "name": item.get("name", "未命名文件"),
-                    "size": item.get("size", 0),
-                    "url": f"/api/jobs/{row['id']}/files/{index}",
-                    "job_id": row["id"], "title": row["title"],
-                    "created_at": row["created_at"],
-                })
-                if len(recent_files) >= 6:
-                    break
-            if len(recent_files) >= 6:
-                break
-
-        self.send_json({
-            "user": user_public(user),
-            "generated_at": now_iso(),
-            "metrics": {
-                "pending_users": int(pending_users),
-                "approved_users": int(approved_users),
-                "total_jobs": sum(status_breakdown.values()),
-                "completed_jobs": status_breakdown.get("completed", 0),
-                "running_jobs": status_breakdown.get("running", 0) + status_breakdown.get("queued", 0) + status_breakdown.get("review", 0),
-                "failed_jobs": status_breakdown.get("failed", 0),
-            },
-            "status_breakdown": status_breakdown,
-            "trend": [{"date": date, **values} for date, values in trend.items()],
-            "feature_usage": feature_usage,
-            "recent_jobs": recent_jobs,
-            "recent_files": recent_files,
-        })
-
-    def get_job(self, path: str) -> None:
-        user = self.require_user()
-        job_id = path.rstrip("/").split("/")[-1]
-        with DB_LOCK, db() as connection:
-            row = connection.execute(
-                "SELECT * FROM web_jobs WHERE id = ? AND user_id = ?",
-                (job_id, user["id"]),
-            ).fetchone()
-        if row is None:
-            raise ApiError(HTTPStatus.NOT_FOUND, "任务不存在")
-        self.send_json({"job": job_public(row)})
-
-    def cancel_job(self, path: str) -> None:
-        user = self.require_user()
-        parts = path.strip("/").split("/")
-        job_id = parts[2] if len(parts) >= 4 else ""
-        with DB_LOCK, db() as connection:
-            row = connection.execute(
-                "SELECT status FROM web_jobs WHERE id = ? AND user_id = ?",
-                (job_id, user["id"]),
-            ).fetchone()
-            if row is None:
-                raise ApiError(HTTPStatus.NOT_FOUND, "任务不存在")
-            connection.execute("UPDATE web_jobs SET cancelled = 1 WHERE id = ?", (job_id,))
-        with JOB_LOCK:
-            process = JOB_PROCESSES.get(job_id)
-        if process and process.poll() is None:
-            process.terminate()
-        self.send_json({"message": "已请求取消任务"})
-
-    def submit_review(self, path: str, body: dict[str, object]) -> None:
-        """提交人工复核选择，并让同一任务继续执行最终业务动作。"""
-        user = self.require_user()
-        parts = path.strip("/").split("/")
-        job_id = parts[2] if len(parts) >= 4 else ""
-        choices = body.get("choices")
-        if not isinstance(choices, dict):
-            raise ApiError(HTTPStatus.BAD_REQUEST, "复核选择必须是对象")
-        with DB_LOCK, db() as connection:
-            row = connection.execute(
-                "SELECT * FROM web_jobs WHERE id = ? AND user_id = ?",
-                (job_id, user["id"]),
-            ).fetchone()
-        if row is None:
-            raise ApiError(HTTPStatus.NOT_FOUND, "任务不存在")
-        action = str(row["action"])
-        if action not in REVIEW_ACTIONS or row["status"] != "completed":
-            raise ApiError(HTTPStatus.BAD_REQUEST, "该任务当前不可复核")
-        try:
-            payload = json.loads(row["payload"] or "{}")
-        except json.JSONDecodeError as exc:
-            raise ApiError(HTTPStatus.BAD_REQUEST, "任务参数已损坏，无法继续复核") from exc
-        if not isinstance(payload, dict):
-            raise ApiError(HTTPStatus.BAD_REQUEST, "任务参数已损坏，无法继续复核")
-
-        final_action = REVIEW_ACTIONS[action]
-        if action == "web.invoice.review":
-            rows = choices.get("rows")
-            if not isinstance(rows, list) or not rows:
-                raise ApiError(HTTPStatus.BAD_REQUEST, "请至少保留一张发票")
-            payload["rows"] = rows
-            payload["month"] = str(choices.get("month") or payload.get("month") or "")
-            payload["include_normal"] = bool(choices.get("include_normal"))
-        elif action == "web.compare.review":
-            key = str(choices.get("key") or "")
-            if not key:
-                raise ApiError(HTTPStatus.BAD_REQUEST, "请选择表格比对关键列")
-            payload["key"] = key
-        else:
-            payload["choices"] = choices
-        try:
-            resolved = resolve_uploads(payload, int(user["id"]))
-        except ValueError as exc:
-            raise ApiError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
-
-        created = now_iso()
-        with DB_LOCK, db() as connection:
-            connection.execute(
-                "UPDATE web_jobs SET action = ?, status = 'queued', progress = 0, logs = '[]', result = NULL, error = NULL, files = '[]', cancelled = 0, updated_at = ? WHERE id = ? AND user_id = ?",
-                (final_action, created, job_id, user["id"]),
-            )
-        threading.Thread(
-            target=run_web_job,
-            args=(job_id, int(user["id"]), final_action, resolved),
-            name=f"web-job-review-{job_id[:8]}",
-            daemon=True,
-        ).start()
-        self.send_json({"job_id": job_id}, HTTPStatus.ACCEPTED)
-
-    def download_job_file(self, path: str) -> None:
-        user = self.require_user()
-        parts = path.strip("/").split("/")
-        try:
-            job_id = parts[2]
-            index = int(parts[4])
-        except (IndexError, ValueError) as exc:
-            raise ApiError(HTTPStatus.BAD_REQUEST, "下载地址无效") from exc
-        with DB_LOCK, db() as connection:
-            row = connection.execute(
-                "SELECT files FROM web_jobs WHERE id = ? AND user_id = ?",
-                (job_id, user["id"]),
-            ).fetchone()
-        if row is None:
-            raise ApiError(HTTPStatus.NOT_FOUND, "任务不存在")
-        files = json.loads(row["files"] or "[]")
-        if index < 0 or index >= len(files):
-            raise ApiError(HTTPStatus.NOT_FOUND, "结果文件不存在")
-        item = files[index]
-        target = Path(item["path"])
-        if not target.is_file():
-            raise ApiError(HTTPStatus.NOT_FOUND, "结果文件已被移动或删除")
-        content_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
-        self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(target.stat().st_size))
-        self.send_header("Content-Disposition", f"attachment; filename*=UTF-8''{quote(item['name'])}")
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        with target.open("rb") as stream:
-            shutil.copyfileobj(stream, self.wfile, length=1024 * 1024)
-
-    def register(self, body: dict[str, object]) -> None:
-        username = str(body.get("username", "")).strip().lower()
-        display_name = str(body.get("display_name", "")).strip()
-        password = str(body.get("password", ""))
-        if not (3 <= len(username) <= 32) or not username.replace("_", "").replace("-", "").isalnum():
-            raise ApiError(HTTPStatus.BAD_REQUEST, "账号需为 3-32 位字母、数字、下划线或短横线")
-        if len(password) < 8:
-            raise ApiError(HTTPStatus.BAD_REQUEST, "密码至少 8 位")
-        if not display_name:
-            display_name = username
-        salt, digest = hash_password(password)
-        try:
-            with DB_LOCK, db() as connection:
-                connection.execute("INSERT INTO users(username, display_name, salt, password_hash, created_at) VALUES (?, ?, ?, ?, ?)", (username, display_name[:40], salt, digest, now_iso()))
-        except sqlite3.IntegrityError as exc:
-            raise ApiError(HTTPStatus.CONFLICT, "账号已存在，请直接登录或联系管理员") from exc
-        self.send_json({"message": "注册申请已提交，请等待管理员审核"}, HTTPStatus.CREATED)
-
-    def login(self, body: dict[str, object]) -> None:
-        username = str(body.get("username", "")).strip().lower()
-        password = str(body.get("password", ""))
-        with DB_LOCK, db() as connection:
-            row = connection.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
-        if row is None or not verify_password(password, row["salt"], row["password_hash"]):
-            raise ApiError(HTTPStatus.UNAUTHORIZED, "账号或密码不正确")
-        if row["status"] == "pending":
-            raise ApiError(HTTPStatus.FORBIDDEN, "账号正在等待管理员审核")
-        if row["status"] == "rejected":
-            raise ApiError(HTTPStatus.FORBIDDEN, "注册申请未通过，请联系管理员")
-        token = secrets.token_urlsafe(36)
-        with DB_LOCK, db() as connection:
-            connection.execute("INSERT INTO sessions(token, user_id, expires_at) VALUES (?, ?, ?)", (token, row["id"], int(time.time()) + SESSION_DAYS * 86400))
-        self.send_json({"token": token, "user": user_public(row)})
-
-    def logout(self) -> None:
-        token = self.headers.get("X-Session-Token", "")
-        with DB_LOCK, db() as connection:
-            connection.execute("DELETE FROM sessions WHERE token = ?", (token,))
-        self.send_json({"message": "已退出登录"})
-
-    def review_user(self, path: str, status: str) -> None:
-        actor = self.require_user(admin=True)
-        try:
-            user_id = int(path.split("/")[4])
-        except (IndexError, ValueError) as exc:
-            raise ApiError(HTTPStatus.BAD_REQUEST, "用户编号无效") from exc
-        with DB_LOCK, db() as connection:
-            target = connection.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
-            if target is None:
-                raise ApiError(HTTPStatus.NOT_FOUND, "用户不存在")
-            if target["role"] == "admin":
-                raise ApiError(HTTPStatus.BAD_REQUEST, "不能审核管理员账号")
-            connection.execute("UPDATE users SET status = ?, approved_at = ? WHERE id = ?", (status, now_iso() if status == "approved" else None, user_id))
-            connection.execute("INSERT INTO audit_log(actor_id, action, target_user_id, created_at) VALUES (?, ?, ?, ?)", (actor["id"], status, user_id, now_iso()))
-        self.send_json({"message": "已更新用户状态"})
-
-    def serve_static(self, path: str) -> None:
-        if not STATIC_ROOT.exists():
-            self.send_json({"error": "前端尚未构建，请运行 web-app\\npm run build"}, HTTPStatus.NOT_FOUND)
-            return
-        relative = path.lstrip("/") or "index.html"
-        candidate = (STATIC_ROOT / relative).resolve()
-        if STATIC_ROOT not in candidate.parents and candidate != STATIC_ROOT:
-            raise ApiError(HTTPStatus.NOT_FOUND, "资源不存在")
-        if not candidate.is_file():
-            candidate = STATIC_ROOT / "index.html"
-        content = candidate.read_bytes()
-        self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", mimetypes.guess_type(candidate.name)[0] or "application/octet-stream")
-        self.send_header("Content-Length", str(len(content)))
-        self.end_headers()
-        self.wfile.write(content)
+    运行时只接收回调，不反向导入本入口，从而可在测试中替换端口、维护任务和初始化过程。
+    """
+    return server_runtime.ServerRuntimeDependencies(
+        host=HOST,
+        port=PORT,
+        handler_class=Handler,
+        maintenance_interval=MAINTENANCE_INTERVAL_SECONDS,
+        output_retention_count=OUTPUT_RETENTION_COUNT,
+        trash_retention_days=TRASH_RETENTION_DAYS,
+        init_db=init_db,
+        run_storage_maintenance=run_storage_maintenance,
+        auto_backup_if_due=auto_backup_if_due,
+        auto_weekly_report_if_due=auto_weekly_report_if_due,
+        auto_monthly_report_if_due=auto_monthly_report_if_due,
+    )
 
 
 def main() -> None:
-    init_db()
-    server = ThreadingHTTPServer((HOST, PORT), Handler)
-    print(f"[完成] 峰运通 Web 服务已启动: http://{HOST}:{PORT}")
-    print("[提示] 默认管理员账号: admin / admin123456（请上线前通过 FYT_ADMIN_PASSWORD 修改）")
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        print("\n[完成] 服务已停止")
-    finally:
-        server.server_close()
+    """通过独立运行时模块启动 Web HTTP 服务。"""
+    server_runtime.run_server(_server_runtime_dependencies())
 
 
 if __name__ == "__main__":

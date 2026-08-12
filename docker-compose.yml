@@ -1,0 +1,51 @@
+name: fyt-data-mgmt
+
+services:
+  fyt-web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: fyt-data-mgmt:1.3.0
+    init: true
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    ports:
+      - "${FYT_WEB_BIND:-127.0.0.1}:${FYT_WEB_BIND_PORT:-8787}:8787"
+    environment:
+      FYT_WEB_HOST: "0.0.0.0"
+      FYT_WEB_PORT: "8787"
+      FYT_WEB_DATA: "/data"
+      # 首次建库密码通过只读 Docker secret 注入，不出现在容器环境或镜像元数据中。
+      FYT_ADMIN_PASSWORD_FILE: "/run/secrets/fyt_admin_password"
+      FYT_BUSINESS_TZ_OFFSET: "${FYT_BUSINESS_TZ_OFFSET:-8}"
+      FYT_OUTPUT_RETENTION_COUNT: "${FYT_OUTPUT_RETENTION_COUNT:-20}"
+      FYT_TRASH_RETENTION_DAYS: "${FYT_TRASH_RETENTION_DAYS:-30}"
+      FYT_AUTO_BACKUP_KEEP: "${FYT_AUTO_BACKUP_KEEP:-7}"
+      FYT_LIBRARY_USER_QUOTA_BYTES: "${FYT_LIBRARY_USER_QUOTA_BYTES:-2147483648}"
+      FYT_NOTIFY_WEBHOOK_URL: "${FYT_NOTIFY_WEBHOOK_URL:-}"
+    volumes:
+      # 默认使用命名卷，Docker 会按镜像内 fyt 用户的权限初始化，避免 Linux 首次启动出现写入权限错误。
+      # 需要直接查看宿主机文件时，可在 .env 中改为绝对路径，例如 /srv/fyt-data。
+      - "${FYT_DATA_DIR:-fyt-data}:/data"
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=536870912
+    secrets:
+      - fyt_admin_password
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; r=urllib.request.urlopen('http://127.0.0.1:8787/api/health', timeout=3); raise SystemExit(0 if r.status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  fyt-data:
+
+secrets:
+  fyt_admin_password:
+    # 空示例文件允许已有数据库在删除首次密码后继续启动；新数据库仍会因空密码拒绝初始化。
+    file: "${FYT_ADMIN_PASSWORD_FILE:-./secrets/admin-password.example.txt}"

@@ -1,0 +1,181 @@
+/* 桌面壳主布局：根节点固定占满 WebView，只有内容区和导航区各自承担滚动。 */
+.fyt-tauri-shell {
+  --fyt-tauri-sidebar-width: var(--fyt-layout-tauri-sidebar);
+  display: grid;
+  grid-template-columns: var(--fyt-tauri-sidebar-width) minmax(0, 1fr);
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden; /* 禁止根页面滚动，避免固定顶栏和侧栏随业务长页面移出视口。 */
+  color: var(--fyt-text);
+  background: var(--fyt-canvas);
+  color-scheme: light;
+}
+.fyt-tauri-shell[data-theme="dark"] { color-scheme: dark; }
+.fyt-tauri-shell[data-nav-collapsed="true"] { --fyt-tauri-sidebar-width: var(--fyt-layout-tauri-sidebar-compact); }
+/* 桌面宽屏打开快捷面板时使用三列；较窄视口会在媒体查询中改为覆盖式抽屉。 */
+.fyt-tauri-shell[data-panel-open="true"] { grid-template-columns: var(--fyt-tauri-sidebar-width) minmax(0, 1fr) var(--fyt-layout-tauri-context-panel); }
+
+/* 左侧主导航使用反色表面，并隐藏滚动条外观但保留滚轮、触控板和键盘滚动。 */
+.fyt-tauri-sidebar {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-right: 1px solid var(--fyt-border-strong);
+  color: var(--fyt-text);
+  background: var(--fyt-surface-inverse);
+}
+.fyt-tauri-brand { display: flex; min-height: var(--fyt-layout-tauri-topbar); align-items: center; gap: var(--fyt-space-3); padding: 0 var(--fyt-space-4); border-bottom: 1px solid color-mix(in srgb, var(--fyt-border-strong) 56%, transparent); }
+.fyt-tauri-brand-mark { display: grid; width: 36px; height: 36px; flex: 0 0 36px; place-items: center; border: 1px solid color-mix(in srgb, var(--fyt-accent) 46%, var(--fyt-primary)); border-radius: var(--fyt-radius-control); color: var(--fyt-surface); background: var(--fyt-primary); font-size: 18px; font-weight: 800; }
+.fyt-tauri-brand-copy { min-width: 0; display: flex; flex-direction: column; gap: 2px; white-space: nowrap; }
+.fyt-tauri-brand-copy strong { color: var(--fyt-text-on-inverse); font-size: 15px; }
+.fyt-tauri-brand-copy span { color: color-mix(in srgb, var(--fyt-text-on-inverse) 64%, transparent); font-size: 11px; }
+.fyt-tauri-navigation { flex: 1; min-height: 0; overflow: auto; padding: var(--fyt-space-3) var(--fyt-space-2); scrollbar-width: none; -ms-overflow-style: none; }
+.fyt-tauri-navigation::-webkit-scrollbar { display: none; width: 0; height: 0; }
+.fyt-tauri-navigation-group + .fyt-tauri-navigation-group { margin-top: var(--fyt-space-3); }
+.fyt-tauri-navigation-label { padding: var(--fyt-space-2) var(--fyt-space-3); color: color-mix(in srgb, var(--fyt-text-on-inverse) 58%, transparent); font-size: 11px; font-weight: 700; }
+.fyt-tauri-navigation-item { position: relative; display: flex; min-width: 44px; width: 100%; min-height: 44px; align-items: center; gap: var(--fyt-space-3); padding: 0 var(--fyt-space-3); border: 1px solid transparent; border-radius: var(--fyt-radius-control); color: color-mix(in srgb, var(--fyt-text-on-inverse) 68%, transparent); background: transparent; text-align: left; white-space: nowrap; transition: color var(--fyt-motion-fast) var(--fyt-motion-ease), background-color var(--fyt-motion-fast) var(--fyt-motion-ease), border-color var(--fyt-motion-fast) var(--fyt-motion-ease); }
+.fyt-tauri-navigation-item:hover { color: var(--fyt-text-on-inverse); background: var(--fyt-surface-inverse-raised); }
+.fyt-tauri-navigation-item.is-selected { border-color: color-mix(in srgb, var(--fyt-primary) 42%, var(--fyt-border-strong)); color: var(--fyt-text-on-inverse); background: color-mix(in srgb, var(--fyt-primary) 22%, var(--fyt-surface-inverse)); }
+.fyt-tauri-navigation-item.is-selected::before { content: ""; position: absolute; left: -3px; width: 3px; height: 24px; border-radius: 0 var(--fyt-radius-control) var(--fyt-radius-control) 0; background: var(--fyt-accent); }
+.fyt-tauri-navigation-item span { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: var(--fyt-type-caption); }
+.fyt-tauri-sidebar-toggle { display: flex; min-height: 52px; align-items: center; gap: var(--fyt-space-3); padding: 0 var(--fyt-space-5); border: 0; border-top: 1px solid color-mix(in srgb, var(--fyt-border-strong) 56%, transparent); color: color-mix(in srgb, var(--fyt-text-on-inverse) 68%, transparent); background: transparent; text-align: left; transition: color var(--fyt-motion-fast) var(--fyt-motion-ease), background-color var(--fyt-motion-fast) var(--fyt-motion-ease); }
+.fyt-tauri-sidebar-toggle:hover { color: var(--fyt-text-on-inverse); background: var(--fyt-surface-inverse-raised); }
+.fyt-tauri-shell[data-nav-collapsed="true"] .fyt-tauri-brand { justify-content: center; padding-inline: var(--fyt-space-2); }
+.fyt-tauri-shell[data-nav-collapsed="true"] .fyt-tauri-brand-copy,
+.fyt-tauri-shell[data-nav-collapsed="true"] .fyt-tauri-navigation-label,
+.fyt-tauri-shell[data-nav-collapsed="true"] .fyt-tauri-navigation-item span,
+.fyt-tauri-shell[data-nav-collapsed="true"] .fyt-tauri-sidebar-toggle span { display: none; }
+.fyt-tauri-shell[data-nav-collapsed="true"] .fyt-tauri-navigation-item,
+.fyt-tauri-shell[data-nav-collapsed="true"] .fyt-tauri-sidebar-toggle { justify-content: center; padding-inline: 0; }
+.fyt-tauri-shell[data-nav-collapsed="true"] .fyt-tauri-navigation-item.is-selected::before { left: 0; }
+.fyt-tauri-shell[data-nav-collapsed="true"] .fyt-tauri-sidebar-toggle .icon { transform: rotate(180deg); }
+
+/* 中央舞台本身不滚动，顶栏固定，所有长业务内容统一进入 content-scroll。 */
+.fyt-tauri-main-stage { min-width: 0; min-height: 0; overflow: hidden; display: flex; flex-direction: column; background: var(--fyt-canvas); }
+.fyt-tauri-topbar { display: flex; min-height: var(--fyt-layout-tauri-topbar); flex: 0 0 auto; align-items: center; justify-content: space-between; gap: var(--fyt-space-6); padding: 0 var(--fyt-space-8); border-bottom: 1px solid var(--fyt-border); background: var(--fyt-surface); }
+.fyt-tauri-topbar-title { min-width: 0; }
+.fyt-tauri-topbar-title h1 { margin: 0; color: var(--fyt-text); font-size: var(--fyt-type-title); font-weight: 700; line-height: 1.35; }
+.fyt-tauri-topbar-title p { max-width: 720px; margin: var(--fyt-space-1) 0 0; overflow: hidden; color: var(--fyt-text-secondary); font-size: var(--fyt-type-caption); text-overflow: ellipsis; white-space: nowrap; }
+.fyt-tauri-topbar-actions { display: flex; flex: 0 0 auto; align-items: center; gap: var(--fyt-space-2); }
+.fyt-tauri-icon-button { position: relative; display: grid; width: var(--fyt-control-target-min); height: var(--fyt-control-target-min); place-items: center; border: 1px solid var(--fyt-border); border-radius: var(--fyt-radius-control); color: var(--fyt-text-secondary); background: var(--fyt-surface); transition: color var(--fyt-motion-fast) var(--fyt-motion-ease), background-color var(--fyt-motion-fast) var(--fyt-motion-ease), border-color var(--fyt-motion-fast) var(--fyt-motion-ease); }
+.fyt-tauri-icon-button:hover, .fyt-tauri-icon-button.is-active { border-color: var(--fyt-primary); color: var(--fyt-primary-strong); background: var(--fyt-primary-soft); }
+.fyt-tauri-update { min-height: var(--fyt-control-height-md); padding: 0 var(--fyt-space-3); border: 1px solid color-mix(in srgb, var(--fyt-primary) 30%, var(--fyt-border)); border-radius: var(--fyt-radius-pill); color: var(--fyt-primary-strong); background: var(--fyt-primary-soft); font-size: var(--fyt-type-caption); }
+.fyt-tauri-notice { display: flex; flex-wrap: wrap; align-items: center; gap: var(--fyt-space-2) var(--fyt-space-3); margin: var(--fyt-space-4) var(--fyt-layout-gutter-desktop) 0; padding: var(--fyt-space-3) var(--fyt-space-4); border: 1px solid color-mix(in srgb, var(--fyt-warning) 30%, var(--fyt-border)); border-radius: var(--fyt-radius-card); color: var(--fyt-warning); background: var(--fyt-warning-soft); font-size: var(--fyt-type-caption); }
+.fyt-tauri-notice span { color: var(--fyt-text-secondary); }
+.fyt-tauri-text-button { min-height: 32px; padding: 0; border: 0; color: var(--fyt-primary-strong); background: transparent; font-size: var(--fyt-type-caption); }
+.fyt-tauri-content-scroll { flex: 1; min-height: 0; overflow: auto; padding: var(--fyt-layout-gutter-desktop); scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: var(--fyt-border-strong) transparent; } /* stable 预留滚动条空间，切页时内容宽度不会左右跳动。 */
+.fyt-tauri-content-column { width: min(var(--fyt-layout-content-max), 100%); margin: 0 auto; }
+
+/* 右侧快捷工作台在宽屏占据第三列，在中等视口转换为带遮罩的固定抽屉。 */
+.fyt-tauri-context-panel { min-width: 0; overflow: hidden; border-left: 1px solid var(--fyt-border); color: var(--fyt-text); background: var(--fyt-surface); }
+.fyt-tauri-context-header { display: flex; min-height: var(--fyt-layout-tauri-topbar); align-items: center; justify-content: space-between; gap: var(--fyt-space-3); padding: 0 var(--fyt-space-4); border-bottom: 1px solid var(--fyt-border); }
+.fyt-tauri-context-header > div { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.fyt-tauri-context-header strong { font-size: var(--fyt-type-card); }
+.fyt-tauri-context-header span { color: var(--fyt-text-muted); font-size: var(--fyt-type-caption); }
+.fyt-tauri-close-button { display: grid; width: 44px; height: 44px; place-items: center; border: 0; border-radius: var(--fyt-radius-control); color: var(--fyt-text-muted); background: transparent; font-size: 22px; }
+.fyt-tauri-close-button:hover { color: var(--fyt-text); background: var(--fyt-surface-subtle); }
+.fyt-tauri-context-body { height: calc(100% - var(--fyt-layout-tauri-topbar)); overflow: auto; padding: var(--fyt-space-4); scrollbar-gutter: stable; }
+.fyt-tauri-context-section { padding: 0 0 var(--fyt-space-5); border-bottom: 1px solid var(--fyt-border); }
+.fyt-tauri-context-section + .fyt-tauri-context-section { padding-top: var(--fyt-space-5); }
+.fyt-tauri-context-section:last-child { border-bottom: 0; }
+.fyt-tauri-context-section h2 { margin: 0 0 var(--fyt-space-3); color: var(--fyt-text); font-size: var(--fyt-type-caption); }
+.fyt-tauri-context-kicker { margin-bottom: var(--fyt-space-2); color: var(--fyt-text-muted); font-size: var(--fyt-type-caption); }
+.fyt-tauri-context-current { display: block; margin-bottom: var(--fyt-space-3); font-size: var(--fyt-type-body); }
+.fyt-tauri-status { display: inline-flex; align-items: center; gap: var(--fyt-space-2); min-height: 28px; padding: 0 var(--fyt-space-3); border-radius: var(--fyt-radius-pill); color: var(--fyt-success); background: var(--fyt-success-soft); font-size: var(--fyt-type-caption); }
+.fyt-tauri-status i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.fyt-tauri-context-section-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--fyt-space-3); }
+.fyt-tauri-context-section-heading h2 { margin-bottom: 0; }
+.fyt-tauri-quick-task-list, .fyt-tauri-quick-links { display: grid; gap: var(--fyt-space-2); }
+.fyt-tauri-quick-task-list { margin-top: var(--fyt-space-3); }
+.fyt-tauri-quick-task-list button, .fyt-tauri-quick-links button { display: flex; min-height: 44px; align-items: center; gap: var(--fyt-space-2); width: 100%; padding: var(--fyt-space-2) var(--fyt-space-3); border: 1px solid var(--fyt-border); border-radius: var(--fyt-radius-control); color: var(--fyt-text-secondary); background: var(--fyt-surface-subtle); text-align: left; }
+.fyt-tauri-quick-task-list button:hover, .fyt-tauri-quick-links button:hover { border-color: var(--fyt-primary); color: var(--fyt-text); background: var(--fyt-primary-soft); }
+.fyt-tauri-quick-task-list button > span { min-width: 0; display: flex; flex: 1; flex-direction: column; gap: 2px; }
+.fyt-tauri-quick-task-list strong { overflow: hidden; color: var(--fyt-text); font-size: var(--fyt-type-caption); text-overflow: ellipsis; white-space: nowrap; }
+.fyt-tauri-quick-task-list small { color: var(--fyt-text-muted); font-size: var(--fyt-type-caption); }
+.fyt-tauri-quick-links button { font-size: var(--fyt-type-caption); }
+.fyt-tauri-context-empty { margin: 0; color: var(--fyt-text-muted); font-size: var(--fyt-type-caption); line-height: var(--fyt-type-line-caption); }
+.fyt-tauri-panel-backdrop { display: none; }
+
+/* 启动模式选择页同时承载本机模式和服务器模式，卡片宽度限制避免大屏过度拉伸。 */
+.fyt-tauri-mode-picker { display: grid; width: 100%; min-height: 100%; align-content: safe center; justify-items: center; gap: var(--fyt-space-6); padding: var(--fyt-space-12) var(--fyt-layout-gutter-desktop); color: var(--fyt-text); background: var(--fyt-canvas); }
+.fyt-tauri-mode-brand { display: flex; align-items: center; gap: var(--fyt-space-3); }
+.fyt-tauri-mode-brand > span:last-child { display: flex; flex-direction: column; gap: 2px; }
+.fyt-tauri-mode-brand strong { font-size: var(--fyt-type-section); }
+.fyt-tauri-mode-brand small { color: var(--fyt-text-secondary); font-size: var(--fyt-type-caption); }
+.fyt-tauri-mode-heading { max-width: 620px; text-align: center; }
+.fyt-tauri-eyebrow { color: var(--fyt-primary-strong); font-size: var(--fyt-type-caption); font-weight: 700; }
+.fyt-tauri-mode-heading h1 { margin: var(--fyt-space-2) 0; font-size: 28px; }
+.fyt-tauri-mode-heading p { margin: 0; color: var(--fyt-text-secondary); font-size: var(--fyt-type-body); line-height: var(--fyt-type-line-body); }
+.fyt-tauri-mode-options { display: grid; grid-template-columns: repeat(2, minmax(260px, 360px)); gap: var(--fyt-space-5); width: min(100%, 740px); }
+.fyt-tauri-mode-option { display: flex; min-height: 250px; align-items: flex-start; flex-direction: column; gap: var(--fyt-space-3); padding: var(--fyt-space-6); border: 1px solid var(--fyt-border); border-radius: var(--fyt-radius-container); color: var(--fyt-text); background: var(--fyt-surface); text-align: left; box-shadow: var(--fyt-elevation-subtle); transition: border-color var(--fyt-motion-fast) var(--fyt-motion-ease), box-shadow var(--fyt-motion-fast) var(--fyt-motion-ease), transform var(--fyt-motion-fast) var(--fyt-motion-ease); }
+.fyt-tauri-mode-option:hover { border-color: var(--fyt-primary); box-shadow: var(--fyt-elevation-overlay); transform: translateY(-2px); }
+.fyt-tauri-mode-option-server { cursor: default; }
+.fyt-tauri-mode-icon { display: grid; width: 44px; height: 44px; place-items: center; border-radius: var(--fyt-radius-control); color: var(--fyt-primary-strong); background: var(--fyt-primary-soft); }
+.fyt-tauri-mode-option strong { font-size: var(--fyt-type-section); }
+.fyt-tauri-mode-option small { color: var(--fyt-text-secondary); font-size: var(--fyt-type-caption); line-height: var(--fyt-type-line-caption); }
+.fyt-tauri-mode-url { display: flex; width: 100%; flex-direction: column; gap: var(--fyt-space-1); color: var(--fyt-text-secondary); font-size: var(--fyt-type-caption); }
+.fyt-tauri-mode-url input { width: 100%; min-height: var(--fyt-control-height-md); padding: 0 var(--fyt-space-3); border: 1px solid var(--fyt-border); border-radius: var(--fyt-radius-control); color: var(--fyt-text); background: var(--fyt-surface-subtle); }
+.fyt-tauri-mode-action { display: inline-flex; min-height: 44px; align-items: center; gap: var(--fyt-space-2); margin-top: auto; padding: 0; border: 0; color: var(--fyt-primary-strong); background: transparent; font-size: var(--fyt-type-caption); font-weight: 700; }
+.fyt-tauri-mode-action .icon { transition: transform var(--fyt-motion-fast) var(--fyt-motion-ease); }
+.fyt-tauri-mode-option:hover .fyt-tauri-mode-action .icon { transform: translateX(3px); }
+.fyt-tauri-mode-hint { margin: 0; color: var(--fyt-text-muted); font-size: var(--fyt-type-caption); }
+
+/* 服务器模式通过同源 iframe 展示 Web 工作台，工具栏始终留在桌面壳内提供返回操作。 */
+.fyt-tauri-remote-workbench { display: flex; width: 100%; height: 100%; min-height: 0; flex-direction: column; color: var(--fyt-text); background: var(--fyt-canvas); }
+.fyt-tauri-remote-toolbar { display: flex; min-height: var(--fyt-layout-tauri-topbar); flex: 0 0 auto; align-items: center; justify-content: space-between; gap: var(--fyt-space-4); padding: 0 var(--fyt-space-4); border-bottom: 1px solid var(--fyt-border); background: var(--fyt-surface); }
+.fyt-tauri-remote-toolbar > div:first-child { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.fyt-tauri-remote-toolbar strong { font-size: var(--fyt-type-card); }
+.fyt-tauri-remote-toolbar span { overflow: hidden; color: var(--fyt-text-muted); font-size: var(--fyt-type-caption); text-overflow: ellipsis; white-space: nowrap; }
+.fyt-tauri-remote-actions { display: flex; flex: 0 0 auto; gap: var(--fyt-space-2); }
+.fyt-tauri-primary-button, .fyt-tauri-secondary-button { min-height: var(--fyt-control-height-md); padding: 0 var(--fyt-space-4); border-radius: var(--fyt-radius-control); font-size: var(--fyt-type-caption); font-weight: 650; }
+.fyt-tauri-primary-button { border: 1px solid var(--fyt-primary); color: var(--fyt-surface); background: var(--fyt-primary); }
+.fyt-tauri-secondary-button { border: 1px solid var(--fyt-border-strong); color: var(--fyt-text); background: var(--fyt-surface); }
+.fyt-tauri-primary-button:hover { background: var(--fyt-primary-strong); }
+.fyt-tauri-secondary-button:hover { border-color: var(--fyt-primary); color: var(--fyt-primary-strong); background: var(--fyt-primary-soft); }
+.fyt-tauri-remote-workbench iframe { width: 100%; min-height: 0; flex: 1; border: 0; background: var(--fyt-canvas); }
+
+@media (max-width: 1199px) {
+  /* 快捷面板脱离网格后覆盖页面，避免主业务区域被压缩到不可用宽度。 */
+  .fyt-tauri-shell[data-panel-open="true"] { grid-template-columns: var(--fyt-tauri-sidebar-width) minmax(0, 1fr); }
+  .fyt-tauri-context-panel { position: fixed; z-index: 30; top: 0; right: 0; bottom: 0; width: min(var(--fyt-layout-tauri-context-panel), 88vw); border-left: 1px solid var(--fyt-border-strong); box-shadow: var(--fyt-elevation-overlay); transform: translateX(100%); transition: transform var(--fyt-motion-slow) var(--fyt-motion-ease); }
+  .fyt-tauri-context-panel.is-open { transform: translateX(0); }
+  .fyt-tauri-panel-backdrop { position: fixed; z-index: 29; display: block; inset: 0; border: 0; background: var(--fyt-overlay); }
+}
+
+@media (max-width: 920px) {
+  /* 平板宽度固定使用图标侧栏，不保留一个视觉上可收起但实际无空间的文字导航状态。 */
+  .fyt-tauri-shell { --fyt-tauri-sidebar-width: var(--fyt-layout-tauri-sidebar-compact); }
+  .fyt-tauri-shell[data-nav-collapsed="false"] { --fyt-tauri-sidebar-width: var(--fyt-layout-tauri-sidebar-compact); }
+  .fyt-tauri-brand { justify-content: center; padding-inline: var(--fyt-space-2); }
+  .fyt-tauri-brand-copy, .fyt-tauri-navigation-label, .fyt-tauri-navigation-item span, .fyt-tauri-sidebar-toggle span { display: none; }
+  .fyt-tauri-navigation-item, .fyt-tauri-sidebar-toggle { justify-content: center; padding-inline: 0; }
+  .fyt-tauri-navigation-item.is-selected::before { left: 0; }
+  .fyt-tauri-topbar { padding-inline: var(--fyt-space-5); }
+  .fyt-tauri-content-scroll { padding: var(--fyt-layout-gutter-tablet); }
+}
+
+@media (max-width: 640px) {
+  /* 窄屏压缩顶栏信息并把模式卡片、远程工具栏改成纵向排列，保证触控目标宽度。 */
+  .fyt-tauri-topbar { min-height: 64px; padding-inline: var(--fyt-space-4); }
+  .fyt-tauri-topbar-title h1 { font-size: var(--fyt-type-title-mobile); }
+  .fyt-tauri-topbar-title p { display: none; }
+  .fyt-tauri-topbar-actions { gap: 4px; }
+  .fyt-tauri-update { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fyt-tauri-content-scroll { padding: var(--fyt-layout-gutter-mobile); }
+  .fyt-tauri-notice { margin-inline: var(--fyt-layout-gutter-mobile); }
+  .fyt-tauri-mode-picker { align-content: start; padding: var(--fyt-space-10) var(--fyt-layout-gutter-mobile); }
+  .fyt-tauri-mode-options { grid-template-columns: 1fr; }
+  .fyt-tauri-mode-heading h1 { font-size: var(--fyt-type-title); }
+  .fyt-tauri-remote-toolbar { align-items: stretch; flex-direction: column; justify-content: center; padding-block: var(--fyt-space-3); }
+  .fyt-tauri-remote-actions { width: 100%; }
+  .fyt-tauri-remote-actions > * { flex: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* 系统级减少动画优先级最高，同时关闭平滑滚动以避免大范围视口位移。 */
+  .fyt-tauri-shell *, .fyt-tauri-shell *::before, .fyt-tauri-mode-picker *, .fyt-tauri-mode-picker *::before { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}
+/* 应用内开关与操作系统媒体偏好采用相同约束，便于用户单独控制本应用。 */
+.fyt-tauri-shell[data-reduce-motion="true"] *, .fyt-tauri-shell[data-reduce-motion="true"] *::before { animation: none !important; transition: none !important; scroll-behavior: auto !important; }

@@ -25,53 +25,72 @@ def _norm_header(cell):
     return _WS.sub("", str(cell)).replace("　", "")
 
 
+def _matches_role(text, keys, *, exact, excluded):
+    """判断一个规范化表头是否命中角色，并应用包含匹配排除词。"""
+    if exact:
+        return text in keys
+    # 排除词只约束模糊包含阶段；若表头与正式别名完全相同，仍应由精确阶段认领。
+    return not any(word in text for word in excluded) and any(
+        keyword in text for keyword in keys
+    )
+
+
+def _first_matching_role(text, header_keys, assigned, *, exact, exclusions):
+    """按角色声明顺序返回首个尚未认领且命中的角色。"""
+    for role, keys in header_keys.items():
+        if role in assigned:
+            continue
+        if _matches_role(
+            text,
+            keys,
+            exact=exact,
+            excluded=exclusions.get(role, ()),
+        ):
+            return role
+    return None
+
+
+def _map_header_row(ws, row, header_keys, exclusions):
+    """对单行执行“先精确、后包含”的列角色映射。"""
+    column_map = {}
+    used_columns = set()
+    for exact in (True, False):
+        for column in range(1, (ws.max_column or 0) + 1):
+            if column in used_columns:
+                continue
+            text = _norm_header(ws.cell(row, column).value)
+            if not text:
+                continue
+            role = _first_matching_role(
+                text,
+                header_keys,
+                column_map,
+                exact=exact,
+                exclusions=exclusions,
+            )
+            if role is not None:
+                column_map[role] = column
+                used_columns.add(column)
+    return column_map
+
+
 def detect_layout(ws, header_keys, require, scan_rows=12, exclude_contains=None,
                   log=None):
-    """在前若干行里找表头行并映射列。返回 (header_row, {角色:列号}) 或 (None, {})。
+    """在前若干行中选择命中角色最多的表头并返回列映射。
 
-    - header_keys: dict 角色->关键词列表(dict 顺序即角色优先级,先到先占列)。
-    - require:     必需角色列表;某行须命中其中全部角色才算候选表头。
-    - scan_rows:   最多扫描前多少行找表头。
-    - exclude_contains: dict 角色->子串列表;仅在"包含匹配"阶段,若单元格文本
-                   含该角色的任一排除子串,则该列不得当作此角色(精确匹配不受影响)。
-                   例:{"sup_name": ["属性"]} 让"委外供应商属性"不被当供应商名称。
-    - log:         可选回调;识别成功后上报"哪些列没被任何角色认领",
-                   让"表里有列但缺别名"这类问题第一时间暴露(而非静默漏读)。
-
-    选"能命中最多角色"的行作表头(命中数相同则取更靠前的行)。
+    ``header_keys`` 的声明顺序决定同一列的角色优先级；同一行先做精确匹配，再做包含
+    匹配，避免“编码”抢占“供应商编码”。候选行必须覆盖全部 ``require`` 角色，命中数
+    相同则保留更靠前的一行。``exclude_contains`` 只用于排除模糊匹配干扰列。
     """
-    exclude_contains = exclude_contains or {}
+    exclusions = exclude_contains or {}
     best_row, best_map = None, {}
-    # 空表/只读表未迭代时 max_row 可能为 None,or 0 兜底避免 min() 抛 TypeError
-    for r in range(1, min(scan_rows, ws.max_row or 0) + 1):
-        col_map = {}
-        used = set()
-        # 先精确后包含:避免"编码"抢占"供应商编码"、"编号"抢占"材料编号"等。
-        for pass_exact in (True, False):
-            for c in range(1, ws.max_column + 1):
-                if c in used:
-                    continue
-                cell = ws.cell(r, c).value
-                if cell is None:
-                    continue
-                text = _norm_header(cell)   # 折叠内部空白,让含换行/空格的表头也能精确命中
-                if not text:
-                    continue                 # 纯空白单元格不参与匹配
-                for role, keys in header_keys.items():
-                    if role in col_map:
-                        continue
-                    hit = (text in keys) if pass_exact else any(k in text for k in keys)
-                    # 包含匹配阶段:排除该角色的干扰子串列(精确匹配不受影响)。
-                    if hit and not pass_exact:
-                        if any(sub in text for sub in exclude_contains.get(role, ())):
-                            hit = False
-                    if hit:
-                        col_map[role] = c
-                        used.add(c)
-                        break
-        if all(req in col_map for req in require) and len(col_map) > len(best_map):
-            best_map = col_map
-            best_row = r
+    # 空表和部分只读工作表的 max_row 可能为 None，零值兜底后不会让 min 抛异常。
+    last_row = min(scan_rows, ws.max_row or 0)
+    for row in range(1, last_row + 1):
+        column_map = _map_header_row(ws, row, header_keys, exclusions)
+        has_required = all(role in column_map for role in require)
+        if has_required and len(column_map) > len(best_map):
+            best_row, best_map = row, column_map
     if log and best_row:
         _report_unmatched(ws, best_row, best_map, log)
     return best_row, best_map

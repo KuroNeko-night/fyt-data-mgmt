@@ -1,0 +1,43 @@
+[Unit]
+Description=FYT Web Server
+# 等待系统网络初始化，但不强制依赖公网；局域网和本机服务仍可独立运行。
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+# Python 服务以前台单进程运行，由 systemd 直接跟踪主进程和退出码。
+Type=simple
+User=fyt-web
+Group=fyt-web
+# 占位符由 install.sh 在写入 /etc/systemd/system 前替换为经过校验的 ASCII 绝对路径。
+WorkingDirectory=__APP_DIR__
+EnvironmentFile=__ENV_FILE__
+# 强制 UTF-8，避免中文文件名、表头和日志受服务器默认 locale 影响。
+Environment=LANG=C.UTF-8
+Environment=LC_ALL=C.UTF-8
+Environment=PYTHONUTF8=1
+Environment=PYTHONIOENCODING=utf-8
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=HOME=__DATA_DIR__
+ExecStart=__APP_DIR__/.venv/bin/python __APP_DIR__/web_server.py
+# 仅异常退出自动重启；管理员正常 stop 不会被立即拉起。
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+UMask=0077
+# 以下沙箱限制阻止服务提权、修改系统目录和访问不需要的内核接口。
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=__DATA_DIR__
+# 清空能力集；监听当前非特权端口和读写数据目录不需要 Linux capabilities。
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

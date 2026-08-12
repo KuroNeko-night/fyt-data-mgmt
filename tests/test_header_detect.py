@@ -25,14 +25,22 @@ KEYS = {
 
 
 class _Tmp(unittest.TestCase):
+    """提供可控制前导行和表头内容的临时工作簿。"""
+
     def setUp(self):
+        """创建临时目录。"""
+
         self._tmp = tempfile.mkdtemp(prefix="fyt_hd_")
 
     def tearDown(self):
+        """删除合成表头文件。"""
+
         import shutil
         shutil.rmtree(self._tmp, ignore_errors=True)
 
     def cols(self, header, **kw):
+        """写入给定表头并返回通用检测结果。"""
+
         p = os.path.join(self._tmp, "t.xlsx")
         wb = openpyxl.Workbook(); ws = wb.active
         ws.append(header); ws.append(["x"] * len(header)); wb.save(p)
@@ -43,6 +51,8 @@ class _Tmp(unittest.TestCase):
 
 
 class TestEngine(_Tmp):
+    """验证精确/包含匹配优先级、必需角色、排除词和日志。"""
+
     def test_exact_before_contains(self):
         # "编码"(含匹配 code)不应抢占精确的"零部件代码";"数量"精确命中 qty
         hr, c = self.cols(["零部件代码", "名称", "数量"], require=("code",))
@@ -73,6 +83,8 @@ class TestEngine(_Tmp):
         self.assertEqual(c["sup_name"], 2)
 
     def test_best_row_most_roles(self):
+        """多行均像表头时应选择覆盖业务角色最多的一行，而非最先出现者。"""
+
         # 第2行命中更多角色 -> 选第2行为表头
         p = os.path.join(self._tmp, "m.xlsx")
         wb = openpyxl.Workbook(); ws = wb.active

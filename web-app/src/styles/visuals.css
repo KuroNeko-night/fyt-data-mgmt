@@ -1,0 +1,212 @@
+/* 生成美术资源及其 CSS 降级图形；图片失败不能影响业务页面结构和控件。 */
+.fyt-art-asset,
+/* 蓝图网格、信号线和节点组成与真实资产色调一致的无图片兜底。 */
+.fyt-art-fallback {
+  display: block;
+  max-width: 100%;
+  object-fit: contain;
+}
+
+.fyt-art-fallback {
+  position: relative;
+  min-height: 120px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--fyt-primary) 18%, var(--fyt-border));
+  border-radius: var(--fyt-radius-card);
+  background-color: var(--fyt-surface-subtle);
+  background-image: linear-gradient(90deg, var(--fyt-visual-grid-dark) 1px, transparent 1px), linear-gradient(var(--fyt-visual-grid-dark) 1px, transparent 1px);
+  background-position: center;
+  background-size: 32px 32px;
+}
+
+.fyt-art-fallback::before,
+.fyt-art-fallback::after {
+  position: absolute;
+  display: block;
+  content: "";
+}
+
+.fyt-art-fallback::before {
+  top: 44%;
+  right: 9%;
+  left: 9%;
+  height: var(--fyt-visual-signal-width);
+  background: var(--fyt-visual-signal-gradient);
+  transform: rotate(-8deg);
+  transform-origin: center;
+}
+
+.fyt-art-fallback::after {
+  top: 30%;
+  right: 22%;
+  width: 42%;
+  height: 42%;
+  border: 1px solid color-mix(in srgb, var(--fyt-accent) 64%, var(--fyt-border));
+  border-radius: 24% 8% 16% 10%;
+  transform: rotate(8deg);
+}
+
+.fyt-art-fallback i,
+.fyt-art-fallback b {
+  position: absolute;
+  z-index: 1;
+  display: block;
+  width: var(--fyt-visual-signal-node);
+  height: var(--fyt-visual-signal-node);
+  border: 2px solid var(--fyt-surface-subtle);
+  border-radius: 50%;
+  background: var(--fyt-accent);
+  box-shadow: 0 0 0 4px var(--fyt-visual-glow-cyan);
+}
+
+.fyt-art-fallback i { top: 41%; left: 24%; }
+.fyt-art-fallback b { right: 20%; bottom: 25%; background: var(--fyt-primary); box-shadow: 0 0 0 4px var(--fyt-visual-glow-blue); }
+
+.fyt-auth-story .fyt-art-fallback {
+  width: 100%;
+  min-height: 280px;
+  border-color: transparent;
+  background-color: transparent;
+  background-image: linear-gradient(90deg, var(--fyt-visual-grid-light) 1px, transparent 1px), linear-gradient(var(--fyt-visual-grid-light) 1px, transparent 1px);
+}
+
+.fyt-auth-story .fyt-art-fallback::before {
+  right: 3%;
+  left: 3%;
+}
+
+/* isolation 建立独立层叠上下文，让侧栏蓝图纹理稳定位于内容后方。 */
+.fyt-shell-sidebar,
+.fyt-tauri-sidebar {
+  isolation: isolate;
+}
+
+.fyt-shell-sidebar::after,
+.fyt-tauri-sidebar::after {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  background-image: linear-gradient(90deg, var(--fyt-visual-grid-light) 1px, transparent 1px), linear-gradient(var(--fyt-visual-grid-light) 1px, transparent 1px);
+  background-size: 40px 40px;
+  content: "";
+  opacity: .7;
+  pointer-events: none;
+}
+
+.fyt-shell-sidebar > *,
+.fyt-tauri-sidebar > * { position: relative; z-index: 1; }
+
+.fyt-shell-nav button.is-active::after,
+.fyt-tauri-navigation-item.is-selected::after {
+  position: absolute;
+  top: 50%;
+  left: 6px;
+  width: 22px;
+  height: 1px;
+  background: var(--fyt-signal-gradient);
+  content: "";
+  opacity: .9;
+  transform: translateY(-50%);
+}
+
+.fyt-tauri-navigation-item.is-selected::after { left: 9px; width: 24px; }
+.fyt-shell-nav button.is-active > svg, .fyt-tauri-navigation-item.is-selected > .icon { filter: drop-shadow(0 0 5px var(--fyt-visual-glow-cyan)); }
+
+/*
+ * 路由切换只做透明度淡入，不改变页面最终布局位置。
+ *
+ * 这里不能使用 transform、filter、perspective 或 contain: paint：路由舞台位于
+ * 主滚动容器内，页面上的固定定位弹窗（主数据复核、文件编辑、现场问题编辑等）
+ * 会把最近的这类祖先当成包含块。一旦舞台产生 transform，即使最终值是
+ * translateY(0)，fixed 也会相对已滚动的业务内容定位，导致弹窗跑出当前视口。
+ */
+.fyt-route-stage {
+  animation: fyt-visual-route-enter var(--fyt-motion-page) var(--fyt-motion-ease) both;
+}
+
+.fyt-route-stage > * { min-width: 0; }
+
+/* 工作台主板的纹理、美术和正文分别占用独立层级，装饰层不接收鼠标事件。 */
+.dsp-board {
+  position: relative;
+  isolation: isolate;
+}
+
+.dsp-board::after {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  background-image: linear-gradient(90deg, var(--fyt-visual-grid-light) 1px, transparent 1px), linear-gradient(var(--fyt-visual-grid-light) 1px, transparent 1px);
+  background-size: 32px 32px;
+  content: "";
+  opacity: .55;
+  pointer-events: none;
+}
+
+.dsp-board > * { position: relative; z-index: 1; }
+.dsp-board-head { position: relative; overflow: hidden; }
+.dsp-board-id, .dsp-board-meta { position: relative; z-index: 2; }
+.dsp-board-art { position: absolute; z-index: 0; top: 0; right: clamp(150px, 16%, 190px); bottom: 0; width: clamp(230px, 32%, 380px); overflow: hidden; opacity: .66; pointer-events: none; }
+.dsp-board-art .fyt-art-asset, .dsp-board-art .fyt-art-fallback { width: 100%; height: 100%; min-height: 0; border: 0; background-color: transparent; object-fit: cover; object-position: center; }
+.dsp-board-art .fyt-art-fallback { background-image: linear-gradient(90deg, var(--fyt-visual-grid-light) 1px, transparent 1px), linear-gradient(var(--fyt-visual-grid-light) 1px, transparent 1px); }
+
+/* 刷新或处理时短暂经过的信号节点，只传达状态，不承载数值信息。 */
+.dsp-board-signal {
+  position: absolute;
+  right: 28%;
+  bottom: -1px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--fyt-accent);
+  box-shadow: 0 0 0 4px var(--fyt-visual-glow-cyan);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.dsp-board[data-refreshing="true"] .dsp-board-signal,
+.dsp-board[data-processing="true"] .dsp-board-signal { animation: fyt-visual-signal-pass var(--fyt-motion-signal) var(--fyt-motion-ease) both; }
+
+.fyt-tauri-mode-visual { display: flex; width: min(100%, 520px); min-height: 128px; align-items: center; justify-content: center; margin: 0 auto var(--fyt-space-5); }
+.fyt-tauri-mode-visual .fyt-art-asset, .fyt-tauri-mode-visual .fyt-art-fallback { width: min(100%, 340px); min-height: 128px; border: 0; background: transparent; }
+.fyt-tauri-mode-option .fyt-mode-art { width: 100%; min-height: 88px; margin-top: auto; }
+.fyt-tauri-mode-option .fyt-mode-art .fyt-art-asset, .fyt-tauri-mode-option .fyt-mode-art .fyt-art-fallback { width: 100%; min-height: 88px; border: 0; background: transparent; }
+
+/* 空态统一限制构图窗口；各资源的透明安全边距通过后续细分缩放补偿。 */
+.fyt-empty-illustration-frame { display: grid; width: min(232px, 72vw); height: 168px; place-items: center; margin-bottom: var(--fyt-space-2); overflow: hidden; }
+.fyt-empty-illustration { width: 100%; height: 100%; object-fit: cover; object-position: center; }
+.fyt-empty-illustration.fyt-art-fallback { min-height: 168px; }
+.fyt-empty-illustration-frame > .fyt-art-asset.fyt-art-empty-task-archive { transform: scale(1.08); }
+.fyt-empty-illustration-frame > .fyt-art-asset.fyt-art-empty-library-shelf { object-position: center 54%; transform: scale(1.08); }
+.fyt-empty-illustration-frame > .fyt-art-asset.fyt-art-empty-workshop-note { object-position: center 58%; transform: scale(1.08); }
+.fyt-empty-illustration-frame > .fyt-art-asset.fyt-art-empty-review-check { object-position: center 52%; transform: scale(1.28); }
+.fyt-library-empty-content, .fyt-workshop-empty { display: grid; justify-items: center; gap: var(--fyt-space-3); }
+.fyt-library-empty-content .fyt-empty-illustration-frame { width: 176px; height: 126px; }
+.fyt-workshop-empty .fyt-empty-illustration-frame { width: 204px; height: 176px; }
+.fyt-library-empty-content .fyt-art-asset, .fyt-library-empty-content .fyt-art-fallback, .fyt-workshop-empty .fyt-art-asset, .fyt-workshop-empty .fyt-art-fallback { border: 0; background: transparent; }
+
+@keyframes fyt-visual-route-enter {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes fyt-visual-signal-pass {
+  0% { opacity: 0; transform: translateX(-20px); }
+  20%, 70% { opacity: 1; }
+  100% { opacity: 0; transform: translateX(20px); }
+}
+
+@media (max-width: 767px) {
+  .dsp-board-art { display: none; }
+  .fyt-empty-illustration-frame { width: min(184px, 60vw); height: 136px; }
+  .fyt-workshop-empty .fyt-empty-illustration-frame { width: min(190px, 62vw); height: 156px; }
+}
+
+/* 同时支持系统减少动画偏好和应用显式 data-reduce-motion 开关。 */
+@media (prefers-reduced-motion: reduce) {
+  .fyt-route-stage, .dsp-board[data-refreshing="true"] .dsp-board-signal, .dsp-board[data-processing="true"] .dsp-board-signal { animation: none; }
+}
+
+[data-reduce-motion="true"] .fyt-route-stage,
+[data-reduce-motion="true"] .dsp-board[data-refreshing="true"] .dsp-board-signal,
+[data-reduce-motion="true"] .dsp-board[data-processing="true"] .dsp-board-signal { animation: none; }
