@@ -132,6 +132,145 @@ def _save_images(worksheet, image_dir: Path | None, records_by_row: dict[int, di
     return images
 
 
+def _safety_source_path(path: str | os.PathLike[str]) -> Path:
+    """解析并校验安全检查日报路径，只允许当前可完整读取图片的格式。"""
+    target = Path(path).resolve()
+    if target.suffix.lower() not in SUPPORTED_EXTENSIONS:
+        raise ValueError("安全检查日报仅支持 .xlsx 或 .xlsm 文件")
+    if not target.is_file():
+        raise ValueError("安全检查日报文件不存在")
+    return target
+
+
+def _open_safety_workbook(target: Path):
+    """以可读取公式缓存和嵌入图片的模式打开日报。"""
+    try:
+        # 图片不会在 read_only 模式完整提供；外部链接不参与日报分析，显式关闭可减少开销。
+        return load_workbook(target, data_only=True, read_only=False, keep_links=False)
+    except Exception as exc:
+        raise ValueError("安全检查日报无法读取，请确认文件没有损坏") from exc
+
+
+def _safety_worksheet(workbook):
+    """选取首张尺寸足以容纳规范字段的页签。"""
+    worksheet = next(
+        (sheet for sheet in workbook.worksheets if sheet.max_row > 1 and sheet.max_column >= 8),
+        None,
+    )
+    if worksheet is None:
+        raise ValueError("安全检查日报没有可读取的工作表")
+    return worksheet
+
+
+def _report_date_from_first_row(worksheet, epoch: Any) -> str:
+    """从规范模板首行取得第一个可验证日期。"""
+    for cell in worksheet[1]:
+        report_date = _date_text(cell.value, epoch)
+        if report_date:
+            return report_date
+    return ""
+
+
+def _safety_record(worksheet, row_index: int, columns: dict[str, int], category: str) -> dict[str, object]:
+    """把一行规范字段投影成日清看板可直接使用的检查记录。"""
+    return {
+        "row": row_index,
+        "category": category or "未分类",
+        "sequence": (
+            _text(worksheet.cell(row_index, columns["序号"]).value)
+            if columns.get("序号") else ""
+        ),
+        "check_item": _text(worksheet.cell(row_index, columns["检查项目"]).value),
+        "standard": _text(worksheet.cell(row_index, columns["安全标准要求"]).value),
+        "result": _text(worksheet.cell(row_index, columns["检查结果"]).value) or "未填写",
+        "problem_description": _text(worksheet.cell(row_index, columns["问题描述"]).value),
+        "corrective_action": _text(worksheet.cell(row_index, columns["整改措施"]).value),
+        "owner": _text(worksheet.cell(row_index, columns["责任人"]).value),
+    }
+
+
+def _safety_records(worksheet, header_row: int, columns: dict[str, int]) -> tuple[list[dict[str, object]], dict[int, dict[str, object]]]:
+    """读取检查明细，并沿用合并单元格最近一次出现的检查类别。"""
+    current_category = ""
+    records: list[dict[str, object]] = []
+    records_by_row: dict[int, dict[str, object]] = {}
+    for row_index in range(header_row + 1, worksheet.max_row + 1):
+        category = _text(worksheet.cell(row_index, columns["检查类别"]).value)
+        if category:
+            current_category = category  # 合并类别单元格只有左上角有值，后续明细沿用最近类别。
+        check_item = _text(worksheet.cell(row_index, columns["检查项目"]).value)
+        result = _text(worksheet.cell(row_index, columns["检查结果"]).value)
+        if not check_item and not result:
+            continue  # 分隔行、图片占位和说明行不能制造空检查记录。
+        record = _safety_record(worksheet, row_index, columns, current_category)
+        records.append(record)
+        records_by_row[row_index] = record  # 图片锚点以原工作表行号关联，不能改用结果列表序号。
+    if not records:
+        raise ValueError("安全检查日报没有可展示的检查记录")
+    return records, records_by_row
+
+
+def _result_kind(result: object) -> str:
+    """把自由文本结果归为合格、不合格或待确认，优先识别“不合格”。"""
+    text = str(result or "")
+    if "不合格" in text:
+        return "unqualified"  # “不合格”包含“合格”子串，必须先判断。
+    if "合格" in text:
+        return "qualified"
+    return "pending"
+
+
+def _category_summary(records: list[dict[str, object]]) -> list[dict[str, object]]:
+    """按检查类别统计总数、合格数和不合格数，保持类别首次出现顺序。"""
+    categories: dict[str, dict[str, object]] = {}
+    for record in records:
+        category = str(record["category"])
+        item = categories.setdefault(
+            category, {"category": category, "total": 0, "qualified": 0, "unqualified": 0},
+        )
+        item["total"] = int(item["total"]) + 1
+        kind = _result_kind(record["result"])
+        if kind in {"qualified", "unqualified"}:
+            item[kind] = int(item[kind]) + 1
+    return list(categories.values())
+
+
+def _attach_record_images(
+    records: list[dict[str, object]], images: list[dict[str, object]],
+) -> None:
+    """按锚点行把一张或多张图片列表挂回对应检查记录。"""
+    images_by_row: dict[int, list[dict[str, object]]] = {}
+    for image in images:
+        images_by_row.setdefault(int(image["row"]), []).append(image)
+    for record in records:
+        record["images"] = images_by_row.get(int(record["row"]), [])  # 保持列表供移动端画廊展示。
+
+
+def _safety_summary(
+    target: Path, worksheet, report_date: str, records: list[dict[str, object]],
+    images: list[dict[str, object]],
+) -> dict[str, object]:
+    """组合看板需要的全局指标、分类摘要、明细和图片元数据。"""
+    counts = {"qualified": 0, "unqualified": 0, "pending": 0}
+    for record in records:
+        counts[_result_kind(record["result"])] += 1
+    total = len(records)
+    return {
+        "file_name": target.name,
+        "report_date": report_date,
+        "sheet": worksheet.title,
+        "total_checks": total,
+        "qualified_count": counts["qualified"],
+        "unqualified_count": counts["unqualified"],
+        "pending_count": counts["pending"],
+        "qualification_rate": round(counts["qualified"] / total * 100, 1) if total else 0.0,
+        "category_summary": _category_summary(records),
+        "records": records,
+        "image_count": len(images),
+        "images": images,
+    }
+
+
 def analyze(path: str | os.PathLike[str], *, image_dir: str | os.PathLike[str] | None = None) -> dict[str, object]:
     """解析安全检查日报并返回可直接持久化、展示的完整摘要。
 
@@ -140,89 +279,18 @@ def analyze(path: str | os.PathLike[str], *, image_dir: str | os.PathLike[str] |
     避免不必要的外部链接处理。选择第一张尺寸足以容纳规范表的页签，解析首行日期、
     逐行记录、分类统计和图片关联，任何路径都在 finally 中关闭工作簿。
     """
-    target = Path(path).resolve()
-    if target.suffix.lower() not in SUPPORTED_EXTENSIONS:
-        raise ValueError("安全检查日报仅支持 .xlsx 或 .xlsm 文件")
-    if not target.is_file():
-        raise ValueError("安全检查日报文件不存在")
+    target = _safety_source_path(path)
+    workbook = _open_safety_workbook(target)
     try:
-        workbook = load_workbook(target, data_only=True, read_only=False, keep_links=False)
-    except Exception as exc:
-        raise ValueError("安全检查日报无法读取，请确认文件没有损坏") from exc
-    try:
-        # 尺寸过滤先排除封面/说明页，正式字段完整性仍由 _header_row 严格验证。
-        worksheet = next((sheet for sheet in workbook.worksheets if sheet.max_row > 1 and sheet.max_column >= 8), None)
-        if worksheet is None:
-            raise ValueError("安全检查日报没有可读取的工作表")
+        worksheet = _safety_worksheet(workbook)
         header_row, columns = _header_row(worksheet)
-        report_date = ""
-        # 规范模板把报告日期放在首行但列位置可能变化，取首个可验证日期。
-        for cell in worksheet[1]:
-            report_date = _date_text(cell.value, workbook.epoch)
-            if report_date:
-                break
-        current_category = ""
-        records: list[dict[str, object]] = []
-        records_by_row: dict[int, dict[str, object]] = {}
-        for row_index in range(header_row + 1, worksheet.max_row + 1):
-            category = _text(worksheet.cell(row_index, columns["检查类别"]).value)
-            if category:
-                # 合并类别单元格只有左上角有值，后续空行沿用最近类别。
-                current_category = category
-            check_item = _text(worksheet.cell(row_index, columns["检查项目"]).value)
-            result = _text(worksheet.cell(row_index, columns["检查结果"]).value)
-            if not check_item and not result:
-                # 同时缺少项目和结果的行通常是分隔、图片占位或说明，不创建假记录。
-                continue
-            record = {
-                "row": row_index,
-                "category": current_category or "未分类",
-                "sequence": _text(worksheet.cell(row_index, columns.get("序号", 0)).value) if columns.get("序号") else "",
-                "check_item": check_item,
-                "standard": _text(worksheet.cell(row_index, columns["安全标准要求"]).value),
-                "result": result or "未填写",
-                "problem_description": _text(worksheet.cell(row_index, columns["问题描述"]).value),
-                "corrective_action": _text(worksheet.cell(row_index, columns["整改措施"]).value),
-                "owner": _text(worksheet.cell(row_index, columns["责任人"]).value),
-            }
-            records.append(record)
-            records_by_row[row_index] = record
-        if not records:
-            raise ValueError("安全检查日报没有可展示的检查记录")
-        category_map: dict[str, dict[str, object]] = {}
-        for record in records:
-            category = str(record["category"])
-            item = category_map.setdefault(category, {"category": category, "total": 0, "qualified": 0, "unqualified": 0})
-            item["total"] = int(item["total"]) + 1
-            if "不合格" in str(record["result"]):
-                # 必须先判“不合格”，因为该文本本身也包含“合格”。
-                item["unqualified"] = int(item["unqualified"]) + 1
-            elif "合格" in str(record["result"]):
-                item["qualified"] = int(item["qualified"]) + 1
-        images = _save_images(worksheet, Path(image_dir).resolve() if image_dir else None, records_by_row)
-        images_by_row: dict[int, list[dict[str, object]]] = {}
-        for image in images:
-            images_by_row.setdefault(int(image["row"]), []).append(image)
-        for record in records:
-            # 一条检查记录允许关联多张图片，保持列表结构供移动端画廊展示。
-            record["images"] = images_by_row.get(int(record["row"]), [])
-        total = len(records)
-        unqualified = sum(1 for record in records if "不合格" in str(record["result"]))
-        qualified = sum(1 for record in records if "合格" in str(record["result"]) and "不合格" not in str(record["result"]))
-        return {
-            "file_name": target.name,
-            "report_date": report_date,
-            "sheet": worksheet.title,
-            "total_checks": total,
-            "qualified_count": qualified,
-            "unqualified_count": unqualified,
-            "pending_count": max(total - qualified - unqualified, 0),
-            "qualification_rate": round(qualified / total * 100, 1) if total else 0.0,
-            "category_summary": list(category_map.values()),
-            "records": records,
-            "image_count": len(images),
-            "images": images,
-        }
+        records, records_by_row = _safety_records(worksheet, header_row, columns)
+        output_image_dir = Path(image_dir).resolve() if image_dir else None
+        images = _save_images(worksheet, output_image_dir, records_by_row)
+        _attach_record_images(records, images)
+        return _safety_summary(
+            target, worksheet, _report_date_from_first_row(worksheet, workbook.epoch), records, images,
+        )
     finally:
         workbook.close()
 

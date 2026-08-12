@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 from io import BytesIO
 import socket
@@ -15,6 +16,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+import zipfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
@@ -1974,6 +1976,26 @@ class WebServerTests(unittest.TestCase):
         )[1]["token"]
         data = self.call("/api/admin/data", token=new_admin)[1]
         self.assertIn(uploaded["handle"], {row["handle"] for row in data["uploads"]})
+
+    def test_backup_verification_rejects_duplicate_manifest_paths(self):
+        """备份清单不得用重复路径掩盖同一文件的多次登记。"""
+
+        backup_path = web_server.DATA_ROOT / "backups" / "duplicate-manifest.zip"
+        backup_path.parent.mkdir(parents=True, exist_ok=True)
+        database_payload = b"synthetic-database"
+        entry = {
+            "path": "database/accounts.sqlite3",
+            "size": len(database_payload),
+            "sha256": hashlib.sha256(database_payload).hexdigest(),
+        }
+        manifest = {"format": 1, "files": [entry, dict(entry)]}
+        with zipfile.ZipFile(backup_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("database/accounts.sqlite3", database_payload)
+            archive.writestr(
+                "manifest.json", json.dumps(manifest, ensure_ascii=False).encode("utf-8"),
+            )
+        with self.assertRaisesRegex(ValueError, "重复路径"):
+            web_server.verify_web_backup(backup_path)
 
     def test_admin_master_data_upload_review_merge_and_permissions(self):
         """主数据上传必须经过冲突复核、确认合并和管理员权限约束。"""

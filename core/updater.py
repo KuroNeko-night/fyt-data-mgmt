@@ -34,6 +34,8 @@ import ssl
 import hashlib
 import re
 import contextlib
+import os
+import tempfile
 import urllib.request
 
 from . import version
@@ -164,6 +166,73 @@ def _file_sha256(path, chunk=1048576):
     return h.hexdigest()
 
 
+def _remove_partial(path):
+    """尽力删除未完成下载；清理失败不覆盖真正的网络或校验异常。"""
+    try:
+        if os.path.exists(path):  # 只触碰当前任务生成的固定 ``.part`` 路径。
+            os.remove(path)
+    except OSError:
+        pass  # 文件可能被杀毒软件短暂占用，主异常仍应交给调用方处理。
+
+
+@contextlib.contextmanager
+def _download_response(url, part, timeout, log):
+    """打开下载响应，并保证响应异常时清除半包。"""
+    if log:
+        log("正在连接下载服务器…")  # 连接阶段没有字节进度，需要先给用户可见反馈。
+    ctx = ssl.create_default_context()  # 使用系统信任库，拒绝明文或自签名更新源。
+    req = urllib.request.Request(url, headers={"User-Agent": version.APP_ID})
+    try:
+        response = urllib.request.urlopen(req, timeout=timeout, context=ctx)
+        with response as resp:  # 由上下文负责释放 socket，避免长任务泄漏连接。
+            yield resp
+    except Exception:
+        _remove_partial(part)  # 读取中断和关闭失败都不能把半包留给下一次任务。
+        raise
+
+
+def _stream_download(resp, part, progress, log):
+    """将响应流写入半包，返回服务器声明长度与实际字节数。"""
+    total = int(resp.headers.get("Content-Length", 0) or 0)  # 缺失时采用不确定进度模式。
+    done = 0
+    indeterminate_notified = False
+    with open(part, "wb") as file_obj:  # 只写临时文件，验证前不暴露为可执行安装包。
+        while True:
+            chunk = resp.read(65536)  # 64 KiB 平衡磁盘吞吐与进度回调频率。
+            if not chunk:
+                break  # EOF 表示响应正常结束，长度一致性稍后单独检查。
+            file_obj.write(chunk)  # 顺序写入可避免大文件一次性占用内存。
+            done += len(chunk)  # 进度和完整性检查都以实际收到的字节为准。
+            if total > 0:
+                if progress:
+                    progress(min(99, done * 100 // total))  # 哈希和原子替换完成前最多 99%。
+                if log and done % (2 * 1024 * 1024) < 65536:
+                    log("已下载 %.1f / %.1f MB" % (done / 1048576.0, total / 1048576.0))
+            else:
+                if progress and not indeterminate_notified:
+                    progress(-1)  # -1 只发送一次，通知界面切换不确定进度样式。
+                    indeterminate_notified = True
+                if log and done % (2 * 1024 * 1024) < 65536:
+                    log("已下载 %.1f MB…" % (done / 1048576.0))
+    return total, done
+
+
+def _verify_and_commit(part, dest, expected_sha, total, done, log):
+    """检查长度和 SHA-256，验证成功后原子提交安装包。"""
+    if total > 0 and done != total:
+        _remove_partial(part)  # 长度不一致说明连接被截断，不能继续执行安装器。
+        raise IOError("下载不完整，请重试（已收 %d/%d 字节）。" % (done, total))
+    actual = _file_sha256(part)  # 第二层校验覆盖无 Content-Length 的响应。
+    if actual.lower() != expected_sha:
+        _remove_partial(part)  # 哈希不匹配时删除伪装成安装包的内容。
+        raise IOError("安装包校验失败（哈希不匹配），已拒绝运行，请重试或联系管理员。")
+    if log:
+        log("哈希校验通过。")
+    os.replace(part, dest)  # 同一文件系统内原子替换，避免用户看到半成品。
+    with open(dest + ".sha256", "w", encoding="ascii") as file_obj:
+        file_obj.write(expected_sha)  # 旁路记录供 run_installer 启动前再次确认。
+
+
 def download_installer(url, dest_dir=None, progress=None, log=None, timeout=30,
                        sha256=None):
     """下载、校验并提交安装包到临时或指定目录。
@@ -175,11 +244,6 @@ def download_installer(url, dest_dir=None, progress=None, log=None, timeout=30,
     下载写入 ``.part``，已知长度时必须精确吻合，随后计算强制 SHA-256。全部验证通过
     才原子替换正式 exe，并写入 ASCII 哈希旁路文件供 ``run_installer`` 二次验证。
     """
-    import os
-    import ssl
-    import tempfile
-    import urllib.request
-
     if not url:
         raise ValueError("下载地址为空，无法下载安装包。")
     if not url.lower().startswith("https://"):
@@ -194,89 +258,16 @@ def download_installer(url, dest_dir=None, progress=None, log=None, timeout=30,
         os.makedirs(dest_dir)
     dest = os.path.join(dest_dir, _download_name(url))
     part = dest + ".part"
+    _remove_partial(part)  # 每次任务从干净半包开始，当前实现不支持断点续传。
     try:
-        if os.path.exists(part):
-            os.remove(part)
-    except OSError:
-        # 旧半包无法删除时后续打开写入会给出更具体错误，这里不掩盖主流程。
-        pass
-    if log:
-        log("正在连接下载服务器…")
-    ctx = ssl.create_default_context()
-    req = urllib.request.Request(url, headers={"User-Agent": version.APP_ID})
-    try:
-        response_cm = urllib.request.urlopen(req, timeout=timeout, context=ctx)
+        with _download_response(url, part, timeout, log) as resp:
+            total, done = _stream_download(resp, part, progress, log)
     except Exception:
-        # 当前实现不支持断点续传，连接失败时必须清掉旧半包，避免误认成完整文件。
-        try:
-            if os.path.exists(part):
-                os.remove(part)
-        except OSError:
-            pass
+        _remove_partial(part)  # 连接失败、读失败和写失败统一清理半包。
         raise
-    @contextlib.contextmanager
-    def _response_with_cleanup():
-        """包装 HTTP 响应，确保读取或关闭异常时删除不完整的 ``.part``。"""
-        try:
-            with response_cm as resp:
-                yield resp
-        except Exception:
-            # 读取中断、响应关闭失败等异常同样不能残留半包。
-            try:
-                if os.path.exists(part):
-                    os.remove(part)
-            except OSError:
-                pass
-            raise
-
-    with _response_with_cleanup() as resp:
-        total = int(resp.headers.get("Content-Length", 0) or 0)
-        done = 0
-        indeterminate_notified = False
-        with open(part, "wb") as f:
-            while True:
-                # 64 KiB 块在进度更新频率和磁盘吞吐之间取得平衡。
-                chunk = resp.read(65536)
-                if not chunk:
-                    break
-                f.write(chunk)
-                done += len(chunk)
-                if total > 0:
-                    if progress:
-                        # 校验完成前最多报告 99%，100% 只在哈希与原子替换成功后发送。
-                        progress(min(99, done * 100 // total))
-                    if log and done % (2 * 1024 * 1024) < 65536:
-                        log("已下载 %.1f / %.1f MB" % (done / 1048576.0, total / 1048576.0))
-                else:
-                    # 未知总长只通知一次不确定态，并每约 2 MiB 提供文字进度。
-                    if progress and not indeterminate_notified:
-                        progress(-1)
-                        indeterminate_notified = True
-                    if log and done % (2 * 1024 * 1024) < 65536:
-                        log("已下载 %.1f MB…" % (done / 1048576.0))
-    # 第一层完整性：服务器声明长度时，实际字节数必须精确一致。
-    if total > 0 and done != total:
-        try:
-            os.remove(part)
-        except OSError:
-            pass
-        raise IOError("下载不完整，请重试（已收 %d/%d 字节）。" % (done, total))
-    # 第二层完整性与来源约束：强制匹配可信清单中的 SHA-256。
-    actual = _file_sha256(part)
-    if actual.lower() != expect_sha:
-        try:
-            os.remove(part)
-        except OSError:
-            pass
-        raise IOError("安装包校验失败（哈希不匹配），已拒绝运行，请重试或联系管理员。")
-    if log:
-        log("哈希校验通过。")
-    os.replace(part, dest)
-    # 旁路哈希不用于下载验证，只用于安装启动前确认文件在下载后未被替换。
-    with open(dest + ".sha256", "w", encoding="ascii") as file_obj:
-        file_obj.write(expect_sha)
+    _verify_and_commit(part, dest, expect_sha, total, done, log)
     if progress:
-        progress(100)
+        progress(100)  # 只有正式文件与旁路哈希都写入后才宣告完成。
     if log:
         log("下载完成：%s" % dest)
     return dest

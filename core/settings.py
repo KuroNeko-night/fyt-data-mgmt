@@ -41,6 +41,36 @@ DEFAULTS = {
 }
 
 
+_BOOLEAN_KEYS = {
+    "reduce_motion", "check_update_on_start", "auto_open_output",
+    "show_done_dialog", "minimize_to_tray", "enable_incremental_cache",
+    "onboarding_seen", "nav_collapsed", "preview_hidden",
+}
+
+
+def _validate_arrival(value):
+    """清洗到料嵌套设置；单个损坏批次只丢弃该项。"""
+    if not isinstance(value, dict):
+        raise ValueError("到料明细设置必须是对象")
+    top_label = value.get("top_label", DEFAULTS["arrival"]["top_label"])  # 缺失字段沿用稳定默认值。
+    last_total = value.get("last_total", DEFAULTS["arrival"]["last_total"])  # 保留旧版人工总数记忆。
+    batches = value.get("batches", {})  # 历史批次是可选映射，缺失时按空表处理。
+    if not isinstance(top_label, str) or isinstance(last_total, bool) or not isinstance(last_total, (int, float)):
+        raise ValueError("到料明细设置字段无效")
+    if not isinstance(batches, dict):
+        raise ValueError("到料批次设置必须是对象")
+    clean_batches = {}
+    for batch, item in batches.items():  # 逐条隔离历史脏数据，避免一条坏记录拖垮整个设置。
+        if not isinstance(item, dict):
+            continue
+        total = item.get("total", DEFAULTS["arrival"]["last_total"])  # 缺失总数沿用上一次有效值。
+        remark = item.get("remark", "")  # 备注不是必填字段，统一回退为空文本。
+        if isinstance(total, bool) or not isinstance(total, (int, float)) or not isinstance(remark, str):
+            continue
+        clean_batches[str(batch)] = {"total": int(total), "remark": remark}  # 固化前端稳定协议类型。
+    return {"top_label": top_label, "last_total": int(last_total), "batches": clean_batches}
+
+
 def _valid_value(key, value):
     """校验并规范化单个设置值，失败时抛出可记录的 ``ValueError``。
 
@@ -49,50 +79,28 @@ def _valid_value(key, value):
     清洗后的副本，防止脏数据进入进程内状态。
     """
     if key == "output_mode":
-        if value not in ("unified", "beside", "custom"):
+        if value not in ("unified", "beside", "custom"):  # 输出目录策略必须来自固定枚举。
             raise ValueError("输出模式无效")
-    elif key == "theme_mode":
-        if value not in ("auto", "light", "dark"):
+        return value
+    if key == "theme_mode":
+        if value not in ("auto", "light", "dark"):  # 主题枚举与双端设计令牌保持一致。
             raise ValueError("主题模式无效")
-    elif key in ("custom_output_root",):
-        if not isinstance(value, str):
+        return value
+    if key == "custom_output_root":
+        if not isinstance(value, str):  # 路径允许为空，但不能接受数组、数字等 JSON 类型。
             raise ValueError("路径设置必须是文本")
-    elif key in ("reduce_motion", "check_update_on_start", "auto_open_output",
-                 "show_done_dialog", "minimize_to_tray", "enable_incremental_cache",
-                 "onboarding_seen", "nav_collapsed", "preview_hidden"):
-        if not isinstance(value, bool):
+        return value
+    if key in _BOOLEAN_KEYS:
+        if not isinstance(value, bool):  # Python 中 bool 是 int 子类，必须显式按布尔校验。
             raise ValueError("布尔设置类型无效")
-    elif key == "right_panel_w":
-        # 允许 JSON 整数或浮点，但落盘/使用前统一为整数像素。
+        return value
+    if key == "right_panel_w":
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not 240 <= value <= 1200:
             raise ValueError("侧栏宽度无效")
-        return int(value)
-    elif key == "arrival":
-        # 到料配置是唯一现存的嵌套设置，需要逐层校验，不能只验证根节点为 dict。
-        if not isinstance(value, dict):
-            raise ValueError("到料明细设置必须是对象")
-        top_label = value.get("top_label", DEFAULTS["arrival"]["top_label"])
-        last_total = value.get("last_total", DEFAULTS["arrival"]["last_total"])
-        batches = value.get("batches", {})
-        if not isinstance(top_label, str) or isinstance(last_total, bool) or not isinstance(last_total, (int, float)):
-            raise ValueError("到料明细设置字段无效")
-        if not isinstance(batches, dict):
-            raise ValueError("到料批次设置必须是对象")
-        clean_batches = {}
-        for batch, item in batches.items():
-            if not isinstance(item, dict):
-                # 单个历史批次损坏时只丢弃该项，不使整个到料设置无法加载。
-                continue
-            total = item.get("total", DEFAULTS["arrival"]["last_total"])
-            remark = item.get("remark", "")
-            if isinstance(total, bool) or not isinstance(total, (int, float)) or not isinstance(remark, str):
-                continue
-            # JSON 对象键应为文本；批次总数统一为整数，保持前端表单协议稳定。
-            clean_batches[str(batch)] = {"total": int(total), "remark": remark}
-        return {"top_label": top_label, "last_total": int(last_total), "batches": clean_batches}
-    else:
-        raise ValueError("未知设置")
-    return value
+        return int(value)  # 页面布局按整数像素保存，避免浮点配置造成渲染抖动。
+    if key == "arrival":
+        return _validate_arrival(value)  # 嵌套配置交给独立校验器，主函数保持扁平。
+    raise ValueError("未知设置")
 
 
 class Settings(object):

@@ -24,6 +24,79 @@ def _daily_brief_id(path: str) -> str:
         raise ApiError(HTTPStatus.BAD_REQUEST, "事项编号无效")
     return value
 
+
+_THREE_FIELD_BRIEF_CATEGORIES = {"escalation", "notice"}
+_BRIEF_TEXT_LIMITS = {
+    "unit": 80,
+    "owner": 80,
+    "description": 4000,
+    "progress": 1000,
+}
+
+
+def _daily_brief_values(
+    body: dict[str, object], deps: DailyManagementDependencies, require_date: bool,
+) -> dict[str, str]:
+    """读取并清洗日清事项共享字段，不在此阶段推断类别专属规则。"""
+    return {
+        "report_date": (
+            deps.report_date(body.get("report_date"))
+            if require_date else str(body.get("report_date") or "")
+        ),
+        "category": str(body.get("category") or "notice").strip(),
+        "unit": str(body.get("unit") or "").strip(),
+        "owner": str(body.get("owner") or "").strip(),
+        "title": str(body.get("title") or "").strip(),
+        "description": str(body.get("description") or "").strip(),
+        "due_date": str(body.get("due_date") or "").strip(),
+        "progress": str(body.get("progress") or "").strip(),
+        "status": str(body.get("status") or "open").strip(),
+    }
+
+
+def _validate_daily_brief_kind(
+    values: dict[str, str], deps: DailyManagementDependencies,
+) -> None:
+    """校验类别、状态和主标题，并按类别选择客户可理解的字段名称。"""
+    category = values["category"]
+    if category not in deps.brief_categories:
+        raise ApiError(HTTPStatus.BAD_REQUEST, "事项类别无效")
+    if values["status"] not in deps.brief_statuses:
+        raise ApiError(HTTPStatus.BAD_REQUEST, "事项状态无效")
+    if not values["title"] or len(values["title"]) > 160:
+        label = (
+            "事项"
+            if category in _THREE_FIELD_BRIEF_CATEGORIES | {"meeting_todo", "past_todo"}
+            else "指标名称"
+        )
+        raise ApiError(HTTPStatus.BAD_REQUEST, f"{label}需要填写且不能超过 160 个字")
+
+
+def _apply_daily_brief_category_rules(values: dict[str, str]) -> None:
+    """清空当前类别不使用的字段，阻止前端隐藏旧值进入总览和导出。"""
+    category = values["category"]
+    if category in _THREE_FIELD_BRIEF_CATEGORIES:
+        if not values["unit"] or not values["owner"]:
+            raise ApiError(HTTPStatus.BAD_REQUEST, "重大/升级事项和通报需要填写单位、责任人和事项")
+        # 三字段事项没有描述、日期、进展和流转状态，切换类别时必须清理历史待办值。
+        values.update({"description": "", "due_date": "", "progress": "", "status": "open"})
+    elif category == "process":
+        # 过程指标可记录说明，但不参与待办完成日期和状态流转。
+        values.update({"due_date": "", "progress": "", "status": "open"})
+
+
+def _validate_daily_brief_content(values: dict[str, str]) -> None:
+    """校验各文本长度并将可选完成日期归一化为 ISO 格式。"""
+    if any(len(values[key]) > limit for key, limit in _BRIEF_TEXT_LIMITS.items()):
+        raise ApiError(HTTPStatus.BAD_REQUEST, "事项内容过长")
+    if not values["due_date"]:
+        return
+    try:
+        values["due_date"] = datetime.strptime(values["due_date"], "%Y-%m-%d").date().isoformat()
+    except ValueError as exc:
+        raise ApiError(HTTPStatus.BAD_REQUEST, "事项完成日期无效") from exc
+
+
 def _validate_daily_brief(
     body: dict[str, object],
     deps: DailyManagementDependencies,
@@ -36,41 +109,10 @@ def _validate_daily_brief(
     集中规范化，防止前端隐藏字段后旧值仍被提交并出现在总览。返回字典可直接用于新增
     或更新 SQL，调用方无需再次推断类别。
     """
-    report_date = deps.report_date(body.get("report_date")) if require_date else str(body.get("report_date") or "")
-    category = str(body.get("category") or "notice").strip()
-    status = str(body.get("status") or "open").strip()
-    values = {
-        "report_date": report_date,
-        "category": category,
-        "unit": str(body.get("unit") or "").strip(),
-        "owner": str(body.get("owner") or "").strip(),
-        "title": str(body.get("title") or "").strip(),
-        "description": str(body.get("description") or "").strip(),
-        "due_date": str(body.get("due_date") or "").strip(),
-        "progress": str(body.get("progress") or "").strip(),
-        "status": status,
-    }
-    if category not in deps.brief_categories:
-        raise ApiError(HTTPStatus.BAD_REQUEST, "事项类别无效")
-    if status not in deps.brief_statuses:
-        raise ApiError(HTTPStatus.BAD_REQUEST, "事项状态无效")
-    if not values["title"] or len(values["title"]) > 160:
-        label = "事项" if category in {"escalation", "notice", "meeting_todo", "past_todo"} else "指标名称"
-        raise ApiError(HTTPStatus.BAD_REQUEST, f"{label}需要填写且不能超过 160 个字")
-    if category in {"escalation", "notice"}:
-        if not values["unit"] or not values["owner"]:
-            raise ApiError(HTTPStatus.BAD_REQUEST, "重大/升级事项和通报需要填写单位、责任人和事项")
-        values.update({"description": "", "due_date": "", "progress": "", "status": "open"})  # 三字段事项不能残留待办字段。
-    elif category == "process":
-        values.update({"due_date": "", "progress": "", "status": "open"})  # 过程指标不参与完成状态流转。
-    for key, limit in (("unit", 80), ("owner", 80), ("description", 4000), ("progress", 1000)):
-        if len(values[key]) > limit:
-            raise ApiError(HTTPStatus.BAD_REQUEST, "事项内容过长")
-    if values["due_date"]:
-        try:
-            values["due_date"] = datetime.strptime(values["due_date"], "%Y-%m-%d").date().isoformat()
-        except ValueError as exc:
-            raise ApiError(HTTPStatus.BAD_REQUEST, "事项完成日期无效") from exc
+    values = _daily_brief_values(body, deps, require_date)
+    _validate_daily_brief_kind(values, deps)
+    _apply_daily_brief_category_rules(values)
+    _validate_daily_brief_content(values)
     return values
 
 def list_daily_brief_items(handler: Any, deps: DailyManagementDependencies) -> None:

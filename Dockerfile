@@ -1,13 +1,20 @@
-# syntax=docker/dockerfile:1.7
+# Dockerfile 保留标准官方源，便于 GitHub Actions 和普通 ``docker build`` 使用；Compose
+# 可按部署网络通过构建参数覆盖为公开镜像或组织内部镜像仓库。
+ARG NODE_IMAGE=node:22-bookworm-slim
+ARG PYTHON_IMAGE=python:3.13-slim-bookworm
+ARG NPM_REGISTRY=https://registry.npmjs.org
+ARG PIP_INDEX_URL=https://pypi.org/simple
 
-FROM node:22-bookworm-slim AS web-build
+FROM ${NODE_IMAGE} AS web-build
+ARG NPM_REGISTRY
 WORKDIR /src
 COPY web-app/package.json web-app/package-lock.json ./web-app/
-RUN npm --prefix web-app ci --no-audit --no-fund
+RUN npm --prefix web-app ci --no-audit --no-fund --registry="${NPM_REGISTRY}"
 COPY web-app ./web-app
 RUN npm --prefix web-app run build
 
-FROM python:3.13-slim-bookworm AS runtime
+FROM ${PYTHON_IMAGE} AS runtime
+ARG PIP_INDEX_URL
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONUTF8=1 \
@@ -18,7 +25,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     HOME=/data
 WORKDIR /app
 COPY requirements-runtime.txt /tmp/requirements-runtime.txt
-RUN pip install --no-cache-dir --disable-pip-version-check -r /tmp/requirements-runtime.txt \
+RUN pip install --no-cache-dir --disable-pip-version-check \
+        --index-url "${PIP_INDEX_URL}" --timeout 60 --retries 4 \
+        -r /tmp/requirements-runtime.txt \
     && rm -f /tmp/requirements-runtime.txt
 COPY core ./core
 COPY web_backend ./web_backend

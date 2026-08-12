@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from datetime import date, datetime
 from math import ceil
 from collections.abc import Mapping
@@ -338,6 +339,181 @@ def _issue_value(issue: Mapping[str, object], field: str) -> object:
     return issue.get(field, "")
 
 
+@dataclass(frozen=True)
+class _TemplateStyles:
+    """保存单张现场问题工作表复用的样式对象，避免为每个单元格重复创建样式。"""
+
+    border: Border
+    gray_fill: PatternFill
+    orange_fill: PatternFill
+    yellow_fill: PatternFill
+    white_fill: PatternFill
+    title_font: Font
+    header_font: Font
+    black_header_font: Font
+    body_font: Font
+
+
+def _template_styles(template: Mapping[str, object]) -> _TemplateStyles:
+    """按模板字号创建一次表头与正文样式集合。"""
+    line = Side(style="thin", color="000000")
+    header_size = int(template.get("header_font_size", 14))
+    return _TemplateStyles(
+        border=Border(left=line, right=line, top=line, bottom=line),
+        gray_fill=PatternFill("solid", fgColor=_HEADER_GRAY),
+        orange_fill=PatternFill("solid", fgColor=_HEADER_ORANGE),
+        yellow_fill=PatternFill("solid", fgColor=_HEADER_YELLOW),
+        white_fill=PatternFill("solid", fgColor="FFFFFF"),
+        title_font=Font(name="微软雅黑", color=_HEADER_RED, bold=True, size=header_size),
+        header_font=Font(name="微软雅黑", color=_HEADER_RED, bold=True, size=header_size),
+        black_header_font=Font(name="微软雅黑", color="000000", bold=True, size=header_size),
+        body_font=Font(name="微软雅黑", color="222222", size=12),
+    )
+
+
+def _style_header_cell(cell, *, fill, font, border: Border) -> None:
+    """应用现场问题表头的公共居中、换行和边框规则。"""
+    cell.fill = fill
+    cell.font = font
+    cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    cell.border = border
+
+
+def _write_grouped_header(
+    sheet, template: Mapping[str, object], export_columns: list[tuple[str, str]],
+    styles: _TemplateStyles,
+) -> None:
+    """写入主料、辅料和包装模板的两层分组表头。"""
+    prefix = int(template["prefix_columns"]) + 1  # 分组模板均带问题编号，因此在业务前缀列数上加一。
+    merge_prefix = bool(template.get("merge_prefix", True))
+    for column in range(1, prefix + 1):
+        if merge_prefix:
+            sheet.merge_cells(start_row=1, start_column=column, end_row=2, end_column=column)
+        _style_header_cell(
+            sheet.cell(1, column, export_columns[column - 1][1]),
+            fill=styles.orange_fill, font=styles.black_header_font, border=styles.border,
+        )
+        if not merge_prefix:
+            # 部分规范保留上下两个独立前缀格；空的下格仍需完整样式以维持打印边界。
+            _style_header_cell(
+                sheet.cell(2, column), fill=styles.orange_fill,
+                font=styles.black_header_font, border=styles.border,
+            )
+
+    title_start = prefix + 1
+    title_end = len(export_columns) - int(template.get("title_end_offset", 0))
+    sheet.merge_cells(start_row=1, start_column=title_start, end_row=1, end_column=title_end)
+    title_cell = sheet.cell(1, title_start, str(template["title"]))
+    title_cell.fill = styles.gray_fill
+    title_cell.font = styles.title_font
+    title_cell.alignment = Alignment(horizontal="center", vertical="center")
+    for column in range(title_start, title_end + 1):
+        sheet.cell(1, column).fill = styles.gray_fill
+        sheet.cell(1, column).border = styles.border
+
+    detached_fields = set(template.get("detached_fields", ()))
+    highlighted_fields = {"cause_analysis", "corrective_action", "completion_date"}
+    for column, (field, label) in enumerate(export_columns[title_start - 1:], title_start):
+        detached = field in detached_fields
+        fill = (
+            styles.white_fill if detached
+            else styles.yellow_fill if field in highlighted_fields
+            else styles.gray_fill
+        )
+        _style_header_cell(
+            sheet.cell(2, column, label), fill=fill,
+            font=styles.black_header_font if detached else styles.header_font,
+            border=styles.border,
+        )
+        if detached:
+            # 主标题范围外的独立字段上下两格都保持白底，不能继承主标题灰色填充。
+            _style_header_cell(
+                sheet.cell(1, column), fill=styles.white_fill,
+                font=styles.black_header_font, border=styles.border,
+            )
+
+
+def _write_simple_header(
+    sheet, template: Mapping[str, object], export_columns: list[tuple[str, str]],
+    styles: _TemplateStyles,
+) -> None:
+    """写入海外和防错模板的整行标题与普通字段表头。"""
+    last_column = len(export_columns)
+    sheet.merge_cells(start_row=1, start_column=1, end_row=1, end_column=last_column)
+    title_cell = sheet.cell(1, 1, str(template["title"]))
+    title_cell.fill = styles.gray_fill
+    title_cell.font = styles.black_header_font
+    title_cell.alignment = Alignment(horizontal="center", vertical="center")
+    for column in range(1, last_column + 1):
+        sheet.cell(1, column).fill = styles.gray_fill
+        sheet.cell(1, column).border = styles.border
+    highlighted_fields = {"quantity", "cause_analysis", "issue_level"}
+    for column, (field, label) in enumerate(export_columns, 1):
+        _style_header_cell(
+            sheet.cell(2, column, label),
+            fill=styles.yellow_fill if field in highlighted_fields else styles.gray_fill,
+            font=styles.black_header_font, border=styles.border,
+        )
+
+
+def _normalized_export_issue(category: str, issue: Mapping[str, object]) -> dict[str, object]:
+    """生成不修改数据库原记录的导出副本，并补齐历史海外负责人字段。"""
+    normalized = dict(issue)
+    normalized["category"] = category
+    if category == "overseas" and not str(normalized.get("responsible_person") or "").strip():
+        # 历史海外记录可能只有通用主要负责人，按当前模板优先级投影到负责人列。
+        normalized["responsible_person"] = workshop_issue_primary_owner(category, normalized)
+    return normalized
+
+
+def _write_issue_rows(
+    sheet, category: str, issues: list[Mapping[str, object]],
+    export_columns: list[tuple[str, str]], styles: _TemplateStyles, body_height: float,
+) -> None:
+    """写入问题正文、嵌入图片，并按图片行数调整记录高度。"""
+    image_column = next(
+        (index for index, (field, _) in enumerate(export_columns, 1) if field == "images"), 0,
+    )
+    for index, issue in enumerate(issues, 1):
+        row = index + 2
+        normalized = _normalized_export_issue(category, issue)
+        values = [
+            index if field == "__index__" else _issue_value(normalized, field)
+            for field, _ in export_columns
+        ]
+        sheet.append(values)
+        images = normalized.get("images") if isinstance(normalized.get("images"), list) else []
+        inserted = _add_thumbnails(sheet, images, row, image_column) if image_column else 0
+        # 每两张图片占一层 60 点高度；没有图片或图片较少时仍遵守模板正文最低高度。
+        sheet.row_dimensions[row].height = max(
+            body_height, ceil(inserted / 2) * 60 if inserted else body_height,
+        )
+        for column in range(1, len(export_columns) + 1):
+            cell = sheet.cell(row, column)
+            cell.font = styles.body_font
+            cell.border = styles.border
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+
+def _configure_template_sheet(
+    sheet, template: Mapping[str, object], category: str, width_key: str | None,
+    last_column: int,
+) -> None:
+    """设置列宽、冻结区域、筛选和打印分页等工作表级属性。"""
+    widths = _TEMPLATE_COLUMN_WIDTHS[width_key or category]
+    for column, width in enumerate(widths, 1):
+        sheet.column_dimensions[get_column_letter(column)].width = width
+    # 主料冻结问题编号列，其他模板只冻结两行表头；显式 None 用于问题一览表关闭冻结。
+    sheet.freeze_panes = template.get(
+        "freeze_panes", "B3" if category == "main_material" else "A3",
+    )
+    sheet.auto_filter.ref = f"A2:{get_column_letter(last_column)}{max(2, sheet.max_row)}"
+    sheet.sheet_properties.pageSetUpPr.fitToPage = True
+    sheet.page_setup.fitToWidth = 1  # 打印时横向压到一页，纵向允许自然分页。
+    sheet.page_setup.fitToHeight = 0
+    sheet.print_title_rows = "1:2"
+
+
 def _write_template_sheet(
     workbook,
     category: str,
@@ -358,114 +534,18 @@ def _write_template_sheet(
     sheet = workbook.create_sheet(str(template["sheet"]))
     sheet.sheet_view.showGridLines = False
 
-    line = Side(style="thin", color="000000")
-    border = Border(left=line, right=line, top=line, bottom=line)
-    gray_fill = PatternFill("solid", fgColor=_HEADER_GRAY)
-    orange_fill = PatternFill("solid", fgColor=_HEADER_ORANGE)
-    yellow_fill = PatternFill("solid", fgColor=_HEADER_YELLOW)
-    white_fill = PatternFill("solid", fgColor="FFFFFF")
-    header_size = int(template.get("header_font_size", 14))
-    title_font = Font(name="微软雅黑", color=_HEADER_RED, bold=True, size=header_size)
-    header_font = Font(name="微软雅黑", color=_HEADER_RED, bold=True, size=header_size)
-    black_header_font = Font(name="微软雅黑", color="000000", bold=True, size=header_size)
-    body_font = Font(name="微软雅黑", color="222222", size=12)
-
+    styles = _template_styles(template)
     last_column = len(export_columns)
     if template["header_mode"] == "grouped":
-        # 主料、辅料和包装模板使用两层表头：前缀列纵向合并，业务标题横向合并。
-        prefix = int(template["prefix_columns"]) + 1  # 加上问题编号列。
-        merge_prefix = bool(template.get("merge_prefix", True))
-        for column in range(1, prefix + 1):
-            if merge_prefix:
-                sheet.merge_cells(start_row=1, start_column=column, end_row=2, end_column=column)
-            cell = sheet.cell(1, column, export_columns[column - 1][1])
-            cell.fill = orange_fill
-            cell.font = black_header_font
-            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-            cell.border = border
-            if not merge_prefix:
-                lower = sheet.cell(2, column)
-                lower.fill = orange_fill
-                lower.font = black_header_font
-                lower.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-                lower.border = border
-        title_start = prefix + 1
-        title_end = last_column - int(template.get("title_end_offset", 0))
-        sheet.merge_cells(start_row=1, start_column=title_start, end_row=1, end_column=title_end)
-        title_cell = sheet.cell(1, title_start, str(template["title"]))
-        title_cell.fill = gray_fill
-        title_cell.font = title_font
-        title_cell.alignment = Alignment(horizontal="center", vertical="center")
-        for column in range(title_start, title_end + 1):
-            sheet.cell(1, column).fill = gray_fill
-            sheet.cell(1, column).border = border
-        # detached_fields 位于主标题合并范围之外，需要单独设置上下两格的白色表头。
-        detached_fields = set(template.get("detached_fields", ()))
-        for column, (field, label) in enumerate(export_columns[title_start - 1:], title_start):
-            cell = sheet.cell(2, column, label)
-            detached = field in detached_fields
-            cell.fill = white_fill if detached else yellow_fill if field in {"cause_analysis", "corrective_action", "completion_date"} else gray_fill
-            cell.font = black_header_font if detached else header_font
-            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-            cell.border = border
-            if detached:
-                upper = sheet.cell(1, column)
-                upper.fill = white_fill
-                upper.font = black_header_font
-                upper.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-                upper.border = border
+        _write_grouped_header(sheet, template, export_columns, styles)
     else:
-        # 海外和防错模板第一行是整表标题，第二行才是全部字段表头。
-        sheet.merge_cells(start_row=1, start_column=1, end_row=1, end_column=last_column)
-        title_cell = sheet.cell(1, 1, str(template["title"]))
-        title_cell.fill = gray_fill
-        title_cell.font = black_header_font
-        title_cell.alignment = Alignment(horizontal="center", vertical="center")
-        for column in range(1, last_column + 1):
-            sheet.cell(1, column).fill = gray_fill
-            sheet.cell(1, column).border = border
-        for column, (field, label) in enumerate(export_columns, 1):
-            cell = sheet.cell(2, column, label)
-            cell.fill = yellow_fill if field in {"quantity", "cause_analysis", "issue_level"} else gray_fill
-            cell.font = black_header_font
-            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-            cell.border = border
+        _write_simple_header(sheet, template, export_columns, styles)
 
     title_height, header_height, body_height = template.get("row_heights", (24, 42, 46))
     sheet.row_dimensions[1].height = title_height
     sheet.row_dimensions[2].height = header_height
-    image_column = next((index for index, (field, _) in enumerate(export_columns, 1) if field == "images"), 0)
-    for index, issue in enumerate(issues, 1):
-        row = index + 2
-        normalized = dict(issue)
-        normalized["category"] = category
-        if category == "overseas" and not str(normalized.get("responsible_person") or "").strip():
-            # 历史海外记录可能只有通用主要负责人，导出时按模板优先级补到负责人列。
-            normalized["responsible_person"] = workshop_issue_primary_owner(category, normalized)
-        values = [index if field == "__index__" else _issue_value(normalized, field) for field, _ in export_columns]
-        sheet.append(values)
-        images = normalized.get("images") if isinstance(normalized.get("images"), list) else []
-        inserted = _add_thumbnails(sheet, images, row, image_column) if image_column else 0
-        # 每两张图片占一层 60 点高度；文本行最低仍保持模板规定高度。
-        sheet.row_dimensions[row].height = max(body_height, ceil(inserted / 2) * 60 if inserted else body_height)
-        for column, (field, _) in enumerate(export_columns, 1):
-            cell = sheet.cell(row, column)
-            cell.font = body_font
-            cell.border = border
-            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-
-    widths = _TEMPLATE_COLUMN_WIDTHS[width_key or category]
-    for column, width in enumerate(widths, 1):
-        sheet.column_dimensions[get_column_letter(column)].width = width
-    # 主料冻结问题编号列，其他模板只冻结两行表头；覆盖值 None 可关闭冻结。
-    sheet.freeze_panes = template.get(
-        "freeze_panes", "B3" if category == "main_material" else "A3",
-    )
-    sheet.auto_filter.ref = f"A2:{get_column_letter(last_column)}{max(2, sheet.max_row)}"
-    sheet.sheet_properties.pageSetUpPr.fitToPage = True
-    sheet.page_setup.fitToWidth = 1  # 打印时横向压到一页，纵向允许自然分页。
-    sheet.page_setup.fitToHeight = 0
-    sheet.print_title_rows = "1:2"
+    _write_issue_rows(sheet, category, issues, export_columns, styles, float(body_height))
+    _configure_template_sheet(sheet, template, category, width_key, last_column)
 
 
 def _write_overview_sheet(workbook) -> None:

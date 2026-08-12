@@ -161,6 +161,60 @@ def create_web_backup(
     }
 
 
+_BACKUP_DATABASE_FILES = {"database/accounts.sqlite3", "database/catalog.json"}
+_BACKUP_DATA_PREFIXES = ("users/", "trash/", "master-data-imports/")
+
+
+def _backup_manifest(archive: zipfile.ZipFile) -> dict[str, object]:
+    """读取并验证备份清单顶层结构和格式版本。"""
+    if "manifest.json" not in archive.namelist():
+        raise ValueError("备份缺少校验清单")
+    manifest = json.loads(archive.read("manifest.json"))
+    if not isinstance(manifest, dict) or manifest.get("format") != 1:
+        raise ValueError("备份格式不受支持")
+    if not isinstance(manifest.get("files"), list):
+        raise ValueError("备份文件清单无效")
+    return manifest
+
+
+def _safe_backup_entry_name(entry: object) -> str:
+    """验证单条清单记录及其数据根白名单，返回可交给 ZIP 读取的相对路径。"""
+    if not isinstance(entry, dict):
+        raise ValueError("备份文件清单无效")
+    name = str(entry.get("path") or "")
+    parts = Path(name.replace("/", os.sep)).parts  # 统一为当前平台路径段后检查 ``..`` 穿越。
+    allowed = name in _BACKUP_DATABASE_FILES or name.startswith(_BACKUP_DATA_PREFIXES)
+    if not name or name.startswith(("/", "\\")) or ".." in parts or not allowed:
+        raise ValueError("备份包含不安全或未知路径")
+    return name
+
+
+def _archive_entry_digest(archive: zipfile.ZipFile, name: str) -> tuple[str, int]:
+    """流式计算 ZIP 条目的 SHA-256 和解压后大小。"""
+    digest = hashlib.sha256()
+    size = 0
+    with archive.open(name) as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+            size += len(chunk)
+    return digest.hexdigest(), size
+
+
+def _verify_backup_entry(archive: zipfile.ZipFile, entry: object) -> str:
+    """校验一条清单路径、哈希和大小，并返回其安全相对路径。"""
+    name = _safe_backup_entry_name(entry)
+    digest, size = _archive_entry_digest(archive, name)
+    if digest != entry.get("sha256"):
+        raise ValueError(f"备份文件校验失败：{name}")
+    try:
+        expected_size = int(entry.get("size") or -1)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("备份文件清单无效") from exc
+    if size != expected_size:
+        raise ValueError(f"备份文件大小不符：{name}")
+    return name
+
+
 def verify_web_backup(path: Path) -> dict[str, object]:
     """验证备份结构、允许路径、清单哈希和最低必要数据库内容。
 
@@ -169,44 +223,22 @@ def verify_web_backup(path: Path) -> dict[str, object]:
     """
     try:
         with zipfile.ZipFile(path, "r") as archive:
-            names = set(archive.namelist())  # 最终要求 ZIP 实际内容与清单一一对应，拒绝额外隐藏文件。
-            if "manifest.json" not in names:
-                raise ValueError("备份缺少校验清单")
-            manifest = json.loads(archive.read("manifest.json"))
-            if not isinstance(manifest, dict) or manifest.get("format") != 1:
-                raise ValueError("备份格式不受支持")
-            files = manifest.get("files")
-            if not isinstance(files, list):
-                raise ValueError("备份文件清单无效")
+            listed_names = archive.namelist()
+            names = set(listed_names)
+            if len(names) != len(listed_names):
+                raise ValueError("备份包含重复文件路径")  # 重复 ZIP 条目会让校验与恢复读取到不同内容。
+            manifest = _backup_manifest(archive)
             expected_names = {"manifest.json"}
-            for entry in files:
-                if not isinstance(entry, dict):
-                    raise ValueError("备份文件清单无效")
-                name = str(entry.get("path") or "")
-                parts = Path(name.replace("/", os.sep)).parts  # 统一为当前平台路径段，再检查 .. 穿越。
-                allowed = (
-                    name in {"database/accounts.sqlite3", "database/catalog.json"}
-                    or name.startswith("users/")
-                    or name.startswith("trash/")
-                    or name.startswith("master-data-imports/")
-                )
-                if not name or name.startswith(("/", "\\")) or ".." in parts or not allowed:  # 只允许系统定义的四类数据根。
-                    raise ValueError("备份包含不安全或未知路径")
+            for entry in manifest["files"]:
+                name = _verify_backup_entry(archive, entry)
+                if name in expected_names:
+                    raise ValueError("备份文件清单包含重复路径")
                 expected_names.add(name)
-                digest = hashlib.sha256()
-                size = 0
-                with archive.open(name) as stream:  # 流式校验压缩内容，不把大备份文件一次读入内存。
-                    for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-                        digest.update(chunk)
-                        size += len(chunk)
-                if digest.hexdigest() != entry.get("sha256"):
-                    raise ValueError(f"备份文件校验失败：{name}")
-                if size != int(entry.get("size") or -1):
-                    raise ValueError(f"备份文件大小不符：{name}")
-            if names != expected_names or "database/accounts.sqlite3" not in expected_names:  # 数据库快照是可恢复备份的最低必要内容。
+            # ZIP 实际条目必须与清单一一对应；账号数据库是可恢复备份的最低必要内容。
+            if names != expected_names or "database/accounts.sqlite3" not in expected_names:
                 raise ValueError("备份内容与清单不一致")
             return manifest
-    except (OSError, zipfile.BadZipFile, json.JSONDecodeError, KeyError) as exc:
+    except (OSError, zipfile.BadZipFile, json.JSONDecodeError, UnicodeDecodeError, KeyError) as exc:
         raise ValueError("备份文件损坏或无法读取") from exc
 
 

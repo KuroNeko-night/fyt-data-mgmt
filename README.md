@@ -229,6 +229,11 @@ Linux 包随附：
 
 项目提供多阶段 `Dockerfile` 和 `docker-compose.yml`。容器只运行 Web 服务，业务数据通过 `FYT_DATA_DIR` 挂载到 `/data`，不会写入镜像层。
 
+Dockerfile 默认使用官方源；Compose 示例为国内网络覆盖使用 AWS Public ECR、npmmirror
+和清华 PyPI 镜像。可通过 `.env` 中的 `FYT_DOCKER_NODE_IMAGE`、
+`FYT_DOCKER_PYTHON_IMAGE`、`FYT_DOCKER_NPM_REGISTRY` 和 `FYT_DOCKER_PIP_INDEX_URL`
+切换为 Docker Hub、官方依赖源或内部镜像仓库。构建参数只允许放公开地址，不要嵌入仓库凭据。
+
 ```powershell
 Copy-Item .env.example .env
 New-Item -ItemType Directory secrets -Force

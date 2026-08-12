@@ -1363,6 +1363,77 @@ def _materialize_web_cache(cached, out_dir):
     result["out_dir"] = out_dir
     return result
 
+
+def _prepare_run(in_paths, out_dir):
+    """整理透视入口参数，并计算与用户/目录隔离相关的缓存范围。"""
+    st = _settings.get_settings()  # 每次运行读取当前设置，确保界面刚保存的参数立即生效。
+    paths = [in_paths] if isinstance(in_paths, str) else list(in_paths)  # 防止字符串被逐字符遍历。
+    resolver = material_catalog.CatalogResolver()  # 主数据签名参与缓存键，关系变更后自动失效。
+    web_root = os.environ.get("FYT_WEB_OUTPUT_ROOT", "").strip()  # Web 任务必须隔离桌面绝对路径。
+    if out_dir is not None:
+        cache_scope = os.path.abspath(out_dir)  # 显式目录属于调用方，不能与其他目录复用。
+    elif web_root:
+        cache_scope = "web-user-cache"  # Web 输出目录由运行时注入，键只需表达隔离域。
+    else:
+        cache_scope = {"mode": st.output_mode, "custom_root": st.custom_output_root}
+    return st, paths, resolver, web_root, cache_scope
+
+
+def _try_cached_pivot(cache_key, web_root, out_dir, st, log, progress):
+    """读取缓存并在 Web 场景物化文件；缓存异常统一返回未命中。"""
+    try:
+        cached = incremental_cache.get(cache_key)  # 缓存索引损坏不能阻断本次完整计算。
+        if not cached:
+            return None
+        if web_root:
+            out_dir = _paths.resolve_output_dir("pivot", **st.output_kwargs())  # 复制到当前任务目录。
+            cached = _materialize_web_cache(cached, out_dir)
+        log("[缓存] 输入文件和处理参数未变化，已复用现有透视结果。")
+        if progress:
+            progress(100)  # 缓存命中无需再模拟分析阶段进度。
+        return cached
+    except (OSError, ValueError, TypeError) as error:
+        log("[缓存] 无法读取缓存，已回退完整处理：%s" % error)
+        return None
+
+
+def _build_pivot_result(paths, choices, out_dir, resolver, log, progress):
+    """执行未命中缓存时的分析、应用选择和输出写盘阶段。"""
+    fill_counts: dict[str, int] = {}  # 记录主数据补空数量，供日志和可信度诊断使用。
+    prog = common_core.Progress(progress, stages=[("analyze", 55), ("apply", 45)])
+    fname = "%s透视结果.xlsx" % _beijing_date()  # 同日输出通过 unique_path 自动避免覆盖。
+    out_path = common_core.unique_path(os.path.join(out_dir, fname))
+    for path in paths:
+        warn_if_uncached(path, log, what="最终采购数量")  # 公式未刷新会导致数量漏算，需提前提示。
+    log("① 分析 %d 个文件..." % len(paths))
+    prog.stage("analyze")
+    plan = analyze_workbooks(paths, on_file=prog.tick, resolver=resolver, fill_counts=fill_counts)
+    material_catalog.log_fill_summary(log, "销售透视", fill_counts)
+    if choices is None:
+        choices = _default_choices(plan)  # 未进入人工复核时使用分析阶段生成的默认方案。
+    log("② 应用选择、聚合并写出...")
+    prog.stage("apply")
+    result = apply_plan(plan, choices, out_path, log=log)
+    result.setdefault("out_dir", out_dir)  # 统一返回目录，供桌面和 Web 投影使用。
+    prog.done()
+    log("   分组 %d 项，合计 %s；可信度【%s】%d/100"
+        % (result.get("groups", 0), _fmt_num(result.get("total", 0)),
+           result.get("level", "?"), result.get("score", 0)))
+    log("已保存：%s" % out_path)
+    return result
+
+
+def _save_pivot_cache(cache_key, result, log):
+    """保存透视结果索引；缓存写入失败不影响已经生成的业务文件。"""
+    if not cache_key:
+        return
+    artifacts = [path for path in (result.get("out"), result.get("report")) if path]
+    try:
+        incremental_cache.put(cache_key, "pivot", _cacheable_result(result), artifacts)
+    except (OSError, ValueError, TypeError) as error:
+        log("[缓存] 结果索引保存失败，不影响本次输出：%s" % error)
+
+
 # 统一运行入口供 Tauri 与 Web 桥接调用，包含缓存、进度、主数据补空和正式两阶段执行。
 def run(in_paths, choices=None, out_dir=None, log=None, progress=None):
     """执行销售表透视并返回输出、可信度和结构化复核结果。
@@ -1371,19 +1442,9 @@ def run(in_paths, choices=None, out_dir=None, log=None, progress=None):
     签名和算法版本；Web 命中缓存后仍会复制产物到当前用户任务目录。缓存故障只回退完整
     处理，不影响业务。未提供人工选择时使用默认选择，输出目录由统一路径系统解析。
     """
-    log = log or (lambda *a, **k: None)
-    st = _settings.get_settings()
-    if isinstance(in_paths, str):
-        in_paths = [in_paths]
-    resolver = material_catalog.CatalogResolver()
-    fill_counts: dict[str, int] = {}
+    log = log or (lambda *a, **k: None)  # 业务核心不依赖 UI，缺省时使用空日志回调。
+    st, in_paths, resolver, web_root, cache_scope = _prepare_run(in_paths, out_dir)
     cache_key = ""
-    web_root = os.environ.get("FYT_WEB_OUTPUT_ROOT", "").strip()
-    # 输出作用域进入缓存键，避免桌面自定义目录与 Web 用户缓存互相复用绝对路径。
-    cache_scope = (os.path.abspath(out_dir) if out_dir is not None else
-                   "web-user-cache" if web_root else
-                   {"mode": st.output_mode,
-                    "custom_root": st.custom_output_root})
     if st.get("enable_incremental_cache", True):
         try:
             cache_key = incremental_cache.make_key(
@@ -1391,52 +1452,16 @@ def run(in_paths, choices=None, out_dir=None, log=None, progress=None):
                 {"choices": choices, "output": cache_scope,
                  "catalog": resolver.signature},
                 engine_version="pivot-v3")
-            cached = incremental_cache.get(cache_key)
-            if cached:
-                if web_root:
-                    out_dir = _paths.resolve_output_dir(
-                        "pivot", **st.output_kwargs())
-                    cached = _materialize_web_cache(cached, out_dir)
-                log("[缓存] 输入文件和处理参数未变化，已复用现有透视结果。")
-                if progress:
-                    progress(100)
+            cached = _try_cached_pivot(cache_key, web_root, out_dir, st, log, progress)
+            if cached is not None:
                 return cached
         except (OSError, ValueError, TypeError) as error:
             log("[缓存] 无法读取缓存，已回退完整处理：%s" % error)
     if out_dir is None:
-        out_dir = _paths.resolve_output_dir("pivot", **st.output_kwargs())
-    # 读取与分类通常占主要耗时，按文件细分五成五；聚合和写盘占剩余阶段。
-    prog = common_core.Progress(progress, stages=[("analyze", 55), ("apply", 45)])
-    fname = "%s透视结果.xlsx" % _beijing_date()
-    out_path = common_core.unique_path(os.path.join(out_dir, fname))  # 同日重跑不覆盖
-    # "最终采购数量"常是公式; 未刷新时 data_only 读出 None 会被 clean_rows 当空删除,
-    # 导致总计漏数且置信度检查不报警。读表前逐个文件醒目告警。
-    for p in in_paths:
-        warn_if_uncached(p, log, what="最终采购数量")
-    log("① 分析 %d 个文件..." % len(in_paths))
-    prog.stage("analyze")
-    plan = analyze_workbooks(
-        in_paths, on_file=prog.tick, resolver=resolver, fill_counts=fill_counts)
-    material_catalog.log_fill_summary(log, "销售透视", fill_counts)
-    if choices is None:
-        choices = _default_choices(plan)
-    log("② 应用选择、聚合并写出...")
-    prog.stage("apply")
-    res = apply_plan(plan, choices, out_path, log=log)
-    res.setdefault("out_dir", out_dir)
-    prog.done()
-    log("   分组 %d 项，合计 %s；可信度【%s】%d/100"
-        % (res.get("groups", 0), _fmt_num(res.get("total", 0)),
-           res.get("level", "?"), res.get("score", 0)))
-    log("已保存：%s" % out_path)
-    if cache_key:
-        artifacts = [res.get("out"), res.get("report")]
-        artifacts = [path for path in artifacts if path]
-        try:
-            incremental_cache.put(cache_key, "pivot", _cacheable_result(res), artifacts)
-        except (OSError, ValueError, TypeError) as error:
-            log("[缓存] 结果索引保存失败，不影响本次输出：%s" % error)
-    return res
+        out_dir = _paths.resolve_output_dir("pivot", **st.output_kwargs())  # 统一目录策略。
+    result = _build_pivot_result(in_paths, choices, out_dir, resolver, log, progress)
+    _save_pivot_cache(cache_key, result, log)
+    return result
 
 
 def analyze(in_paths, log=None, progress=None):

@@ -148,6 +148,69 @@ def _fill_forward(values: list[str], start: int) -> list[str]:
     return result
 
 
+def _matrix_records(
+    date_row: list[str],
+    shift_row: list[str],
+    plan_row: list[str],
+    actual_row: list[str],
+    difference_row: list[str],
+    label_column: int,
+) -> list[dict[str, object]]:
+    """把横向矩阵的每个有效班次列转换为统一记录。"""
+    dates = _fill_forward(date_row, label_column + 1)  # 合并日期单元格只在首列有值，先向右展开。
+    records: list[dict[str, object]] = []
+    width = max(len(date_row), len(shift_row), len(plan_row), len(actual_row))  # 以最长业务行覆盖所有班次列。
+    for column in range(label_column + 1, width):
+        current_date = dates[column] if column < len(dates) else ""  # 越界列视为无日期，避免补齐数据被误算。
+        shift = shift_row[column].strip() if column < len(shift_row) else ""  # 班次为空通常是说明或合计列。
+        plan = _as_number(plan_row[column] if column < len(plan_row) else None)  # 计划是识别业务列的必要条件。
+        actual = _as_number(actual_row[column] if column < len(actual_row) else None)  # 空值代表尚未填报而非零。
+        difference = _as_number(difference_row[column] if column < len(difference_row) else None)  # 优先采用模板差异。
+        if not current_date or not _DATE_RE.match(current_date) or not shift or plan is None:
+            continue  # 缺少日期、班次或计划的列不属于可展示生产记录。
+        actual_reported = actual is not None  # 单独保留填报状态，避免把空值压成零后丢失语义。
+        difference_value = difference if actual_reported and difference is not None else ((actual - plan) if actual_reported else None)
+        records.append({
+            "date": current_date, "shift": shift, "plan": _number_label(plan),
+            "actual": _number_label(actual), "difference": _number_label(difference_value),
+            "actual_reported": actual_reported,
+        })
+    return records
+
+
+def _matrix_day_summary(records: list[dict[str, object]], current_date: str) -> dict[str, object]:
+    """汇总某一天的计划、已填报产量和未填报计划量。"""
+    day_rows = [item for item in records if item["date"] == current_date]  # 只聚合当前日期，保留班次明细。
+    reported_rows = [item for item in day_rows if item.get("actual_reported")]  # 完成率分母只使用已填报班次。
+    plan_total = sum(float(item["plan"]) for item in day_rows)  # 总计划包含尚未填报的班次。
+    reported_plan_total = sum(float(item["plan"]) for item in reported_rows)
+    actual_total = sum(float(item["actual"]) for item in reported_rows)
+    difference_total = sum(float(item["difference"]) for item in reported_rows)
+    return {
+        "date": current_date,
+        "plan": _number_label(plan_total), "actual": _number_label(actual_total),
+        "difference": _number_label(difference_total), "reported_plan": _number_label(reported_plan_total),
+        "unreported_plan": _number_label(plan_total - reported_plan_total),
+        "reported_shift_count": len(reported_rows),
+        "unreported_shift_count": len(day_rows) - len(reported_rows),
+        "completion_rate": round(actual_total / reported_plan_total * 100, 1) if reported_plan_total else 0,
+        "shifts": day_rows,
+    }
+
+
+def _matrix_highlights(shifts: list[dict[str, object]]) -> list[str]:
+    """将班次差异转换成最多六条可直接行动的提示。"""
+    highlights: list[str] = []
+    for item in shifts:
+        if not item.get("actual_reported"):
+            highlights.append(f"{item['shift']}尚未填报实际产量（计划 {float(item['plan']):g} 台）")  # 优先提醒数据缺口。
+        elif float(item["difference"]) < 0:
+            highlights.append(f"{item['shift']}较计划少完成 {abs(float(item['difference'])):g} 台")  # 负差异需要管理层关注。
+        elif float(item["difference"]) > 0:
+            highlights.append(f"{item['shift']}较计划多完成 {float(item['difference']):g} 台")  # 正差异保留为现场进展提示。
+    return highlights[:6]  # 限制看板密度，完整明细仍在班次列表中。
+
+
 def _matrix_insights(rows: list[list[str]], report_date: str | None) -> dict[str, object]:
     """解析生产计划模板中“日期/班次/计划/实际/差异”横向矩阵。
 
@@ -162,71 +225,20 @@ def _matrix_insights(rows: list[list[str]], report_date: str | None) -> dict[str
     difference_entry = _find_row(rows, "差异")
     if not (date_entry and shift_entry and plan_entry and actual_entry):
         return {}
-    date_index, date_row = date_entry
+    _, date_row = date_entry
     _, shift_row = shift_entry
     _, plan_row = plan_entry
     _, actual_row = actual_entry
     difference_row = difference_entry[1] if difference_entry else []
     label_column = next((index for index, value in enumerate(date_row) if value == "日期"), 0)
-    dates = _fill_forward(date_row, label_column + 1)  # 恢复合并日期单元格覆盖的每个班次列。
-    records: list[dict[str, object]] = []
-    for column in range(label_column + 1, max(len(date_row), len(shift_row), len(plan_row), len(actual_row))):
-        current_date = dates[column] if column < len(dates) else ""
-        shift = shift_row[column].strip() if column < len(shift_row) else ""
-        plan = _as_number(plan_row[column] if column < len(plan_row) else None)
-        actual = _as_number(actual_row[column] if column < len(actual_row) else None)
-        difference = _as_number(difference_row[column] if column < len(difference_row) else None)
-        if not current_date or not _DATE_RE.match(current_date) or not shift or plan is None:
-            # 缺日期、班次或计划的列通常是说明、间隔或合计列，不进入生产记录。
-            continue
-        actual_reported = actual is not None
-        # 优先信任模板明确提供的差异；没有差异列时仅对已填报实际值的班次计算。
-        difference_value = difference if actual_reported and difference is not None else ((actual - plan) if actual_reported else None)
-        records.append({
-            "date": current_date,
-            "shift": shift,
-            "plan": _number_label(plan),
-            "actual": _number_label(actual),
-            "difference": _number_label(difference_value),
-            "actual_reported": actual_reported,
-        })
+    records = _matrix_records(date_row, shift_row, plan_row, actual_row, difference_row, label_column)
     if not records:
         return {}
     available_dates = sorted({str(item["date"]) for item in records})
     focus_date = report_date if report_date in available_dates else available_dates[-1]
     focus_source = "上传日期" if report_date in available_dates else "文件最近日期"
-    daily: list[dict[str, object]] = []
-    for current_date in available_dates:
-        day_rows = [item for item in records if item["date"] == current_date]
-        plan_total = sum(float(item["plan"]) for item in day_rows)
-        reported_rows = [item for item in day_rows if item.get("actual_reported")]
-        reported_plan_total = sum(float(item["plan"]) for item in reported_rows)
-        actual_total = sum(float(item["actual"]) for item in reported_rows)
-        difference_total = sum(float(item["difference"]) for item in reported_rows)
-        unreported_rows = [item for item in day_rows if not item.get("actual_reported")]
-        daily.append({
-            "date": current_date,
-            "plan": _number_label(plan_total),
-            "actual": _number_label(actual_total),
-            "difference": _number_label(difference_total),
-            "reported_plan": _number_label(reported_plan_total),
-            "unreported_plan": _number_label(plan_total - reported_plan_total),
-            "reported_shift_count": len(reported_rows),
-            "unreported_shift_count": len(unreported_rows),
-            # 只比较已填报班次，未填报计划量另列展示，避免把缺数据解释为未完成。
-            "completion_rate": round(actual_total / reported_plan_total * 100, 1) if reported_plan_total else 0,
-            "shifts": day_rows,
-        })
+    daily = [_matrix_day_summary(records, current_date) for current_date in available_dates]  # 先做完整日序列，再选焦点日。
     focus = next(item for item in daily if item["date"] == focus_date)
-    highlights: list[str] = []
-    # 高亮只描述可直接行动的缺报或偏差，最多返回六条以控制看板信息密度。
-    for item in focus["shifts"]:
-        if not item.get("actual_reported"):
-            highlights.append(f"{item['shift']}尚未填报实际产量（计划 {float(item['plan']):g} 台）")
-        elif float(item["difference"]) < 0:
-            highlights.append(f"{item['shift']}较计划少完成 {abs(float(item['difference'])):g} 台")
-        elif float(item["difference"]) > 0:
-            highlights.append(f"{item['shift']}较计划多完成 {float(item['difference']):g} 台")
     return {
         "focus_date": focus_date,
         "focus_date_source": focus_source,
@@ -241,7 +253,7 @@ def _matrix_insights(rows: list[list[str]], report_date: str | None) -> dict[str
         "completion_rate": focus["completion_rate"],
         "daily": daily,
         "shift_summary": focus["shifts"],
-        "highlights": highlights[:6],
+        "highlights": _matrix_highlights(focus["shifts"]),
     }
 
 
@@ -251,55 +263,70 @@ def _tabular_insights(headers: list[str], rows: list[list[str]], report_date: st
     该函数是横向矩阵解析的备用路径，指标口径与 :func:`_matrix_insights` 保持一致，尤其
     是区分“实际为零”和“尚未填报”，以及完成率仅使用已填报计划作为分母。
     """
-    normalized = [value.replace(" ", "").replace("\n", "") for value in headers]
+    normalized = [value.replace(" ", "").replace("\n", "") for value in headers]  # 表头规范化后再做稳定索引。
     if not {"计划", "实际"}.issubset(set(normalized)):
         return {}
     indexes = {label: normalized.index(label) for label in ("计划", "实际")}
     difference_index = normalized.index("差异") if "差异" in normalized else -1
     shift_index = normalized.index("班次") if "班次" in normalized else -1
-    shifts = []
+    shifts = _tabular_shift_records(rows, indexes, difference_index, shift_index, report_date)
+    if not shifts:
+        return {}
+    summary = _tabular_summary(shifts, report_date)  # 与横向矩阵保持同一指标口径。
+    return {
+        **summary,
+        "shift_summary": shifts,
+        "highlights": [
+            *(f"{item['shift']}尚未填报实际产量（计划 {float(item['plan']):g} 台）" for item in shifts if not item.get("actual_reported")),
+            *(f"{item['shift']}较计划少完成 {abs(float(item['difference'])):g} 台" for item in shifts if item.get("actual_reported") and float(item["difference"]) < 0),
+        ][:6],
+    }
+
+
+def _tabular_shift_records(
+    rows: list[list[str]], indexes: dict[str, int], difference_index: int,
+    shift_index: int, report_date: str | None,
+) -> list[dict[str, object]]:
+    """将传统逐行生产计划转换为班次记录，跳过无法确认产量语义的行。"""
+    shifts: list[dict[str, object]] = []
     for row in rows:
-        plan = _as_number(row[indexes["计划"]] if indexes["计划"] < len(row) else None)
-        actual = _as_number(row[indexes["实际"]] if indexes["实际"] < len(row) else None)
+        plan = _as_number(row[indexes["计划"]] if indexes["计划"] < len(row) else None)  # 计划列为空时无法识别业务行。
+        actual = _as_number(row[indexes["实际"]] if indexes["实际"] < len(row) else None)  # 空实际代表尚未填报。
         if plan is None and actual is None:
-            # 说明行、空行和纯文本合计行不应生成虚假的零产量班次。
-            continue
-        difference = _as_number(row[difference_index] if difference_index >= 0 and difference_index < len(row) else None)
+            continue  # 说明行、空行和纯文本行不生成虚假的零产量记录。
+        difference = _as_number(row[difference_index] if 0 <= difference_index < len(row) else None)
         actual_reported = actual is not None
         difference_value = difference if actual_reported and difference is not None else ((actual - (plan or 0)) if actual_reported else None)
         shifts.append({
             "date": report_date or "",
-            "shift": row[shift_index] if shift_index >= 0 and shift_index < len(row) and row[shift_index] else "合计",
-            "plan": _number_label(plan),
-            "actual": _number_label(actual),
-            "difference": _number_label(difference_value),
-            "actual_reported": actual_reported,
+            "shift": row[shift_index] if 0 <= shift_index < len(row) and row[shift_index] else "合计",
+            "plan": _number_label(plan), "actual": _number_label(actual),
+            "difference": _number_label(difference_value), "actual_reported": actual_reported,
         })
-    if not shifts:
-        return {}
+    return shifts
+
+
+def _tabular_summary(shifts: list[dict[str, object]], report_date: str | None) -> dict[str, object]:
+    """汇总传统表格班次并生成与矩阵格式一致的单日结构。"""
+    reported = [item for item in shifts if item.get("actual_reported")]  # 只把已填报班次纳入完成率分母。
     plan_total = sum(float(item["plan"]) for item in shifts)
-    reported_shifts = [item for item in shifts if item.get("actual_reported")]
-    reported_plan_total = sum(float(item["plan"]) for item in reported_shifts)
-    actual_total = sum(float(item["actual"]) for item in reported_shifts)
-    difference_total = sum(float(item["difference"]) for item in reported_shifts)
-    return {
-        "focus_date": report_date or "",
-        "focus_date_source": "上传日期",
-        "has_focus_date": True,
-        "plan_total": _number_label(plan_total),
-        "actual_total": _number_label(actual_total),
-        "difference_total": _number_label(difference_total),
-        "reported_plan_total": _number_label(reported_plan_total),
-        "unreported_plan_total": _number_label(plan_total - reported_plan_total),
-        "reported_shift_count": len(reported_shifts),
-        "unreported_shift_count": len(shifts) - len(reported_shifts),
+    reported_plan_total = sum(float(item["plan"]) for item in reported)
+    actual_total = sum(float(item["actual"]) for item in reported)
+    difference_total = sum(float(item["difference"]) for item in reported)
+    day = {
+        "date": report_date or "", "plan": _number_label(plan_total), "actual": _number_label(actual_total),
+        "difference": _number_label(difference_total), "reported_plan": _number_label(reported_plan_total),
+        "unreported_plan": _number_label(plan_total - reported_plan_total),
+        "reported_shift_count": len(reported), "unreported_shift_count": len(shifts) - len(reported),
         "completion_rate": round(actual_total / reported_plan_total * 100, 1) if reported_plan_total else 0,
-        "daily": [{"date": report_date or "", "plan": _number_label(plan_total), "actual": _number_label(actual_total), "difference": _number_label(difference_total), "reported_plan": _number_label(reported_plan_total), "unreported_plan": _number_label(plan_total - reported_plan_total), "reported_shift_count": len(reported_shifts), "unreported_shift_count": len(shifts) - len(reported_shifts), "completion_rate": round(actual_total / reported_plan_total * 100, 1) if reported_plan_total else 0, "shifts": shifts}],
-        "shift_summary": shifts,
-        "highlights": [
-            *(f"{item['shift']}尚未填报实际产量（计划 {float(item['plan']):g} 台）" for item in shifts if not item.get("actual_reported")),
-            *(f"{item['shift']}较计划少完成 {abs(float(item['difference'])):g} 台" for item in reported_shifts if float(item["difference"]) < 0),
-        ][:6],
+        "shifts": shifts,
+    }
+    return {
+        "focus_date": report_date or "", "focus_date_source": "上传日期", "has_focus_date": True,
+        "plan_total": day["plan"], "actual_total": day["actual"], "difference_total": day["difference"],
+        "reported_plan_total": day["reported_plan"], "unreported_plan_total": day["unreported_plan"],
+        "reported_shift_count": day["reported_shift_count"], "unreported_shift_count": day["unreported_shift_count"],
+        "completion_rate": day["completion_rate"], "daily": [day],
     }
 
 
@@ -390,6 +417,70 @@ def _order_date(value: object, year: int) -> str:
     return text
 
 
+def _new_formal_order(row: list[str], current_month: str, year: int) -> dict[str, object]:
+    """根据正式订单首行创建订单对象，续行字段由后续合并阶段补充。"""
+    return {
+        "sequence": _meaningful(row[0]), "month": current_month,  # 月份可能来自前置分组行。
+        "order_no": _meaningful(row[2]), "country": _meaningful(row[3]),
+        "order_type": _meaningful(row[4]), "quantity": _number_label(_as_number(row[5])),
+        "shipment_date": _order_date(row[6], year), "closed_text": _meaningful(row[20]),
+        "note": _meaningful(row[21]), "missing_actual_completion": _order_date(row[17], year),
+        "hazardous_actual_completion": _order_date(row[18], year),
+        "container_actual_completion": _order_date(row[19], year),
+        "missing_parts": [], "hazardous_packages": [],  # 明细必须保留列表，供后续闭环统计。
+    }
+
+
+def _merge_formal_order_row(order: dict[str, object], row: list[str], year: int) -> None:
+    """把正式订单的一行续行信息合并到当前订单，不用空值覆盖既有字段。"""
+    for key, value in (
+        ("country", row[3]), ("order_type", row[4]), ("closed_text", row[20]), ("note", row[21]),
+    ):
+        if _meaningful(value):
+            order[key] = _meaningful(value)  # 合并单元格续行只在有值时补充订单级字段。
+    quantity = _as_number(row[5])
+    if quantity is not None:
+        order["quantity"] = _number_label(quantity)  # 后续行若明确给出数量，以最后一个有效值为准。
+    for key, column in (
+        ("shipment_date", 6), ("missing_actual_completion", 17),
+        ("hazardous_actual_completion", 18), ("container_actual_completion", 19),
+    ):
+        if _meaningful(row[column]):
+            order[key] = _order_date(row[column], year)  # 日期字段沿用同一年度解析规则。
+    missing_code = _meaningful(row[7])
+    if missing_code:
+        order["missing_parts"].append({
+            "material_code": missing_code, "material_name": _meaningful(row[8]),
+            "quantity": _number_label(_as_number(row[9])), "shipment_order_no": _meaningful(row[10]),
+            "shipment_date": _order_date(row[11], year),
+        })  # 缺件明细按出现顺序保存，导出时保持原表阅读顺序。
+    hazardous_code = _meaningful(row[12])
+    if hazardous_code:
+        order["hazardous_packages"].append({
+            "material_code": hazardous_code, "material_name": _meaningful(row[13]),
+            "quantity": _number_label(_as_number(row[14])), "shipment_order_no": _meaningful(row[15]),
+            "shipment_date": _order_date(row[16], year),
+        })  # 危包明细与缺件明细分开保存，避免两种业务被混为一类。
+
+
+def _finalize_formal_order(order: dict[str, object], report_date: str | None) -> None:
+    """在所有续行合并完成后计算正式订单及其缺件状态。"""
+    if not order.get("month"):
+        order["month"] = str(order.get("shipment_date") or report_date or "")[:7]  # 没有月份时从发运日期回填。
+    missing_completion = str(order.get("missing_actual_completion") or "")
+    hazardous_completion = str(order.get("hazardous_actual_completion") or "")
+    for item in order["missing_parts"]:
+        item["completed"] = bool(item.get("shipment_date") or missing_completion)  # 明细发运或整体完成即闭环。
+    for item in order["hazardous_packages"]:
+        item["completed"] = bool(item.get("shipment_date") or hazardous_completion)
+    closed_text = str(order.get("closed_text") or "")
+    explicit_closed = any(token in closed_text for token in ("是", "关闭", "完结", "完成"))
+    order["completed"] = explicit_closed  # 整单状态只认模板明确关闭语义，不从缺件状态反推。
+    order["status"] = "已关闭" if explicit_closed else ("已发运待关闭" if order.get("shipment_date") else "待发运")
+    order["outstanding_missing_count"] = sum(not bool(item.get("completed")) for item in order["missing_parts"])
+    order["outstanding_hazardous_count"] = sum(not bool(item.get("completed")) for item in order["hazardous_packages"])
+
+
 def _formal_orders(rows: list[list[str]], report_date: str | None) -> list[dict[str, object]]:
     """解析正式订单台账及其跨行缺件、危包明细。
 
@@ -414,66 +505,80 @@ def _formal_orders(rows: list[list[str]], report_date: str | None) -> list[dict[
         if order_no:
             current = by_order.get(order_no)
             if current is None:
-                current = {
-                    "sequence": _meaningful(row[0]), "month": current_month,
-                    "order_no": order_no, "country": _meaningful(row[3]),
-                    "order_type": _meaningful(row[4]), "quantity": _number_label(_as_number(row[5])),
-                    "shipment_date": _order_date(row[6], year), "closed_text": _meaningful(row[20]),
-                    "note": _meaningful(row[21]), "missing_actual_completion": _order_date(row[17], year),
-                    "hazardous_actual_completion": _order_date(row[18], year),
-                    "container_actual_completion": _order_date(row[19], year),
-                    "missing_parts": [], "hazardous_packages": [],
-                }
-                by_order[order_no] = current
-                orders.append(current)
+                current = _new_formal_order(row, current_month, year)  # 首次出现时建立订单主对象。
+                by_order[order_no] = current  # 后续跨行记录通过订单号复用同一对象。
+                orders.append(current)  # 保持订单首次出现的顺序，报告阅读顺序稳定。
         if current is None:
             continue
-        # 合并单元格或续行可能补充订单级字段，仅用非空值更新，避免空单元格覆盖首行。
-        for key, value in (
-            ("country", row[3]), ("order_type", row[4]), ("closed_text", row[20]), ("note", row[21]),
-        ):
-            if _meaningful(value):
-                current[key] = _meaningful(value)
-        if _as_number(row[5]) is not None:
-            current["quantity"] = _number_label(_as_number(row[5]))
-        for key, column in (
-            ("shipment_date", 6), ("missing_actual_completion", 17),
-            ("hazardous_actual_completion", 18), ("container_actual_completion", 19),
-        ):
-            if _meaningful(row[column]):
-                current[key] = _order_date(row[column], year)
-        missing_code = _meaningful(row[7])
-        if missing_code:
-            current["missing_parts"].append({
-                "material_code": missing_code, "material_name": _meaningful(row[8]),
-                "quantity": _number_label(_as_number(row[9])), "shipment_order_no": _meaningful(row[10]),
-                "shipment_date": _order_date(row[11], year),
-            })
-        hazardous_code = _meaningful(row[12])
-        if hazardous_code:
-            current["hazardous_packages"].append({
-                "material_code": hazardous_code, "material_name": _meaningful(row[13]),
-                "quantity": _number_label(_as_number(row[14])), "shipment_order_no": _meaningful(row[15]),
-                "shipment_date": _order_date(row[16], year),
-            })
-    # 所有行收集完成后再计算状态，确保续行中的发运和明细信息已经齐全。
+        _merge_formal_order_row(current, row, year)  # 订单主字段、缺件和危包在同一处集中合并。
     for order in orders:
-        if not order.get("month"):
-            order["month"] = str(order.get("shipment_date") or report_date or "")[:7]
-        missing_completion = str(order.get("missing_actual_completion") or "")
-        hazardous_completion = str(order.get("hazardous_actual_completion") or "")
-        for item in order["missing_parts"]:
-            # 明细有自身发运日期，或订单给出该类整体完成日期，均视为已经完成。
-            item["completed"] = bool(item.get("shipment_date") or missing_completion)
-        for item in order["hazardous_packages"]:
-            item["completed"] = bool(item.get("shipment_date") or hazardous_completion)
-        closed_text = str(order.get("closed_text") or "")
-        explicit_closed = any(token in closed_text for token in ("是", "关闭", "完结", "完成"))
-        order["completed"] = explicit_closed
-        order["status"] = "已关闭" if explicit_closed else ("已发运待关闭" if order.get("shipment_date") else "待发运")
-        order["outstanding_missing_count"] = sum(not bool(item.get("completed")) for item in order["missing_parts"])
-        order["outstanding_hazardous_count"] = sum(not bool(item.get("completed")) for item in order["hazardous_packages"])
+        _finalize_formal_order(order, report_date)  # 全部续行读取完毕后再判定闭环状态。
     return orders
+
+
+def _new_sporadic_order(row: list[str]) -> dict[str, object]:
+    """从零星订单首行创建主对象，列表字段等待后续续行共同补充。"""
+    return {
+        "order_no": _meaningful(row[0]),
+        "transport_mode": _meaningful(row[1]),
+        "country": _meaningful(row[2]),
+        "order_type": _meaningful(row[3]),
+        "consolidated": _meaningful(row[4]),
+        "container_quantity": _number_label(_as_number(row[5])),
+        "container_type": _meaningful(row[6]),
+        "shipment_dates": [],
+        "pallets": [],
+        "driver_plate": _meaningful(row[13]),
+        "driver_name": _meaningful(row[14]),
+        "driver_phone": _meaningful(row[15]),
+        "notes": [],
+    }
+
+
+def _append_unique(values: list[str], value: str) -> None:
+    """向保持源顺序的文本列表追加非空且未出现的值。"""
+    if value and value not in values:
+        values.append(value)
+
+
+def _merge_sporadic_order_row(order: dict[str, object], row: list[str], year: int) -> None:
+    """把零星订单主行或续行的运输、日期、托盘和备注合并到当前订单。"""
+    for key, column in (
+        ("transport_mode", 1), ("country", 2), ("order_type", 3), ("consolidated", 4),
+        ("container_type", 6), ("driver_plate", 13), ("driver_name", 14),
+        ("driver_phone", 15),
+    ):
+        value = _meaningful(row[column])
+        if value:
+            order[key] = value  # 续行显式填写的值覆盖较早空值或旧值，符合台账最后填写口径。
+    _append_unique(order["shipment_dates"], _order_date(row[12], year))
+    _append_unique(order["notes"], _meaningful(row[16]))
+    if any(_meaningful(row[column]) for column in range(7, 12)):
+        # 托盘数量或任一尺寸存在时才创建明细，空续行不会制造零值托盘。
+        order["pallets"].append({
+            "pallet_count": _number_label(_as_number(row[7])),
+            "length_mm": _number_label(_as_number(row[8])),
+            "width_mm": _number_label(_as_number(row[9])),
+            "height_mm": _number_label(_as_number(row[10])),
+            "volume_cbm": _number_label(_as_number(row[11])),
+        })
+
+
+def _finalize_sporadic_order(order: dict[str, object], report_date: str | None) -> None:
+    """汇总零星订单日期、托数、体积和最终发运状态。"""
+    dates = order["shipment_dates"]
+    order["shipment_date"] = dates[-1] if dates else ""  # 看板主日期使用最后一次实际发运日期。
+    order["month"] = (dates[0] if dates else (report_date or ""))[:7]
+    order["pallet_count"] = _number_label(sum(
+        float(item.get("pallet_count") or 0) for item in order["pallets"]
+    ))
+    order["volume_cbm"] = _number_label(sum(
+        float(item.get("volume_cbm") or 0) for item in order["pallets"]
+    ))
+    note_text = "；".join(order["notes"])
+    order["note"] = note_text
+    order["completed"] = bool(dates) or any(token in note_text for token in ("完结", "完成", "已发"))
+    order["status"] = "已发运" if order["completed"] else "待发运"
 
 
 def _sporadic_orders(rows: list[list[str]], report_date: str | None) -> list[dict[str, object]]:
@@ -493,48 +598,14 @@ def _sporadic_orders(rows: list[list[str]], report_date: str | None) -> list[dic
         if order_no and order_no != "订单号":
             current = by_order.get(order_no)
             if current is None:
-                current = {
-                    "order_no": order_no, "transport_mode": _meaningful(row[1]),
-                    "country": _meaningful(row[2]), "order_type": _meaningful(row[3]),
-                    "consolidated": _meaningful(row[4]), "container_quantity": _number_label(_as_number(row[5])),
-                    "container_type": _meaningful(row[6]), "shipment_dates": [], "pallets": [],
-                    "driver_plate": _meaningful(row[13]), "driver_name": _meaningful(row[14]),
-                    "driver_phone": _meaningful(row[15]), "notes": [],
-                }
+                current = _new_sporadic_order(row)
                 by_order[order_no] = current
-                orders.append(current)
+                orders.append(current)  # 保持订单首现顺序，报告与源台账阅读顺序一致。
         if current is None:
             continue
-        for key, column in (
-            ("transport_mode", 1), ("country", 2), ("order_type", 3), ("consolidated", 4),
-            ("container_type", 6), ("driver_plate", 13), ("driver_name", 14), ("driver_phone", 15),
-        ):
-            if _meaningful(row[column]):
-                current[key] = _meaningful(row[column])
-        shipment_date = _order_date(row[12], year)
-        if shipment_date and shipment_date not in current["shipment_dates"]:
-            # 同一日期可能因多个托盘重复出现，台账日期列表只保留一次。
-            current["shipment_dates"].append(shipment_date)
-        note = _meaningful(row[16])
-        if note and note not in current["notes"]:
-            current["notes"].append(note)
-        if any(_meaningful(row[column]) for column in range(7, 12)):
-            # 托盘数量或任一尺寸存在时才创建托盘明细，避免空续行制造零值托盘。
-            current["pallets"].append({
-                "pallet_count": _number_label(_as_number(row[7])), "length_mm": _number_label(_as_number(row[8])),
-                "width_mm": _number_label(_as_number(row[9])), "height_mm": _number_label(_as_number(row[10])),
-                "volume_cbm": _number_label(_as_number(row[11])),
-            })
+        _merge_sporadic_order_row(current, row, year)
     for order in orders:
-        dates = order["shipment_dates"]
-        order["shipment_date"] = dates[-1] if dates else ""
-        order["month"] = (dates[0] if dates else (report_date or ""))[:7]
-        order["pallet_count"] = _number_label(sum(float(item.get("pallet_count") or 0) for item in order["pallets"]))
-        order["volume_cbm"] = _number_label(sum(float(item.get("volume_cbm") or 0) for item in order["pallets"]))
-        note_text = "；".join(order["notes"])
-        order["note"] = note_text
-        order["completed"] = bool(dates) or any(token in note_text for token in ("完结", "完成", "已发"))
-        order["status"] = "已发运" if order["completed"] else "待发运"
+        _finalize_sporadic_order(order, report_date)
     return orders
 
 

@@ -5,6 +5,7 @@
  * 调用 Python Core。页面切换不使用路由地址，所有可用入口来自 `NAV_ITEMS` 单一事实源。
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { ComponentType } from "react";
 import { flushSync } from "react-dom";
 import GuidedTour from "../components/GuidedTour";
 import { NAV_ITEMS } from "../data/navigation";
@@ -20,44 +21,66 @@ import AppTopbar from "./AppTopbar";
 import ContextPanel from "./ContextPanel";
 import { getPageHeading } from "./navigation";
 
+// 这些页面不依赖工作台共享摘要，组件映射可稳定放在模块级，避免每次渲染重建配置。
+const SIMPLE_PAGES: Readonly<Record<string, ComponentType>> = {
+  attendance: AttendancePage,
+  attendance_archive: AttendanceArchivePage,
+  reconcile_statement: ReconcileStatementPage,
+  reconcile: ReconcilePage,
+  arrival: ArrivalPage,
+  pivot: PivotPage,
+  purchase: PurchasePage,
+  shipping_review: ShippingReviewPage,
+  delivery: DeliveryPage,
+  supplier_batch: SupplierBatchPage,
+  purchase_plan: PurchasePlanPage,
+  tasks: TaskCenterPage,
+  mappings: MappingPage,
+  catalog: CatalogPage,
+  batch_track: BatchTrackPage,
+  report_center: ReportPage,
+  templates: TemplatePage,
+  invoice: InvoicePage,
+  currency: CurrencyPage,
+  rename: RenamePage,
+  text: TextPage,
+  pdf: PdfPage,
+  excel: ExcelToolsPage,
+  compare: ComparePage,
+};
+
+interface PageRendererProps {
+  activeItem: NavItem;
+  navigate: (key: string) => void;
+  library: LibrarySummary | null;
+  health: HealthInfo | null;
+  tasks: TaskResult | null;
+  settings: AppSettings | null;
+  onLibrarySummary: (summary: LibrarySummary) => void;
+  onSettingsSaved: (next: AppSettings) => void;
+}
+
 /**
- * 把稳定导航键映射到对应页面，并只向页面传递它实际需要的共享摘要。
+ * 渲染当前导航页面，并只向确实需要共享摘要的页面传递相应数据。
  *
- * 业务算法不在此处分支；页面组件仍通过统一桥接调用 Core。未知键回退工作台，避免旧
- * 本地状态或未来导航配置导致整个桌面端白屏。
+ * 普通页面从模块级映射直接取得组件；首页、数据库、设置和关于页因参数协议不同而显式
+ * 处理。未知键回退首页，避免旧本地状态或未来导航配置导致整个桌面端白屏。
  */
-function renderPage(activeItem: NavItem, navigate: (key: string) => void, library: LibrarySummary | null, health: HealthInfo | null, tasks: TaskResult | null, settings: AppSettings | null, onLibrarySummary: (summary: LibrarySummary) => void, onSettingsSaved: (next: AppSettings) => void) {
-  switch (activeItem.key) {
-    case "home": return <HomePage navigate={navigate} library={library} health={health} tasks={tasks} />;
-    case "attendance": return <AttendancePage />;
-    case "attendance_archive": return <AttendanceArchivePage />;
-    case "reconcile_statement": return <ReconcileStatementPage />;
-    case "reconcile": return <ReconcilePage />;
-    case "arrival": return <ArrivalPage />;
-    case "pivot": return <PivotPage />;
-    case "purchase": return <PurchasePage />;
-    case "shipping_review": return <ShippingReviewPage />;
-    case "delivery": return <DeliveryPage />;
-    case "supplier_batch": return <SupplierBatchPage />;
-    case "purchase_plan": return <PurchasePlanPage />;
-    case "library": return <DataLibraryPage initial={library} onSummary={onLibrarySummary} />;
-    case "tasks": return <TaskCenterPage />;
-    case "mappings": return <MappingPage />;
-    case "catalog": return <CatalogPage />;
-    case "batch_track": return <BatchTrackPage />;
-    case "report_center": return <ReportPage />;
-    case "templates": return <TemplatePage />;
-    case "invoice": return <InvoicePage />;
-    case "currency": return <CurrencyPage />;
-    case "rename": return <RenamePage />;
-    case "text": return <TextPage />;
-    case "pdf": return <PdfPage />;
-    case "excel": return <ExcelToolsPage />;
-    case "compare": return <ComparePage />;
-    case "settings": return <SettingsPage settings={settings} onSaved={onSettingsSaved} />;
-    case "about": return <AboutPage health={health} />;
-    default: return <HomePage navigate={navigate} library={library} health={health} tasks={tasks} />;
+function PageRenderer({
+  activeItem, navigate, library, health, tasks, settings, onLibrarySummary, onSettingsSaved,
+}: PageRendererProps) {
+  const SimplePage = SIMPLE_PAGES[activeItem.key];
+  if (SimplePage) return <SimplePage />; // 静态页面不接收工作台状态，减少无关摘要变化触发的属性传播。
+  if (activeItem.key === "library") {
+    return <DataLibraryPage initial={library} onSummary={onLibrarySummary} />;
   }
+  if (activeItem.key === "settings") {
+    return <SettingsPage settings={settings} onSaved={onSettingsSaved} />;
+  }
+  if (activeItem.key === "about") {
+    return <AboutPage health={health} />;
+  }
+  return <HomePage navigate={navigate} library={library} health={health} tasks={tasks} />;
 }
 
 /**
@@ -172,7 +195,7 @@ export default function LocalWorkbench() {
       <main className="fyt-tauri-main-stage">
         <AppTopbar title={header.title} description={header.description} updateAvailable={updateAvailable} dark={dark} panelOpen={panelOpen} onOpenGuide={() => setTourOpen(true)} onToggleTheme={() => void toggleTheme()} onTogglePanel={() => setPanelOpen((value) => !value)} onOpenUpdate={() => navigateTo("about")} />
         {bridgeError ? <div className="fyt-tauri-notice" role="status" aria-live="polite"><strong>业务资料读取不完整</strong><span>{bridgeError}</span><button className="fyt-tauri-text-button" type="button" onClick={() => setRefreshToken((value) => value + 1)}>重新读取</button></div> : null}
-        <div ref={contentScrollRef} className="fyt-tauri-content-scroll"><div className="fyt-tauri-content-column" data-tour="page-content" data-page-key={activeKey} key={activeKey}><div className="fyt-tauri-route-stage">{renderPage(activeItem, navigateTo, library, health, tasks, settings, setLibrary, setSettings)}</div></div></div>
+        <div ref={contentScrollRef} className="fyt-tauri-content-scroll"><div className="fyt-tauri-content-column" data-tour="page-content" data-page-key={activeKey} key={activeKey}><div className="fyt-tauri-route-stage"><PageRenderer activeItem={activeItem} navigate={navigateTo} library={library} health={health} tasks={tasks} settings={settings} onLibrarySummary={setLibrary} onSettingsSaved={setSettings} /></div></div></div>
       </main>
       <ContextPanel activeItem={activeItem} tasks={tasks} open={panelOpen} onClose={() => setPanelOpen(false)} onNavigate={navigateTo} />
       <GuidedTour open={tourOpen} pageKey={activeKey} pageTitle={activeItem.title} pageDescription={activeItem.description} reduceMotion={Boolean(settings?.reduce_motion)} onClose={closeTour} refreshKey={`${activeKey}:${panelOpen}`} />

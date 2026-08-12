@@ -28,6 +28,11 @@ from . import common_core, paths, settings
 
 EXCEL_SUFFIXES = {".xlsx", ".xlsm"}
 
+_SUMMARY_HEADERS = ["姓名", "出勤天数", "总工时（小时）", "加班（小时）", "异常次数", "日均工时"]
+_SUMMARY_WIDTHS = {"A": 14, "B": 10, "C": 15, "D": 12, "E": 10, "F": 10}
+_DETAIL_HEADERS = ["姓名", "日期", "工时（小时）", "加班（小时）", "异常"]
+_DETAIL_WIDTHS = {"A": 14, "B": 12, "C": 12, "D": 12, "E": 22}
+
 _ROLE_ALIASES = {
     # 别名从业务中最常见的短名称到具体名称排列；每个角色只接受首个命中列。
     "name": ("姓名", "员工姓名", "姓名/工号"),
@@ -170,6 +175,175 @@ def _read_attendance(path: str, log=None) -> list[dict[str, object]]:
         workbook.close()
 
 
+def _validated_archive_files(files) -> list[str]:
+    """规范化并一次性验证全部归档输入，避免读取一半后才发现坏路径。"""
+    normalized = [
+        os.path.abspath(str(value)) for value in (files or []) if str(value).strip()
+    ]
+    if not normalized:
+        raise ValueError("请选择考勤填报表")
+    for path in normalized:
+        if not os.path.isfile(path):
+            raise FileNotFoundError("找不到文件：%s" % path)
+        if os.path.splitext(path)[1].lower() not in EXCEL_SUFFIXES:
+            raise ValueError("仅支持 xlsx 或 xlsm 文件：%s" % os.path.basename(path))
+    return normalized
+
+
+def _merge_attendance_row(
+    row: dict[str, object],
+    per_person: dict[str, dict[str, object]],
+    detail_rows: list[tuple[str, str, float, float, str]],
+    months: dict[str, int],
+) -> None:
+    """把一条有效考勤记录合并到人员汇总、月份计数和原始明细。"""
+    name = str(row["name"])
+    date = str(row["date"])
+    hours = float(row["hours"])
+    overtime = float(row["ot"])
+    abnormal = str(row["abnormal"])
+    stats = per_person[name]
+    stats["days"].add(date)  # 日期集合只负责出勤天数去重，同日多条工时仍全部累计。
+    stats["hours"] += hours
+    stats["ot"] += overtime
+    if abnormal:
+        stats["abnormal"] += 1  # 这里只统计非空异常次数，不重新解释文本严重程度。
+    months[date[:7]] += 1  # 主体月份按有效明细行计数，少量跨月补卡不会改变主要月份。
+    detail_rows.append((name, date, hours, overtime, abnormal))
+
+
+def _aggregate_attendance(
+    files: list[str], log=None, progress=None,
+) -> tuple[dict[str, dict[str, object]], list[tuple[str, str, float, float, str]], str]:
+    """读取全部考勤文件并返回人员汇总、明细行和主体月份。"""
+    per_person: dict[str, dict[str, object]] = defaultdict(
+        lambda: {"days": set(), "hours": 0.0, "ot": 0.0, "abnormal": 0},
+    )
+    detail_rows: list[tuple[str, str, float, float, str]] = []
+    months: dict[str, int] = defaultdict(int)
+    for index, path in enumerate(files, start=1):
+        for row in _read_attendance(path, log=log):
+            _merge_attendance_row(row, per_person, detail_rows, months)
+        if log:
+            log("已读取 %s" % os.path.basename(path))
+        if progress:
+            progress(10 + round(index / len(files) * 70))  # 读取阶段沿用历史 10%～80% 进度区间。
+    if not per_person:
+        raise ValueError("考勤表中没有有效记录")
+    month_label = max(months, key=months.get) if months else datetime.now().strftime("%Y-%m")
+    return per_person, detail_rows, month_label
+
+
+def _archive_output_dir(files: list[str], out_dir) -> str:
+    """按显式目录或全局输出策略解析归档目标目录。"""
+    if out_dir is None:
+        current = settings.get_settings()
+        # 源旁输出以首份输入定位；固定目录等策略仍由 paths 单一事实源处理。
+        return paths.resolve_output_dir(
+            "attendance_archive", src_path=files[0], **current.output_kwargs(),
+        )
+    target = os.path.abspath(str(out_dir))
+    os.makedirs(target, exist_ok=True)
+    return target
+
+
+def _report_styles() -> tuple[Border, PatternFill, Font, Font]:
+    """创建两张报表页共同复用的边框、表头和正文字体。"""
+    thin = Side(style="thin", color="9AA5B1")
+    return (
+        Border(left=thin, right=thin, top=thin, bottom=thin),
+        PatternFill("solid", fgColor="EAF1FF"),
+        Font(name="宋体", size=10, bold=True),
+        Font(name="宋体", size=10),
+    )
+
+
+def _prepare_report_sheet(
+    sheet, headers: list[str], widths: dict[str, int],
+    border: Border, head_fill: PatternFill, head_font: Font,
+) -> None:
+    """设置报表页列宽和统一表头格式。"""
+    for column, width in widths.items():
+        sheet.column_dimensions[column].width = width
+    for column, name in enumerate(headers, start=1):
+        cell = sheet.cell(1, column, name)
+        cell.font = head_font
+        cell.fill = head_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.border = border
+
+
+def _write_report_row(sheet, row_index: int, values: list[object], font: Font, border: Border) -> None:
+    """写入一行普通报表值并应用共享正文样式。"""
+    for column, value in enumerate(values, start=1):
+        cell = sheet.cell(row_index, column, value)
+        cell.font = font
+        cell.border = border
+
+
+def _write_summary_sheet(
+    sheet, per_person: dict[str, dict[str, object]],
+    border: Border, head_fill: PatternFill, head_font: Font, cell_font: Font,
+) -> None:
+    """写入按人员汇总的出勤天数、工时和异常指标。"""
+    sheet.title = "月度汇总"
+    _prepare_report_sheet(
+        sheet, _SUMMARY_HEADERS, _SUMMARY_WIDTHS, border, head_fill, head_font,
+    )
+    for row_index, name in enumerate(
+        sorted(per_person, key=lambda item: item.encode("utf-8")), start=2,
+    ):
+        stats = per_person[name]
+        days = len(stats["days"])
+        # 日均工时以唯一出勤日为分母，同日多条明细不会把平均值错误压低。
+        average = round(float(stats["hours"]) / days, 2) if days else 0
+        _write_report_row(sheet, row_index, [
+            name, days, round(float(stats["hours"]), 2), round(float(stats["ot"]), 2),
+            int(stats["abnormal"]), average,
+        ], cell_font, border)
+
+
+def _write_detail_sheet(
+    sheet, detail_rows: list[tuple[str, str, float, float, str]],
+    border: Border, head_fill: PatternFill, head_font: Font, cell_font: Font,
+) -> None:
+    """写入排序稳定、保留全部源记录的每日明细页。"""
+    sheet.title = "每日明细"
+    _prepare_report_sheet(
+        sheet, _DETAIL_HEADERS, _DETAIL_WIDTHS, border, head_fill, head_font,
+    )
+    detail_rows.sort(key=lambda item: (item[0].encode("utf-8"), item[1]))
+    for row_index, (name, date, hours, overtime, abnormal) in enumerate(detail_rows, start=2):
+        _write_report_row(
+            sheet, row_index,
+            [name, date, round(hours, 2), round(overtime, 2), abnormal],
+            cell_font, border,
+        )
+
+
+def _save_archive_report(
+    out_dir: str, month_label: str, per_person: dict[str, dict[str, object]],
+    detail_rows: list[tuple[str, str, float, float, str]],
+) -> str:
+    """组装两页考勤工作簿并保存到唯一输出路径。"""
+    border, head_fill, head_font, cell_font = _report_styles()
+    workbook = openpyxl.Workbook()
+    try:
+        _write_summary_sheet(
+            workbook.active, per_person, border, head_fill, head_font, cell_font,
+        )
+        _write_detail_sheet(
+            workbook.create_sheet(), detail_rows, border, head_fill, head_font, cell_font,
+        )
+        target = common_core.unique_path(os.path.join(
+            out_dir, "考勤月度汇总_%s.xlsx" % month_label,
+        ))
+        workbook.save(target)
+        return target
+    finally:
+        workbook.close()  # 写盘失败也释放工作簿及其底层临时资源。
+
+
 def archive(files, out_dir=None, log=None, progress=None) -> dict[str, object]:
     """汇总多份考勤表并生成月度统计工作簿。
 
@@ -181,114 +355,12 @@ def archive(files, out_dir=None, log=None, progress=None) -> dict[str, object]:
     返回报告路径、主体月份、人员数和明细记录数，字段 ``days`` 为历史协议名称，
     实际表示每日明细行数而不是全体唯一自然日数量。
     """
-    files = [os.path.abspath(str(value)) for value in (files or []) if str(value).strip()]
-    if not files:
-        raise ValueError("请选择考勤填报表")
-    for path in files:
-        # 先验证全部输入，防止已累计部分文件后才因后续文件无效而中止。
-        if not os.path.isfile(path):
-            raise FileNotFoundError("找不到文件：%s" % path)
-        if os.path.splitext(path)[1].lower() not in EXCEL_SUFFIXES:
-            raise ValueError("仅支持 xlsx 或 xlsm 文件：%s" % os.path.basename(path))
+    files = _validated_archive_files(files)
     if progress:
         progress(10)
-
-    per_person: dict[str, dict[str, object]] = defaultdict(
-        lambda: {"days": set(), "hours": 0.0, "ot": 0.0, "abnormal": 0})
-    detail_rows: list[tuple[str, str, float, float, str]] = []
-    months: dict[str, int] = defaultdict(int)
-    for index, path in enumerate(files, start=1):
-        for row in _read_attendance(path, log=log):
-            name = str(row["name"])
-            date = str(row["date"])
-            stats = per_person[name]
-            # 日期集合只负责出勤天数去重；明细和工时故意按源记录累计，不静默删行。
-            stats["days"].add(date)
-            stats["hours"] += float(row["hours"])
-            stats["ot"] += float(row["ot"])
-            if str(row["abnormal"]):
-                # 归档只统计非空异常记录数，不重新解释异常文本的严重程度。
-                stats["abnormal"] += 1
-            months[date[:7]] += 1
-            detail_rows.append((name, date, float(row["hours"]), float(row["ot"]), str(row["abnormal"])))
-        if log:
-            log("已读取 %s" % os.path.basename(path))
-        if progress:
-            progress(10 + round(index / len(files) * 70))
-    if not per_person:
-        raise ValueError("考勤表中没有有效记录")
-
-    # 主体月份按记录众数而非最早/最晚日期，减少少量跨月补卡导致文件命名偏移。
-    month_label = max(months, key=months.get) if months else datetime.now().strftime("%Y-%m")
-
-    if out_dir is None:
-        current = settings.get_settings()
-        # 源旁输出模式以第一份考勤表定位，固定目录等策略仍由 settings/paths 统一处理。
-        out_dir = paths.resolve_output_dir(
-            "attendance_archive", src_path=os.path.abspath(files[0]),
-            **current.output_kwargs())
-    else:
-        out_dir = os.path.abspath(str(out_dir))
-        os.makedirs(out_dir, exist_ok=True)
-
-    # 两个页签复用同一套样式对象，避免生成大量等价样式记录。
-    thin = Side(style="thin", color="9AA5B1")
-    border = Border(left=thin, right=thin, top=thin, bottom=thin)
-    head_fill = PatternFill("solid", fgColor="EAF1FF")
-    head_font = Font(name="宋体", size=10, bold=True)
-    cell_font = Font(name="宋体", size=10)
-
-    workbook = openpyxl.Workbook()
-    summary = workbook.active
-    summary.title = "月度汇总"
-    headers = ["姓名", "出勤天数", "总工时（小时）", "加班（小时）", "异常次数", "日均工时"]
-    widths = {"A": 14, "B": 10, "C": 15, "D": 12, "E": 10, "F": 10}
-    for column, width in widths.items():
-        summary.column_dimensions[column].width = width
-    for column, name in enumerate(headers, start=1):
-        cell = summary.cell(1, column, name)
-        cell.font = head_font
-        cell.fill = head_fill
-        cell.alignment = Alignment(horizontal="center", vertical="center")
-        cell.border = border
-    row_index = 2
-    for name in sorted(per_person, key=lambda item: item.encode("utf-8")):
-        stats = per_person[name]
-        days = len(stats["days"])
-        # 日均工时用唯一出勤日作分母，而非明细条数，避免同日多行压低平均值。
-        average = round(stats["hours"] / days, 2) if days else 0
-        values = [name, days, round(stats["hours"], 2), round(stats["ot"], 2),
-                  stats["abnormal"], average]
-        for column, value in enumerate(values, start=1):
-            cell = summary.cell(row_index, column, value)
-            cell.font = cell_font
-            cell.border = border
-        row_index += 1
-
-    detail = workbook.create_sheet("每日明细")
-    detail_headers = ["姓名", "日期", "工时（小时）", "加班（小时）", "异常"]
-    detail_widths = {"A": 14, "B": 12, "C": 12, "D": 12, "E": 22}
-    for column, width in detail_widths.items():
-        detail.column_dimensions[column].width = width
-    for column, name in enumerate(detail_headers, start=1):
-        cell = detail.cell(1, column, name)
-        cell.font = head_font
-        cell.fill = head_fill
-        cell.alignment = Alignment(horizontal="center", vertical="center")
-        cell.border = border
-    detail_rows.sort(key=lambda item: (item[0].encode("utf-8"), item[1]))
-    # 明细按姓名 UTF-8 字节序、再按 ISO 日期排序，跨平台输出顺序稳定。
-    for index, (name, date, hours, ot, abnormal) in enumerate(detail_rows, start=2):
-        values = [name, date, round(hours, 2), round(ot, 2), abnormal]
-        for column, value in enumerate(values, start=1):
-            cell = detail.cell(index, column, value)
-            cell.font = cell_font
-            cell.border = border
-
-    target = common_core.unique_path(os.path.join(
-        out_dir, "考勤月度汇总_%s.xlsx" % month_label))
-    workbook.save(target)
-    workbook.close()
+    per_person, detail_rows, month_label = _aggregate_attendance(files, log, progress)
+    out_dir = _archive_output_dir(files, out_dir)
+    target = _save_archive_report(out_dir, month_label, per_person, detail_rows)
     if log:
         log("已生成月度汇总：%d 人、%d 条出勤记录（%s）。"
             % (len(per_person), len(detail_rows), month_label))

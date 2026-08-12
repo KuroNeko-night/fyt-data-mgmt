@@ -577,6 +577,14 @@ def delete_material(code: str) -> None:
     _update(lambda data: data["materials"].pop(key, None))
 
 
+_MATERIAL_RELATION_FIELDS = {
+    "material_name": "name",
+    "material_spec": "spec",
+    "material_unit": "unit",
+    "material_supplier": "supplier",
+}
+
+
 def relation_value(data: dict[str, object], relation_type: str, key: str) -> str:
     """读取导入协议中的统一关系类型所对应的正式主数据值。
 
@@ -586,18 +594,106 @@ def relation_value(data: dict[str, object], relation_type: str, key: str) -> str
     normalized_key = str(key).strip()
     if relation_type == "supplier_code":
         return CatalogResolver(data).resolve_supplier_code(normalized_key)
-    field = {
-        "material_name": "name",
-        "material_spec": "spec",
-        "material_unit": "unit",
-        "material_supplier": "supplier",
-    }.get(relation_type)
+    field = _MATERIAL_RELATION_FIELDS.get(relation_type)
     if not field:
         raise ValueError("不支持的主数据关系类型")
     resolver = CatalogResolver(data)
     material_key = resolver.material_key(normalized_key)
     item = data.get("materials", {}).get(material_key, {})
     return str(item.get(field, "")) if isinstance(item, dict) else ""
+
+
+def _normalized_relations(
+    relations: Iterable[dict[str, object]],
+) -> list[tuple[str, str, str, str]]:
+    """清洗管理员确认关系，并提前拒绝未知关系类型。"""
+    normalized: list[tuple[str, str, str, str]] = []
+    for relation in relations:
+        relation_type = _text(relation.get("relation_type"))
+        key = _text(relation.get("key"))
+        value = _text(relation.get("value"))
+        expected_current = _text(relation.get("expected_current"))
+        if not relation_type or not key or not value:
+            continue  # 未填写完整的管理界面草稿不参与正式合并。
+        relation_value(_empty(), relation_type, key)  # 复用正式读取入口验证类型，避免第二套白名单漂移。
+        normalized.append((relation_type, key, value, expected_current))
+    return normalized
+
+
+def _relation_conflicts(
+    data: dict[str, object], relations: list[tuple[str, str, str, str]],
+) -> list[dict[str, str]]:
+    """返回乐观并发校验失败的关系；目标值已存在视为幂等成功。"""
+    conflicts: list[dict[str, str]] = []
+    for relation_type, key, value, expected_current in relations:
+        current = relation_value(data, relation_type, key)
+        if current in {value, expected_current}:
+            continue
+        conflicts.append({
+            "relation_type": relation_type,
+            "key": key,
+            "value": value,
+            "expected_current": expected_current,
+            "current_value": current,
+        })
+    return conflicts
+
+
+def _backup_catalog_snapshot(path: str, backup_dir: str | None) -> str:
+    """在正式写入前保存主数据恢复点；库不存在时保存结构化空库。"""
+    if not backup_dir:
+        return ""
+    target_dir = os.path.abspath(backup_dir)
+    os.makedirs(target_dir, exist_ok=True)
+    backup_path = os.path.join(
+        target_dir, "主数据-%s.json" % datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f"),
+    )
+    if os.path.isfile(path):
+        shutil.copy2(path, backup_path)
+    else:
+        # 首次建库也留下可读取的空库快照，使管理员每次合并都有明确恢复起点。
+        with open(backup_path, "w", encoding="utf-8", newline="") as handle:
+            json.dump(_empty(), handle, ensure_ascii=False, indent=1)
+    return backup_path
+
+
+def _apply_supplier_relation(data: dict[str, object], key: str, value: str) -> None:
+    """更新供应商编码，并尽量保留正式库已有的供应商展示名称。"""
+    resolver = CatalogResolver(data)
+    supplier_key = resolver.supplier_name_key(key) or key
+    data["suppliers"][supplier_key] = value
+
+
+def _apply_material_relation(
+    data: dict[str, object], relation_type: str, key: str, value: str,
+) -> str:
+    """更新材料字段并返回实际采用的正式材料编码键。"""
+    resolver = CatalogResolver(data)
+    # 先复用正式别名；新增材料再采用规范化编码，避免把纯数字 ``123.0`` 建成新正式键。
+    material_key = resolver.material_key(key) or _code_alias(key) or key
+    item = data["materials"].get(material_key, {})
+    item[_MATERIAL_RELATION_FIELDS[relation_type]] = value
+    data["materials"][material_key] = item
+    return material_key
+
+
+def _apply_relation_changes(
+    data: dict[str, object], relations: list[tuple[str, str, str, str]],
+) -> tuple[int, int, set[str]]:
+    """在内存快照中应用非幂等关系，并返回变更分类计数。"""
+    changed = 0
+    suppliers_changed = 0
+    material_codes: set[str] = set()
+    for relation_type, key, value, _expected_current in relations:
+        if relation_value(data, relation_type, key) == value:
+            continue  # 重复确认不计数，也不触发无意义写盘。
+        if relation_type == "supplier_code":
+            _apply_supplier_relation(data, key, value)
+            suppliers_changed += 1
+        else:
+            material_codes.add(_apply_material_relation(data, relation_type, key, value))
+        changed += 1
+    return changed, suppliers_changed, material_codes
 
 
 def apply_relations(
@@ -609,17 +705,7 @@ def apply_relations(
     当前值仍等于期望旧值或已经等于目标值才允许继续；否则整体拒绝并返回结构化冲突，
     防止两个批次互相覆盖。所有校验通过后先备份，再在内存中应用并一次原子写入。
     """
-    normalized: list[tuple[str, str, str, str]] = []
-    for relation in relations:
-        relation_type = str(relation.get("relation_type") or "").strip()
-        key = str(relation.get("key") or "").strip()
-        value = str(relation.get("value") or "").strip()
-        expected_current = str(relation.get("expected_current") or "").strip()
-        if not relation_type or not key or not value:
-            continue
-        # 借助统一读取函数提前验证关系类型，不必维护第二份白名单。
-        relation_value(_empty(), relation_type, key)
-        normalized.append((relation_type, key, value, expected_current))
+    normalized = _normalized_relations(relations)
     if not normalized:
         return {"changed": 0, "suppliers": 0, "materials": 0, "backup_path": ""}
 
@@ -627,61 +713,13 @@ def apply_relations(
     # 冲突校验、备份和写入位于同一锁内，避免校验后到提交前正式库发生变化。
     with storage_lock.file_lock(path):
         data = _read_unlocked(path, strict=True)
-        conflicts = []
-        for relation_type, key, value, expected_current in normalized:
-            current = relation_value(data, relation_type, key)
-            if current not in {value, expected_current}:
-                # 当前已等于目标值表示重复或幂等合并，不应误报冲突。
-                conflicts.append({
-                    "relation_type": relation_type,
-                    "key": key,
-                    "value": value,
-                    "expected_current": expected_current,
-                    "current_value": current,
-                })
+        conflicts = _relation_conflicts(data, normalized)
         if conflicts:
             raise CatalogConflictError(conflicts)
-        backup_path = ""
-        if backup_dir:
-            # 即使正式库尚不存在也生成空库备份，使每次合并都有明确的恢复起点。
-            target_dir = os.path.abspath(backup_dir)
-            os.makedirs(target_dir, exist_ok=True)
-            backup_path = os.path.join(
-                target_dir, "主数据-%s.json" % datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f"))
-            if os.path.isfile(path):
-                shutil.copy2(path, backup_path)
-            else:
-                with open(backup_path, "w", encoding="utf-8", newline="") as handle:
-                    json.dump(_empty(), handle, ensure_ascii=False, indent=1)
-
-        changed = 0
-        suppliers_changed = 0
-        material_codes: set[str] = set()
-        for relation_type, key, value, _expected_current in normalized:
-            if relation_value(data, relation_type, key) == value:
-                # 已是目标值的关系不重复计数，也不触发无意义写盘。
-                continue
-            if relation_type == "supplier_code":
-                resolver = CatalogResolver(data)
-                # 能匹配正式名称时沿用原始展示键，否则使用管理员确认的新名称。
-                supplier_key = resolver.supplier_name_key(key) or key
-                data["suppliers"][supplier_key] = value
-                suppliers_changed += 1
-            else:
-                field = {
-                    "material_name": "name", "material_spec": "spec",
-                    "material_unit": "unit", "material_supplier": "supplier",
-                }[relation_type]
-                resolver = CatalogResolver(data)
-                # 新材料优先采用规范化编码别名，避免把纯数字的 ``123.0`` 作为新正式键。
-                material_key = resolver.material_key(key) or _code_alias(key) or key
-                item = data["materials"].get(material_key, {})
-                item[field] = value
-                data["materials"][material_key] = item
-                material_codes.add(material_key)
-            changed += 1
+        backup_path = _backup_catalog_snapshot(path, backup_dir)
+        changed, suppliers_changed, material_codes = _apply_relation_changes(data, normalized)
         if changed:
-            _write_unlocked(path, data)
+            _write_unlocked(path, data)  # 全批关系在内存中成功应用后一次原子提交，不暴露半批次状态。
         return {
             "changed": changed,
             "suppliers": suppliers_changed,

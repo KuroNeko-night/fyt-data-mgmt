@@ -130,6 +130,87 @@ def _read_purchase(path: str, log=None) -> list[dict[str, object]]:
         workbook.close()
 
 
+def _validate_inputs(invoice_paths, purchase_paths) -> tuple[list[str], list[str]]:
+    """规范化并一次性校验两侧输入路径。"""
+    invoices = [os.path.abspath(str(value)) for value in (invoice_paths or []) if str(value).strip()]  # 去掉空选择并固定绝对路径。
+    purchases = [os.path.abspath(str(value)) for value in (purchase_paths or []) if str(value).strip()]
+    if not invoices or not purchases:
+        raise ValueError("请同时选择发票台账与采购明细文件")  # 两侧缺一不可，避免生成误导性空报告。
+    for path in invoices + purchases:
+        if not os.path.isfile(path):
+            raise FileNotFoundError("找不到文件：%s" % path)  # 读取前先完整检查，失败不会留下半成品。
+        if os.path.splitext(path)[1].lower() not in EXCEL_SUFFIXES:
+            raise ValueError("仅支持 xlsx 或 xlsm 文件：%s" % os.path.basename(path))
+    return invoices, purchases
+
+
+def _collect_supplier_totals(invoice_paths, purchase_paths, log, progress):
+    """读取发票金额和采购供应商集合，返回匹配所需的两个事实集合。"""
+    invoice_totals: dict[str, float] = defaultdict(float)
+    for path in invoice_paths:
+        for item in _read_invoices(path, log=log):
+            invoice_totals[str(item["seller"])] += float(item["total"])  # 同名销售方跨文件累计为一行。
+    purchase_suppliers: set[str] = set()
+    for path in purchase_paths:
+        for item in _read_purchase(path, log=log):
+            purchase_suppliers.add(str(item["supplier"]))  # 集合去重，避免重复采购行放大供应商数量。
+    if progress:
+        progress(60)  # 两侧读取结束后进入报告构建阶段。
+    if not invoice_totals:
+        raise ValueError("发票台账中没有有效记录")
+    if not purchase_suppliers:
+        raise ValueError("采购明细中没有识别到供应商")
+    return invoice_totals, purchase_suppliers
+
+
+def _supplier_sets(invoice_totals, purchase_suppliers):
+    """生成稳定排序的匹配、无票采购和有票无采购集合。"""
+    invoice_suppliers = set(invoice_totals)  # 发票侧供应商来自累计金额字典键。
+    return (
+        sorted(invoice_suppliers & purchase_suppliers),
+        sorted(purchase_suppliers - invoice_suppliers),
+        sorted(invoice_suppliers - purchase_suppliers),
+    )
+
+
+def _write_match_report(out_dir, invoice_totals, both, no_invoice, no_purchase):
+    """按稳定模板写出匹配报告并返回文件路径。"""
+    thin = Side(style="thin", color="9AA5B1")  # 统一边框对象，减少工作簿样式数量。
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    head_fill = PatternFill("solid", fgColor="EAF1FF")
+    warn_fill = PatternFill("solid", fgColor="FFF3E0")
+    head_font = Font(name="宋体", size=10, bold=True)
+    cell_font = Font(name="宋体", size=10)
+    workbook = openpyxl.Workbook()
+    try:
+        summary = workbook.active
+        summary.title = "票货匹配"
+        headers = ["供应商", "发票价税合计（元）", "采购明细供应商", "状态"]
+        for column, width in {"A": 22, "B": 18, "C": 16, "D": 22}.items():
+            summary.column_dimensions[column].width = width  # 先固定列宽，避免中文标题被截断。
+        for column, name in enumerate(headers, start=1):
+            cell = summary.cell(1, column, name)
+            cell.font = head_font; cell.fill = head_fill
+            cell.alignment = Alignment(horizontal="center", vertical="center"); cell.border = border
+        row_index = 2
+        for supplier, amount, marker, status, warning in (
+            *[(name, invoice_totals[name], "✓", "正常", False) for name in both],
+            *[(name, 0, "✓", "无票采购", True) for name in no_invoice],
+            *[(name, invoice_totals[name], "—", "有发票无采购", True) for name in no_purchase],
+        ):
+            for column, value in enumerate([supplier, round(amount, 2), marker, status], start=1):
+                cell = summary.cell(row_index, column, value)
+                cell.font = cell_font; cell.border = border
+                if warning:
+                    cell.fill = warn_fill  # 异常行统一底色，便于打开报告快速定位。
+            row_index += 1
+        target = common_core.unique_path(os.path.join(out_dir, "票货匹配表_%s.xlsx" % datetime.now().strftime("%Y%m%d_%H%M%S")))
+        workbook.save(target)  # 保存完成后再返回，调用方可立即提供下载。
+        return target
+    finally:
+        workbook.close()  # 即使保存失败也释放 openpyxl 句柄。
+
+
 def match(invoice_paths, purchase_paths, out_dir=None, log=None, progress=None) -> dict[str, object]:
     """汇总票货两侧供应商并生成匹配状态报告。
 
@@ -140,40 +221,11 @@ def match(invoice_paths, purchase_paths, out_dir=None, log=None, progress=None) 
     返回输出路径、三类数量和两类异常供应商名称列表，前端可直接展示摘要，不需要
     再读取生成的 Excel。
     """
-    invoices_input = [os.path.abspath(str(value)) for value in (invoice_paths or []) if str(value).strip()]
-    purchase_input = [os.path.abspath(str(value)) for value in (purchase_paths or []) if str(value).strip()]
-    if not invoices_input or not purchase_input:
-        raise ValueError("请同时选择发票台账与采购明细文件")
-    for path in invoices_input + purchase_input:
-        # 在任何读取前完成全量路径校验，避免处理到一半才发现后续文件无效。
-        if not os.path.isfile(path):
-            raise FileNotFoundError("找不到文件：%s" % path)
-        if os.path.splitext(path)[1].lower() not in EXCEL_SUFFIXES:
-            raise ValueError("仅支持 xlsx 或 xlsm 文件：%s" % os.path.basename(path))
+    invoices_input, purchase_input = _validate_inputs(invoice_paths, purchase_paths)
     if progress:
-        progress(10)
-
-    invoice_totals: dict[str, float] = defaultdict(float)
-    for path in invoices_input:
-        for item in _read_invoices(path, log=log):
-            # 同一销售方可能跨文件或跨多张发票出现，金额统一累计后再写一行报告。
-            invoice_totals[str(item["seller"])] += float(item["total"])
-    purchase_suppliers: set[str] = set()
-    for path in purchase_input:
-        for item in _read_purchase(path, log=log):
-            purchase_suppliers.add(str(item["supplier"]))
-    if progress:
-        progress(60)
-    if not invoice_totals:
-        raise ValueError("发票台账中没有有效记录")
-    if not purchase_suppliers:
-        raise ValueError("采购明细中没有识别到供应商")
-
-    invoice_suppliers = set(invoice_totals)
-    # 排序只为输出稳定可读，不改变集合匹配口径。
-    no_purchase = sorted(invoice_suppliers - purchase_suppliers)   # 有发票、采购侧无名称。
-    no_invoice = sorted(purchase_suppliers - invoice_suppliers)    # 有采购、发票侧无名称。
-    both = sorted(invoice_suppliers & purchase_suppliers)
+        progress(10)  # 输入全部合法后再报告校验阶段完成。
+    invoice_totals, purchase_suppliers = _collect_supplier_totals(invoices_input, purchase_input, log, progress)
+    both, no_invoice, no_purchase = _supplier_sets(invoice_totals, purchase_suppliers)
 
     if out_dir is None:
         current = settings.get_settings()
@@ -185,59 +237,7 @@ def match(invoice_paths, purchase_paths, out_dir=None, log=None, progress=None) 
         out_dir = os.path.abspath(str(out_dir))
         os.makedirs(out_dir, exist_ok=True)
 
-    # 同一工作簿复用样式对象，保持报告一致并减少重复样式记录。
-    thin = Side(style="thin", color="9AA5B1")
-    border = Border(left=thin, right=thin, top=thin, bottom=thin)
-    head_fill = PatternFill("solid", fgColor="EAF1FF")
-    warn_fill = PatternFill("solid", fgColor="FFF3E0")
-    head_font = Font(name="宋体", size=10, bold=True)
-    cell_font = Font(name="宋体", size=10)
-
-    workbook = openpyxl.Workbook()
-    summary = workbook.active
-    summary.title = "票货匹配"
-    headers = ["供应商", "发票价税合计（元）", "采购明细供应商", "状态"]
-    widths = {"A": 22, "B": 18, "C": 16, "D": 22}
-    for column, width in widths.items():
-        summary.column_dimensions[column].width = width
-    for column, name in enumerate(headers, start=1):
-        cell = summary.cell(1, column, name)
-        cell.font = head_font
-        cell.fill = head_fill
-        cell.alignment = Alignment(horizontal="center", vertical="center")
-        cell.border = border
-    row_index = 2
-    # 先写正常项，再写两类异常项，用户打开报告时可先看到总体正常供应商。
-    for supplier in both:
-        values = [supplier, round(invoice_totals[supplier], 2), "✓", "正常"]
-        for column, value in enumerate(values, start=1):
-            cell = summary.cell(row_index, column, value)
-            cell.font = cell_font
-            cell.border = border
-        row_index += 1
-    for supplier in no_invoice:
-        # 无票采购整行使用警示底色，金额为零仅表示本批发票侧没有匹配名称。
-        values = [supplier, 0, "✓", "无票采购"]
-        for column, value in enumerate(values, start=1):
-            cell = summary.cell(row_index, column, value)
-            cell.font = cell_font
-            cell.fill = warn_fill
-            cell.border = border
-        row_index += 1
-    for supplier in no_purchase:
-        # 有发票无采购仍保留累计发票金额，便于人工判断异常影响规模。
-        values = [supplier, round(invoice_totals[supplier], 2), "—", "有发票无采购"]
-        for column, value in enumerate(values, start=1):
-            cell = summary.cell(row_index, column, value)
-            cell.font = cell_font
-            cell.fill = warn_fill
-            cell.border = border
-        row_index += 1
-
-    target = common_core.unique_path(os.path.join(
-        out_dir, "票货匹配表_%s.xlsx" % datetime.now().strftime("%Y%m%d_%H%M%S")))
-    workbook.save(target)
-    workbook.close()
+    target = _write_match_report(out_dir, invoice_totals, both, no_invoice, no_purchase)
 
     if log:
         log("匹配完成：正常 %d 家、无票采购 %d 家、有发票无采购 %d 家。"

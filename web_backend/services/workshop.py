@@ -125,10 +125,72 @@ def _workshop_issue_images(issue_id: str, deps: WorkshopDependencies) -> list[An
         ).fetchall()
 
 
+def _payload_text(
+    body: dict[str, object], current_values: dict[str, object], name: str,
+    default: object = "",
+) -> str:
+    """按请求优先、旧值其次的顺序读取文本字段。"""
+    raw = body[name] if name in body else current_values.get(name, default)  # PATCH 缺失字段必须保留旧值。
+    return str(raw or "").strip()  # JSON null、数据库 NULL 与纯空白统一为空字符串。
+
+
+def _workshop_template_values(
+    body: dict[str, object], deps: WorkshopDependencies, category: str,
+    raw_values: dict[str, str], secondary_owner: str, notes: str,
+) -> tuple[dict[str, object], dict[str, str]]:
+    """校验分类专属字段，并返回模板、允许字段和清洗后的字段值。"""
+    if category not in deps.categories:
+        raise ApiError(HTTPStatus.BAD_REQUEST, "现场问题只能选择主料异常、辅料异常、包装异常、海外问题或防错异常")
+    template = deps.workshop_core.WORKSHOP_ISSUE_TEMPLATES[category]  # Core 模板是分类和导出口径的唯一事实源。
+    allowed_fields = set(deps.workshop_core.WORKSHOP_ISSUE_CATEGORY_ALLOWED_FIELDS[category])
+    disallowed = [
+        deps.template_fields[field][2]
+        for field, field_value in raw_values.items()
+        if field in body and field_value and field not in allowed_fields
+    ]  # 只拒绝本次请求显式提交的越界字段，编辑旧记录时允许服务端主动清空历史残留。
+    if disallowed:
+        raise ApiError(HTTPStatus.BAD_REQUEST, f"{template['label']}不使用以下字段：{'、'.join(disallowed)}")
+    if "secondary_owner" in body and secondary_owner:
+        raise ApiError(HTTPStatus.BAD_REQUEST, "当前问题模板不使用次要负责人字段")
+    if "notes" in body and notes and category != "error_proofing":
+        raise ApiError(HTTPStatus.BAD_REQUEST, "只有防错异常模板可以填写备注")
+    template_values = {
+        field: field_value if field in allowed_fields else ""
+        for field, field_value in raw_values.items()
+    }  # 切换分类时清空无关字段，数据库不会继续携带旧分类语义。
+    return template, template_values
+
+
+def _validate_workshop_required(template: dict[str, object], semantic_values: dict[str, object]) -> None:
+    """按当前模板校验发布或显式分类草稿所需的必填项。"""
+    column_labels = dict(template["columns"])  # 将列定义转为映射，缺失时仍能给出通用提示。
+    for field in template["required"]:
+        if not str(semantic_values.get(field) or "").strip():
+            raise ApiError(HTTPStatus.BAD_REQUEST, f"{template['label']}请填写{column_labels.get(field, '必填项')}")
+
+
+def _validate_workshop_lengths(
+    cause: str, primary_owner: str, notes: str,
+    template_values: dict[str, str], deps: WorkshopDependencies,
+) -> None:
+    """统一校验通用字段和分类模板字段的最大长度。"""
+    for field_value, limit, label in (
+        (cause, 1000, "问题描述"), (primary_owner, 120, "负责人"), (notes, 2000, "备注"),
+    ):
+        if len(field_value) > limit:
+            raise ApiError(HTTPStatus.BAD_REQUEST, f"{label}不能超过 {limit} 字")
+    for field, field_value in template_values.items():
+        _, limit, label = deps.template_fields[field]  # 长度和客户标签与后端配置目录保持一致。
+        if len(field_value) > limit:
+            raise ApiError(HTTPStatus.BAD_REQUEST, f"{label}不能超过 {limit} 字")
+
+
 def _normalize_workshop_issue_payload(
     body: dict[str, object],
     deps: WorkshopDependencies,
     current: Any | None = None,
+    *,
+    require_template_fields: bool = True,
 ) -> dict[str, object]:
     """校验编辑字段，合并旧值并清空目标分类不使用的模板字段。
 
@@ -136,66 +198,32 @@ def _normalize_workshop_issue_payload(
     新分类不允许的字段必须清空，不能把旧分类数据悄悄带入导出报表。返回值只包含
     允许写回数据库的规范字段，调用方可直接据此构造参数化更新语句。
     """
-    current_values = dict(current) if current is not None else {}
-
+    current_values = dict(current) if current is not None else {}  # 编辑时允许请求只提交发生变化的字段。
     def value(name: str, default: object = "") -> str:
-        """读取请求值或旧值，并把数据库 ``NULL`` 统一规范为空字符串。"""
-        raw = body[name] if name in body else current_values.get(name, default)
-        return str(raw or "").strip()
+        """按统一优先级读取本次规范化所需字段。"""
+        return _payload_text(body, current_values, name, default)
 
-    issue_date = deps.issue_date(value("issue_date"))
+    issue_date = deps.issue_date(value("issue_date"))  # 日期解析同时拒绝未来日期和非法格式。
     cause = value("cause")
-    legacy_primary_owner = value("primary_owner")
+    legacy_primary_owner = value("primary_owner")  # 旧记录可能只维护通用负责人列。
     secondary_owner = value("secondary_owner")
     notes = value("notes")
-    category = value("category", "main_material") or "main_material"
+    category = value("category", "main_material") or "main_material"  # 旧草稿缺分类时沿用主料异常。
     fallback_severity = value("severity", "normal") or "normal"
-    raw_template_values = {field: value(field) for field in deps.template_fields}  # 全量读取后才能识别跨分类残留字段。
+    raw_template_values = {field: value(field) for field in deps.template_fields}  # 先全量读取，才能清除跨分类残留。
     if not cause:
         raise ApiError(HTTPStatus.BAD_REQUEST, "请填写问题描述")
-    if category not in deps.categories:
-        raise ApiError(HTTPStatus.BAD_REQUEST, "现场问题只能选择主料异常、辅料异常、包装异常、海外问题或防错异常")
-    template = deps.workshop_core.WORKSHOP_ISSUE_TEMPLATES[category]
-    allowed_fields = set(deps.workshop_core.WORKSHOP_ISSUE_CATEGORY_ALLOWED_FIELDS[category])  # 以 Core 模板为唯一事实源。
-    disallowed = [
-        deps.template_fields[field][2]
-        for field, field_value in raw_template_values.items()
-        if field in body and field_value and field not in allowed_fields
-    ]
-    if disallowed:
-        raise ApiError(
-            HTTPStatus.BAD_REQUEST,
-            f"{template['label']}不使用以下字段：{'、'.join(disallowed)}",
-        )
-    if "secondary_owner" in body and secondary_owner:
-        raise ApiError(HTTPStatus.BAD_REQUEST, "当前问题模板不使用次要负责人字段")
-    if "notes" in body and notes and category != "error_proofing":
-        raise ApiError(HTTPStatus.BAD_REQUEST, "只有防错异常模板可以填写备注")
-    template_values = {  # 切换分类后主动清空无关列，保证数据库和模板语义一致。
-        field: field_value if field in allowed_fields else ""
-        for field, field_value in raw_template_values.items()
-    }
+    template, template_values = _workshop_template_values(
+        body, deps, category, raw_template_values, secondary_owner, notes,
+    )
     semantic_values = {**template_values, "cause": cause, "issue_date": issue_date}  # 必填项既可能是通用字段，也可能是模板字段。
-    for field in template["required"]:
-        if not str(semantic_values.get(field) or "").strip():
-            label = dict(template["columns"]).get(field, "必填项")
-            raise ApiError(HTTPStatus.BAD_REQUEST, f"{template['label']}请填写{label}")
+    if require_template_fields:
+        _validate_workshop_required(template, semantic_values)  # 旧客户端无分类草稿可延迟到发布阶段校验。
     primary_owner = deps.workshop_core.workshop_issue_primary_owner(
         category, semantic_values, legacy_primary_owner,
     )  # 兼容旧记录的负责人列，同时允许新模板从专用字段推导负责人。
     severity = deps.workshop_core.workshop_issue_severity(template_values, fallback_severity)  # 严重度按模板内容派生，旧值只作回退。
-    limits = (
-        (cause, 1000, "问题描述"),
-        (primary_owner, 120, "负责人"),
-        (notes, 2000, "备注"),
-    )
-    for field_value, limit, label in limits:
-        if len(field_value) > limit:
-            raise ApiError(HTTPStatus.BAD_REQUEST, f"{label}不能超过 {limit} 字")
-    for field, field_value in template_values.items():
-        _, limit, label = deps.template_fields[field]
-        if len(field_value) > limit:
-            raise ApiError(HTTPStatus.BAD_REQUEST, f"{label}不能超过 {limit} 字")
+    _validate_workshop_lengths(cause, primary_owner, notes, template_values, deps)
     return {
         "issue_date": issue_date,
         "cause": cause,
@@ -231,61 +259,10 @@ def create_workshop_issue(handler: Any, body: dict[str, object], deps: WorkshopD
     一次性满足该模板的必填字段。
     """
     user = handler.require_user()
-    issue_date = deps.issue_date(body.get("issue_date"))
-    cause = str(body.get("cause") or "").strip()
-    legacy_primary_owner = str(body.get("primary_owner") or "").strip()
-    secondary_owner = str(body.get("secondary_owner") or "").strip()
-    notes = str(body.get("notes") or "").strip()
     category_was_supplied = bool(str(body.get("category") or "").strip())  # 区分旧客户端缺省值与用户明确选择。
-    category = str(body.get("category") or "main_material").strip()
-    fallback_severity = str(body.get("severity") or "normal").strip()
-    raw_template_values = {  # 保留所有受支持模板列，便于统一识别“不属于当前类型”的输入。
-        field: str(body.get(field) or "").strip()
-        for field in deps.template_fields
-    }
-    if not cause:
-        raise ApiError(HTTPStatus.BAD_REQUEST, "请填写问题描述")
-    if category not in deps.categories:
-        raise ApiError(HTTPStatus.BAD_REQUEST, "现场问题只能选择主料异常、辅料异常、包装异常、海外问题或防错异常")
-    template = deps.workshop_core.WORKSHOP_ISSUE_TEMPLATES[category]
-    allowed_fields = set(deps.workshop_core.WORKSHOP_ISSUE_CATEGORY_ALLOWED_FIELDS[category])
-    disallowed = [
-        deps.template_fields[field][2]
-        for field, value in raw_template_values.items()
-        if value and field not in allowed_fields
-    ]
-    if disallowed:
-        raise ApiError(
-            HTTPStatus.BAD_REQUEST,
-            f"{template['label']}不使用以下字段：{'、'.join(disallowed)}",
-        )
-    if secondary_owner:
-        raise ApiError(HTTPStatus.BAD_REQUEST, "当前问题模板不使用次要负责人字段")
-    if notes and category != "error_proofing":
-        raise ApiError(HTTPStatus.BAD_REQUEST, "只有防错异常模板可以填写备注")
-    template_values = {
-        field: value if field in allowed_fields else ""
-        for field, value in raw_template_values.items()
-    }
-    semantic_values = {**template_values, "cause": cause, "issue_date": issue_date}
-    if category_was_supplied:  # 旧客户端先建草稿再补字段，不在这里强制新模板必填项。
-        for field in template["required"]:
-            if not str(semantic_values.get(field) or "").strip():
-                label = dict(template["columns"]).get(field, "必填项")
-                raise ApiError(HTTPStatus.BAD_REQUEST, f"{template['label']}请填写{label}")
-    primary_owner = deps.workshop_core.workshop_issue_primary_owner(
-        category, semantic_values, legacy_primary_owner,
-    )
-    severity = deps.workshop_core.workshop_issue_severity(template_values, fallback_severity)
-    limits = ((cause, 1000, "问题描述"), (primary_owner, 120, "负责人"),
-              (notes, 2000, "备注"))
-    for value, limit, label in limits:
-        if len(value) > limit:
-            raise ApiError(HTTPStatus.BAD_REQUEST, f"{label}不能超过 {limit} 字")
-    for field, value in template_values.items():
-        _, limit, label = deps.template_fields[field]
-        if len(value) > limit:
-            raise ApiError(HTTPStatus.BAD_REQUEST, f"{label}不能超过 {limit} 字")
+    normalized = _normalize_workshop_issue_payload(
+        body, deps, require_template_fields=category_was_supplied,
+    )  # 新建与编辑共用同一字段白名单、长度和派生规则，避免模板口径分叉。
     issue_id = uuid.uuid4().hex  # URL、目录名和数据库主键共用不含连字符的安全标识。
     created = deps.now_iso()
     template_columns = tuple(deps.template_fields)  # 字段顺序同时用于列名和值，避免动态 SQL 参数错位。
@@ -294,9 +271,9 @@ def create_workshop_issue(handler: Any, body: dict[str, object], deps: WorkshopD
         "notes", "category", "severity", *template_columns, "status", "created_at", "updated_at",
     )
     values = (
-        issue_id, user["id"], issue_date, cause, primary_owner, secondary_owner,
-        notes, category, severity,
-        *(template_values[field] for field in template_columns),
+        issue_id, user["id"], normalized["issue_date"], normalized["cause"], normalized["primary_owner"],
+        normalized["secondary_owner"], normalized["notes"], normalized["category"], normalized["severity"],
+        *(normalized[field] for field in template_columns),
         "draft", created, created,
     )
     with deps.db_lock, deps.db() as connection:

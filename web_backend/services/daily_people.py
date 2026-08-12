@@ -32,6 +32,7 @@ def _daily_production_group_id(path: str) -> int:
         raise ApiError(HTTPStatus.BAD_REQUEST, "生产班组编号无效")
     return int(value)
 
+
 def _validate_daily_person(
     values: dict[str, object], deps: DailyManagementDependencies,
 ) -> tuple[str, str, str, str, int, bool]:
@@ -60,6 +61,66 @@ def _validate_daily_person(
     return name, person_type, unit, shift, max(-9999, min(sort_order, 9999)), active  # 统一在服务端约束排序边界。
 
 
+def _production_group_sort_order(value: object) -> int:
+    """解析并钳制生产班组排序值，拒绝无法转换为整数的输入。"""
+    try:
+        return max(-9999, min(int(value or 0), 9999))
+    except (TypeError, ValueError) as exc:
+        raise ApiError(HTTPStatus.BAD_REQUEST, "生产班组排序无效") from exc
+
+
+def _production_group_active(value: object) -> bool:
+    """校验生产班组启用状态，避免字符串 ``false`` 被当作真值入库。"""
+    if not isinstance(value, bool):
+        raise ApiError(HTTPStatus.BAD_REQUEST, "生产班组启用状态无效")
+    return value
+
+
+def _production_shift(raw_shift: object) -> dict[str, object]:
+    """规范化一个班次的编号、名称、编制、排序和启用状态。"""
+    if not isinstance(raw_shift, dict):
+        raise ApiError(HTTPStatus.BAD_REQUEST, "生产班次格式无效")
+    shift_name = str(raw_shift.get("name") or "").strip()
+    if not shift_name or len(shift_name) > 40:
+        raise ApiError(HTTPStatus.BAD_REQUEST, "班次名称需要填写且不能超过 40 个字")
+    try:
+        staffing_count = int(raw_shift.get("staffing_count") or 0)
+        shift_sort_order = int(raw_shift.get("sort_order") or 0)
+        shift_id = int(raw_shift["id"]) if raw_shift.get("id") is not None else None
+    except (TypeError, ValueError) as exc:
+        raise ApiError(HTTPStatus.BAD_REQUEST, "生产班次编制或排序无效") from exc
+    shift_active = raw_shift.get("active", True)
+    if not isinstance(shift_active, bool):
+        raise ApiError(HTTPStatus.BAD_REQUEST, "生产班次启用状态无效")
+    if staffing_count < 0 or staffing_count > 100000:
+        raise ApiError(HTTPStatus.BAD_REQUEST, "生产班次编制人数超出合理范围")
+    return {
+        "id": shift_id,  # None 表示新增班次，已有编号由同步阶段校验是否属于当前班组。
+        "name": shift_name,
+        "staffing_count": staffing_count,
+        "sort_order": max(-9999, min(shift_sort_order, 9999)),
+        "active": shift_active,
+    }
+
+
+def _production_shifts(raw_shifts: object) -> list[dict[str, object]] | None:
+    """规范化可选班次快照，并拒绝空快照、超量或组内重名。"""
+    if raw_shifts is None:
+        return None  # 未提交 shifts 表示只修改班组字段，不能误删原有班次。
+    if not isinstance(raw_shifts, list) or not raw_shifts or len(raw_shifts) > 12:
+        raise ApiError(HTTPStatus.BAD_REQUEST, "生产班组至少需要一个班次，且不能超过 12 个")
+    shifts: list[dict[str, object]] = []
+    seen_names: set[str] = set()
+    for raw_shift in raw_shifts:
+        shift = _production_shift(raw_shift)
+        normalized_name = str(shift["name"]).casefold()  # Unicode 无关大小写比较不改变中文名称。
+        if normalized_name in seen_names:
+            raise ApiError(HTTPStatus.BAD_REQUEST, "同一班组内不能存在重名班次")
+        seen_names.add(normalized_name)
+        shifts.append(shift)
+    return shifts
+
+
 def _validate_daily_production_group(
     values: dict[str, object],
 ) -> tuple[str, int, bool, list[dict[str, object]] | None]:
@@ -69,51 +130,11 @@ def _validate_daily_production_group(
     必须区分，否则只编辑班组名称时可能误删全部班次。
     """
     name = str(values.get("name") or "").strip()
-    try:
-        sort_order = int(values.get("sort_order") or 0)
-    except (TypeError, ValueError) as exc:
-        raise ApiError(HTTPStatus.BAD_REQUEST, "生产班组排序无效") from exc
-    active = values.get("active", True)
-    if not isinstance(active, bool):
-        raise ApiError(HTTPStatus.BAD_REQUEST, "生产班组启用状态无效")
     if not name or len(name) > 80:
         raise ApiError(HTTPStatus.BAD_REQUEST, "生产班组名称需要填写且不能超过 80 个字")
-    raw_shifts = values.get("shifts")
-    shifts: list[dict[str, object]] | None = None
-    if raw_shifts is not None:
-        if not isinstance(raw_shifts, list) or not raw_shifts or len(raw_shifts) > 12:
-            raise ApiError(HTTPStatus.BAD_REQUEST, "生产班组至少需要一个班次，且不能超过 12 个")
-        shifts = []
-        seen_names: set[str] = set()
-        for raw_shift in raw_shifts:
-            if not isinstance(raw_shift, dict):
-                raise ApiError(HTTPStatus.BAD_REQUEST, "生产班次格式无效")
-            shift_name = str(raw_shift.get("name") or "").strip()
-            if not shift_name or len(shift_name) > 40:
-                raise ApiError(HTTPStatus.BAD_REQUEST, "班次名称需要填写且不能超过 40 个字")
-            normalized_name = shift_name.casefold()  # 使用 Unicode 无关大小写比较，中文名称不受影响。
-            if normalized_name in seen_names:
-                raise ApiError(HTTPStatus.BAD_REQUEST, "同一班组内不能存在重名班次")
-            seen_names.add(normalized_name)
-            try:
-                staffing_count = int(raw_shift.get("staffing_count") or 0)
-                shift_sort_order = int(raw_shift.get("sort_order") or 0)
-                shift_id = int(raw_shift["id"]) if raw_shift.get("id") is not None else None  # 无编号代表新增班次。
-            except (TypeError, ValueError) as exc:
-                raise ApiError(HTTPStatus.BAD_REQUEST, "生产班次编制或排序无效") from exc
-            shift_active = raw_shift.get("active", True)
-            if not isinstance(shift_active, bool):
-                raise ApiError(HTTPStatus.BAD_REQUEST, "生产班次启用状态无效")
-            if staffing_count < 0 or staffing_count > 100000:
-                raise ApiError(HTTPStatus.BAD_REQUEST, "生产班次编制人数超出合理范围")
-            shifts.append({
-                "id": shift_id,
-                "name": shift_name,
-                "staffing_count": staffing_count,
-                "sort_order": max(-9999, min(shift_sort_order, 9999)),
-                "active": shift_active,
-            })
-    return name, max(-9999, min(sort_order, 9999)), active, shifts
+    sort_order = _production_group_sort_order(values.get("sort_order"))
+    active = _production_group_active(values.get("active", True))
+    return name, sort_order, active, _production_shifts(values.get("shifts"))
 
 
 def _daily_production_shift_rows(connection: Any, group_id: int) -> list[Any]:
