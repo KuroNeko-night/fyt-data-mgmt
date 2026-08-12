@@ -285,6 +285,7 @@ JSON 请求体、普通上传、主数据导入和现场图片还有独立大小
 
 ```powershell
 $env:PYTHONIOENCODING = "utf-8"
+.\.venv\Scripts\python.exe scripts\check_repository_hygiene.py
 .\.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"
 npm --prefix web-app run build
 npm --prefix tauri-app run build
@@ -358,6 +359,7 @@ npm --prefix web-app run build
 ## 相关文档
 
 - [项目全景：模块与实现](docs/项目全景-模块与实现.md)
+- [仓库维护与目录规范](docs/仓库维护与目录规范.md)
 - [Web 前端说明](web-app/README.md)
 - [设计令牌说明](design-system/README.md)
 - [MIT License](LICENSE)

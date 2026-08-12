@@ -177,6 +177,7 @@ CLOUDFLARED_WINDOWS_URL = (
 
 # 源码包根文件采用显式白名单，新出现的敏感配置不会因为位于根目录而自动进入包中。
 SOURCE_ROOT_FILES = (
+    ".editorconfig",
     ".dockerignore",
     ".env.example",
     ".gitattributes",

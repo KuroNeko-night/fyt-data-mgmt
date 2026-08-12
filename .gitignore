@@ -2,10 +2,21 @@
 .venv/
 __pycache__/
 *.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.tox/
+.nox/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
 build/
 dist/
 
 # React / Tauri
+node_modules/
 tauri-app/node_modules/
 tauri-app/dist/
 tauri-app/src-tauri/target/
@@ -17,6 +28,11 @@ tauri-app/vite.config.d.ts
 web-app/node_modules/
 web-app/dist/
 web-app/*.tsbuildinfo
+*.tsbuildinfo
+.vite/
+coverage/
+*.lcov
+.eslintcache
 
 # Web 服务本地数据
 web-data/
@@ -36,6 +52,15 @@ docker-compose.override.yml
 *.pid
 *.part
 *.bak
+*.tmp
+*.temp
+*.orig
+*.rej
+*.swp
+*.swo
+*.dmp
+*.crdownload
+*.download
 *.sqlite
 *.sqlite3
 *.db
@@ -49,12 +74,16 @@ docker-compose.override.yml
 *.token
 *.zip
 
-# Local tools
+# 操作系统、编辑器与本地工具
+.DS_Store
+Thumbs.db
+Desktop.ini
+.idea/
+.vscode/
+*.code-workspace
 .codex-audit/
 .playwright-mcp/
 .reasonix/
-.pytest_cache/
-.coverage
 tmp/
 baseline-*.jpeg
 baseline-*.jpg
