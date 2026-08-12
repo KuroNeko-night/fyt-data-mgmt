@@ -32,6 +32,17 @@ def clean_str(value: object) -> str:
     return unicodedata.normalize("NFKC", str(value)).translate(_INVISIBLE).strip()
 
 
+def portable_basename(value: object) -> str:
+    """从 Windows 或 POSIX 路径文本中提取文件名，不依赖当前运行系统。
+
+    Web 任务历史和字段映射可能由另一种操作系统生成。Linux 上的 ``os.path.basename``
+    不会把反斜杠视为分隔符，因此这里先统一两类分隔符，保证展示裁剪和映射复用采用
+    同一个文件主名口径。
+    """
+
+    return clean_str(value).replace("\\", "/").rsplit("/", 1)[-1]
+
+
 def num_str(value: object) -> str:
     """生成可交给 ``float`` 的文本，只在整体合法时移除千分位逗号。"""
 
@@ -240,6 +251,7 @@ __all__ = [
     "num_str",
     "parse_rest",
     "parse_time",
+    "portable_basename",
     "round_half_hour",
     "serial_to_date",
     "to_hours",

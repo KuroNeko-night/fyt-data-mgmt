@@ -14,6 +14,12 @@ from core import daily_production_plan_core
 class DailyProductionPlanCoreTests(unittest.TestCase):
     """使用合成 Excel 验证日清生产图表所需的解析口径。"""
 
+    def test_number_label_accepts_integer_statistics(self):
+        """整数计数与浮点数量应使用同一展示格式，兼容 Python 3.11。"""
+
+        self.assertEqual(daily_production_plan_core._number_label(3), 3)
+        self.assertEqual(daily_production_plan_core._number_label(3.25), 3.25)
+
     def test_analyze_builds_safe_preview(self):
         """多工作表预览应保留顺序并把单元格值安全转换为前端文本。"""
 

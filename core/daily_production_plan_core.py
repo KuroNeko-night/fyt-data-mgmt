@@ -105,11 +105,14 @@ def _as_number(value: object) -> float | None:
         return None
 
 
-def _number_label(value: float | None) -> int | float:
+def _number_label(value: int | float | None) -> int | float:
     """把统计结果压缩为整数或最多四位小数，空值按展示零处理。"""
     if value is None:
         return 0
-    return int(value) if value.is_integer() else round(value, 4)
+    # 聚合值既可能来自浮点单元格，也可能来自 sum(bool) 等整数统计；先统一类型，
+    # 避免 Python 3.11 在整数对象上调用 float.is_integer() 时抛出属性错误。
+    number = float(value)
+    return int(number) if number.is_integer() else round(number, 4)
 
 
 def _row_label(row: list[str]) -> str:

@@ -21,6 +21,7 @@ from .common_parsing import (
     num_str as _num_str,
     parse_rest,
     parse_time,
+    portable_basename,
     round_half_hour,
     serial_to_date as _serial_to_date,
     to_hours,
@@ -140,7 +141,7 @@ class Options:
         if not self.columns:
             return None
         # 主名方便映射跨目录复用，完整路径保留旧配置与同名文件精确区分能力。
-        return self.columns.get(os.path.basename(path)) or self.columns.get(path)
+        return self.columns.get(portable_basename(path)) or self.columns.get(path)
 
     def resolve_sheet(self, path):
         """按“单文件 > 全局 > 自动”的优先级解析工作表名称。"""
@@ -260,7 +261,7 @@ def apply_saved_mapping(opts, path, mapping):
 
     if opts is None or not path or not mapping:
         return False
-    base_name = os.path.basename(path)
+    base_name = portable_basename(path)
     file_mapping = dict(opts.columns.get(base_name) or {})
     for key in ("sheet", "header"):
         if mapping.get(key) and not file_mapping.get(key):
@@ -379,6 +380,7 @@ __all__ = [
     "out_path",
     "parse_rest",
     "parse_time",
+    "portable_basename",
     "preview_rows",
     "read_sheets",
     "round_half_hour",

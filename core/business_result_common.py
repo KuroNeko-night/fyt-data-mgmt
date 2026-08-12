@@ -7,9 +7,10 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
+
+from .common_parsing import portable_basename
 
 
 MAX_DETAIL_ROWS = 30
@@ -197,7 +198,7 @@ def _parameter(key: str, label: str, value: object) -> dict[str, str]:
 
 def _basename(value: object) -> str:
     """只保留文件名，避免结果投影泄露服务器绝对路径。"""
-    return os.path.basename(_text(value))
+    return portable_basename(_text(value))
 
 
 def _ratio(part: int, total: int) -> float:

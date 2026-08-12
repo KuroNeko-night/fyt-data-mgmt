@@ -3,11 +3,11 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import Mapping
 from typing import Any
 
 from .business_result_common import (
+    _basename,
     _integer,
     _mapping,
     _metric,
@@ -189,7 +189,7 @@ def _present_reconcile_statement(value: object, limit: int) -> dict[str, object]
         "supplier": item.get("supplier"),
         "month": item.get("month"),
         "rows": item.get("rows"),
-        "name": os.path.basename(_text(item.get("name") or item.get("path"))),
+        "name": _basename(item.get("name") or item.get("path")),
     } for item in files]
     total_rows = _integer(result.get("total_rows"), sum(_integer(row["rows"]) for row in rows))
     suppliers = len({str(row["supplier"]).strip() for row in rows if str(row["supplier"]).strip()})  # 同一供应商跨月份或多文件只计一次。
