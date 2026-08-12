@@ -25,6 +25,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 DIST_DIR = ROOT / "dist"
 APPLY_SCRIPT = ROOT / "packaging" / "linux" / "apply-upgrade-patch.sh"
+RUNTIME_REQUIREMENTS = ROOT / "requirements-runtime.txt"
 # 目录名按大小写不敏感方式检查，防止 Windows 上生成的补丁绕过 Linux 数据保护规则。
 FORBIDDEN_NAMES = {
     "web-data",
@@ -69,7 +70,11 @@ def copy_runtime_payload(payload: Path) -> None:
     """
 
     shutil.copy2(ROOT / "web_server.py", payload / "web_server.py")
-    shutil.copy2(ROOT / "requirements.txt", payload / "requirements.txt")
+    # Linux 服务器只安装运行依赖。仓库根 requirements.txt 还包含 PyInstaller 等开发、
+    # 打包依赖，并通过 ``-r requirements-runtime.txt`` 间接引用运行清单；如果直接复制
+    # 前者，补丁暂存目录会因缺少被引用文件而安装失败，也会给服务器引入无关工具。
+    # 与完整 Linux 部署包保持一致，把锁定的运行清单作为包内 requirements.txt。
+    shutil.copy2(RUNTIME_REQUIREMENTS, payload / "requirements.txt")
     shutil.copytree(
         ROOT / "web_backend",
         payload / "web_backend",
@@ -159,7 +164,7 @@ def add_to_tar(archive: tarfile.TarFile, source: Path, arcname: str) -> None:
     archive.add(source, arcname=arcname, recursive=True, filter=normalize)
 
 
-def build(output_dir: Path, build_date: str) -> tuple[Path, Path]:
+def build(output_dir: Path, build_date: str, revision: str = "") -> tuple[Path, Path]:
     """在隔离临时目录中组装补丁，返回压缩包与外部校验文件路径。
 
     包内 ``SHA256SUMS`` 用于升级前逐文件验真；同名 ``.sha256`` 文件用于上传后验证整个
@@ -167,7 +172,8 @@ def build(output_dir: Path, build_date: str) -> tuple[Path, Path]:
     """
 
     version = read_version()
-    package_name = f"fyt-linux-upgrade-patch-v{version}-{build_date}"
+    revision_suffix = f"-{revision}" if revision else ""
+    package_name = f"fyt-linux-upgrade-patch-v{version}-{build_date}{revision_suffix}"
     archive_path = output_dir / f"{package_name}.tar.gz"
     checksum_path = output_dir / f"{package_name}.tar.gz.sha256"
 
@@ -223,11 +229,20 @@ def main() -> int:
         default=DIST_DIR,
         help="输出目录，默认使用项目 dist",
     )
+    parser.add_argument(
+        "--revision",
+        default="",
+        help="同日重新发布时使用的 ASCII 修订标记，例如 r2",
+    )
     args = parser.parse_args()
     if len(args.date) != 8 or not args.date.isdigit():
         parser.error("--date 必须是 YYYYMMDD 格式")
+    if args.revision and not args.revision.replace("-", "").replace("_", "").isalnum():
+        parser.error("--revision 只能包含字母、数字、短横线和下划线")
 
-    archive_path, checksum_path = build(args.output_dir.resolve(), args.date)
+    archive_path, checksum_path = build(
+        args.output_dir.resolve(), args.date, args.revision,
+    )
     print(f"补丁包：{archive_path}")
     print(f"校验文件：{checksum_path}")
     print(f"SHA-256：{sha256(archive_path)}")

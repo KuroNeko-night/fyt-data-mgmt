@@ -80,6 +80,7 @@ def canonical_kind(value: object) -> str:
         "attendance_archive.run": "attendance_archive",
         "pivot.run": "pivot",
         "purchase.run": "purchase",
+        "shipping_review.run": "shipping_review",
         "delivery.run": "delivery",
         "supplier_batch.run": "supplier_batch",
         "purchase_plan.run": "purchase_plan",

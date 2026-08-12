@@ -50,8 +50,15 @@ def detect_uncached_formula(
         return set()
     formula_book = value_book = None
     try:
-        formula_book = openpyxl.load_workbook(path, data_only=False, read_only=True)
-        value_book = openpyxl.load_workbook(path, data_only=True, read_only=True)
+        # 公式缓存检查只读取工作表单元格。部分业务工作簿会携带数百个外部链接，
+        # openpyxl 默认恢复这些链接时会解析大量 externalLink XML，既耗时又占内存；
+        # 它们不参与公式文本与缓存值的比较，因此必须显式跳过。
+        formula_book = openpyxl.load_workbook(
+            path, data_only=False, read_only=True, keep_links=False,
+        )
+        value_book = openpyxl.load_workbook(
+            path, data_only=True, read_only=True, keep_links=False,
+        )
         columns: set[int] = set()
         for sheet_name in _formula_sheets(formula_book, sheet):
             columns.update(
@@ -132,17 +139,24 @@ def load_workbook_safe(path: str, **kwargs):
 
 
 def load_data_only(path: str, **kwargs):
-    """以 data_only 模式加载工作簿，并跳过不需要的透视缓存。"""
+    """以 data_only 模式加载工作簿，并跳过不参与业务计算的缓存与外部链接。"""
 
+    # data_only 调用方只消费当前文件已保存的单元格结果，不维护外部链接关系。
+    # 使用 setdefault 保留少数明确需要外部链接的未来调用方主动覆盖的能力。
+    kwargs.setdefault("keep_links", False)
     with skip_pivot_cache_parse():
         return load_workbook_safe(path, data_only=True, **kwargs)
 
 
 def load_data_only_stream(path: str):
-    """以只读模式打开大表，并重置可能错误的工作表 dimension 声明。"""
+    """以只读模式打开大表，跳过外部链接并修复错误的 dimension 声明。"""
 
     with skip_pivot_cache_parse():
-        workbook = load_workbook_safe(path, data_only=True, read_only=True)
+        # 某些评审表实际只有数百行，却内嵌数百个外部工作簿链接。默认恢复链接会让
+        # 一个几 MB 的文件耗时数分钟并占用近 GB 内存；业务计算不使用这些关系。
+        workbook = load_workbook_safe(
+            path, data_only=True, read_only=True, keep_links=False,
+        )
     try:
         for worksheet in workbook.worksheets:
             reset = getattr(worksheet, "reset_dimensions", None)

@@ -31,6 +31,7 @@ FEATURE_DIRS = {
     "pdf_tools": "PDF工具",
     "excel_tools": "Excel工具",
     "purchase": "采购数对账",
+    "shipping_review": "发运评审对比",
     "delivery": "送货计划",
     "supplier_batch": "供应商批次表",
     "purchase_plan": "采购计划导入",

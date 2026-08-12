@@ -161,7 +161,7 @@ function humanSize(bytes: number) {
 
 const TRACK_FEATURE_TITLES: Record<string, string> = {
   attendance: "考勤填报", reconcile: "工时对账", arrival: "到料明细", pivot: "销售透视",
-  purchase: "采购对账", delivery: "送货计划", supplier_batch: "供应商批次表",
+  purchase: "采购对账", shipping_review: "发运评审对比", delivery: "送货计划", supplier_batch: "供应商批次表",
   purchase_plan: "采购计划导入", invoice: "发票统计", rename: "批量重命名",
   text: "文本工具", pdf: "PDF 工具", excel: "Excel 工具", compare: "表格比对", currency: "金额大写",
 };

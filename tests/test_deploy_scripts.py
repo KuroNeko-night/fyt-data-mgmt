@@ -92,6 +92,19 @@ class DeployScriptTests(unittest.TestCase):
         self.assertIn('program_paths+=(web_backend)', patch_script)
         self.assertIn('collect_submodules("web_backend")', pyinstaller_spec)
 
+    def test_linux_upgrade_patch_uses_runtime_requirements_only(self):
+        """增量补丁必须与完整 Linux 包一致，只部署锁定的运行依赖。"""
+
+        source = (ROOT / "scripts" / "build_linux_upgrade_patch.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('RUNTIME_REQUIREMENTS = ROOT / "requirements-runtime.txt"', source)
+        self.assertIn('shutil.copy2(RUNTIME_REQUIREMENTS, payload / "requirements.txt")', source)
+        self.assertNotIn(
+            'shutil.copy2(ROOT / "requirements.txt", payload / "requirements.txt")',
+            source,
+        )
+
     def test_smoke_script_targets_dist_bundle(self):
         """部署冒烟必须执行 dist 中的真实交付物，并覆盖新增对账单桥接动作。"""
 

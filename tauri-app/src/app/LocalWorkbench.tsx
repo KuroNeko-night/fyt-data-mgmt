@@ -12,7 +12,7 @@ import type { NavItem } from "../data/navigation";
 import { bridgeRequest, isTauriRuntime, syncRuntimeSettings } from "../lib/bridge";
 import type { AppSettings, HealthInfo, LibrarySummary, TaskResult } from "../lib/bridge";
 import { AboutPage, CurrencyPage, HomePage, SettingsPage, TaskCenterPage } from "../pages/pages";
-import { ArrivalPage, AttendancePage, AttendanceArchivePage, DeliveryPage, InvoicePage, PivotPage, PurchasePage, PurchasePlanPage, ReconcilePage, ReconcileStatementPage, SupplierBatchPage } from "../pages/business-pages";
+import { ArrivalPage, AttendancePage, AttendanceArchivePage, DeliveryPage, InvoicePage, PivotPage, PurchasePage, PurchasePlanPage, ReconcilePage, ReconcileStatementPage, ShippingReviewPage, SupplierBatchPage } from "../pages/business-pages";
 import { ComparePage, ExcelToolsPage, PdfPage, RenamePage, TextPage } from "../pages/tool-pages";
 import { DataLibraryPage, CatalogPage, BatchTrackPage, ReportPage, MappingPage, TemplatePage } from "../pages/data-pages";
 import AppSidebar from "./AppSidebar";
@@ -36,6 +36,7 @@ function renderPage(activeItem: NavItem, navigate: (key: string) => void, librar
     case "arrival": return <ArrivalPage />;
     case "pivot": return <PivotPage />;
     case "purchase": return <PurchasePage />;
+    case "shipping_review": return <ShippingReviewPage />;
     case "delivery": return <DeliveryPage />;
     case "supplier_batch": return <SupplierBatchPage />;
     case "purchase_plan": return <PurchasePlanPage />;

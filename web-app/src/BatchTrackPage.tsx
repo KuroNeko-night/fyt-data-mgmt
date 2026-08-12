@@ -6,7 +6,7 @@ import PageHeader from "./ui/PageHeader";
 const ACTION_LABELS: Record<string, string> = {
   "attendance.run": "考勤填报", "reconcile.run": "工时对账", "web.reconcile.review": "工时对账复核",
   "web.arrival": "到料明细", "pivot.run": "销售透视", "web.pivot.review": "销售透视复核",
-  "purchase.run": "采购对账", "delivery.run": "送货计划", "supplier_batch.run": "供应商批次表",
+  "purchase.run": "采购对账", "shipping_review.run": "发运评审对比", "delivery.run": "送货计划", "supplier_batch.run": "供应商批次表",
   "web.supplier_batch.review": "供应商批次表复核", "purchase_plan.run": "采购计划导入",
   "web.invoice": "发票统计", "rename.apply": "批量重命名", "text.transform": "文本工具",
   "pdf.run": "PDF 工具", "excel.run": "Excel 工具", "web.compare": "表格比对",

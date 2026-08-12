@@ -79,6 +79,12 @@ const SPECS: Record<string, FeatureSpec> = {
     { key: "name1", label: "我方名称", kind: "text", value: "我方" },
     { key: "name2", label: "对方名称", kind: "text", value: "供方" },
   ] },
+  shipping_review: { action: "shipping_review.run", runLabel: "生成对比报告", files: [
+    { key: "package_plan", label: "包装日计划", description: "系统会自动排除 BOX 状态为“已作废”的记录，并按物料号、物料描述汇总实际包装数量。", accept: ".xlsx,.xlsm" },
+    { key: "review_workbook", label: "发运评审表", description: "默认读取文件保存时的活动工作表，并按 Part No 汇总 Chinese Name 与总数。", accept: ".xlsx,.xlsm" },
+  ], options: [
+    { key: "review_sheet", label: "评审工作表（可选）", kind: "text", value: "", placeholder: "留空使用文件保存时的活动工作表" },
+  ] },
   delivery: { action: "delivery.run", runLabel: "生成送货计划", files: [
     { key: "file1", label: "物料清单", description: "送货计划的主要物料来源。", accept: ".xlsx,.xlsm,.xls" },
     { key: "file2", label: "供应商清单", description: "用于匹配供应商（可选）。", optional: true, accept: ".xlsx,.xlsm,.xls" },

@@ -28,6 +28,7 @@ from .business_result_operations import (
     _present_purchase_diff,
     _present_purchase_plan,
     _present_reconcile,
+    _present_shipping_review,
     _present_supplier_batch,
 )
 from .business_result_finance import (
@@ -45,6 +46,7 @@ _PRESENTERS: dict[str, Callable[[object, int], dict[str, object] | None]] = {
     "reconcile": _present_reconcile,
     "pivot": _present_pivot,
     "purchase": _present_purchase,
+    "shipping_review": _present_shipping_review,
     "delivery": _present_delivery,
     "supplier_batch": _present_supplier_batch,
     "purchase_plan": _present_purchase_plan,

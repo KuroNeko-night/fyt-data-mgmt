@@ -417,6 +417,87 @@ def _present_purchase(value: object, limit: int) -> dict[str, object] | None:
         ),
         "notices": [],
     }
+
+
+def _present_shipping_review(value: object, limit: int) -> dict[str, object] | None:
+    """生成发运评审对比投影，在线展示数量差异、名称问题和单侧物料。"""
+
+    result = unwrap_result(value)
+    counts = _mapping(result.get("counts"))
+    details = [item for item in _sequence(result.get("details")) if isinstance(item, Mapping)]
+    if not counts and not details:
+        return None
+    total = _integer(counts.get("total_materials"), len(details))
+    full_match = _integer(counts.get("full_match"))
+    quantity_match = _integer(counts.get("quantity_match"))
+    quantity_diff = _integer(counts.get("quantity_diff"))
+    name_issues = _integer(counts.get("name_issues"))
+    only_package = _integer(counts.get("only_package"))
+    only_review = _integer(counts.get("only_review"))
+    obsolete = _integer(result.get("obsolete_rows"))
+    exceptions = [item for item in details if _text(item.get("status")) != "一致"]
+    match_rate = _ratio(full_match, max(total, 1))
+    return {
+        "kind": "shipping_review",
+        "title": "发运评审对比结果",
+        "summary": (
+            f"共核对 {total} 个物料，完整一致 {full_match} 个，"
+            f"数量差异 {quantity_diff} 个，名称问题 {name_issues} 个。"
+        ),
+        "metrics": [
+            _metric("total", "核对物料", total, tone="info"),
+            _metric("full_match", "完整一致", full_match, note=f"一致率 {match_rate:.1f}%", tone="success" if full_match == total else "warning"),
+            _metric("quantity_match", "数量一致", quantity_match, tone="success" if quantity_diff == 0 else "warning"),
+            _metric("quantity_diff", "数量差异", quantity_diff, tone="danger" if quantity_diff else "success"),
+            _metric("name_issues", "名称问题", name_issues, tone="warning" if name_issues else "success"),
+            _metric("one_side", "单侧物料", only_package + only_review, tone="danger" if only_package + only_review else "success"),
+            _metric("obsolete", "已排除作废", obsolete, tone="info"),
+        ],
+        "quality": _quality(
+            round(match_rate),
+            "评分表示物料数量、名称与双方覆盖的完整一致比例，不代表生产或交付绩效。",
+            [
+                _quality_check(
+                    "success" if quantity_diff == 0 else "warning",
+                    "数量核对",
+                    "双方汇总数量全部一致。" if quantity_diff == 0 else f"有 {quantity_diff} 个物料汇总数量不一致。",
+                ),
+                _quality_check(
+                    "success" if name_issues == 0 else "warning",
+                    "名称核对",
+                    "双方名称全部一致。" if name_issues == 0 else f"有 {name_issues} 个物料存在名称缺失或不一致。",
+                ),
+                _quality_check(
+                    "success" if only_package + only_review == 0 else "warning",
+                    "双方覆盖",
+                    "两侧物料范围完全对应。" if only_package + only_review == 0 else f"有 {only_package + only_review} 个物料只出现在一侧。",
+                ),
+            ],
+        ),
+        "parameters": [
+            _parameter("package_sheet", "包装工作表", result.get("package_sheet")),
+            _parameter("review_sheet", "评审工作表", result.get("review_sheet")),
+        ],
+        "sections": [_section(
+            "exceptions",
+            "需要关注的物料",
+            [
+                ("code", "物料号"),
+                ("package_name", "包装物料描述"),
+                ("review_name", "评审中文名称"),
+                ("package_quantity", "包装数量"),
+                ("review_quantity", "评审总数"),
+                ("difference", "差异"),
+                ("status", "状态"),
+            ],
+            exceptions,
+            description="完整明细、包装透视和已作废 BOX 审计均保存在正式报告中。",
+            limit=limit,
+        )] if exceptions else [],
+        "notices": ["本次所有物料的数量和名称均完全一致。"] if not exceptions else [],
+    }
+
+
 def _present_delivery(value: object, limit: int) -> dict[str, object] | None:
     """生成送货计划投影，聚焦供应商补全和参考计划字段覆盖。
 

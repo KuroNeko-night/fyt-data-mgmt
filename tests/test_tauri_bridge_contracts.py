@@ -146,6 +146,15 @@ class TestTauriBridgeContracts(unittest.TestCase):
             self.assertEqual(run.call_args.kwargs["name2"], "供应商")
             self.assertTrue(callable(run.call_args.kwargs["progress"]))
 
+        with mock.patch("core.shipping_review_core.run", return_value={"out_dir": self.temp.name}) as run:
+            self.dispatch("shipping_review.run", {
+                "package_plan": [self.file_a], "review_workbook": [self.file_b],
+                "package_sheet": "数据", "review_sheet": "评审A"})
+            self.assertEqual(run.call_args.args[:2], (self.file_a, self.file_b))
+            self.assertEqual(run.call_args.kwargs["package_sheet"], "数据")
+            self.assertEqual(run.call_args.kwargs["review_sheet"], "评审A")
+            self.assertTrue(callable(run.call_args.kwargs["progress"]))
+
         with mock.patch("core.delivery_core.analyze", return_value={"sheets": ["数据"]}):
             self.assertEqual(self.dispatch("delivery.analyze", {
                 "path": [self.file_a], "sheet": "数据"})["sheets"], ["数据"])

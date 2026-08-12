@@ -21,7 +21,10 @@ class StaticFileDependencies:
 def _cache_control(relative: str, candidate: Path) -> str:
     """按入口页、哈希资源和固定名称资源返回缓存策略。"""
     if candidate.name == "index.html":
-        return "no-store, must-revalidate"  # 入口页引用带哈希资源，缓存旧 HTML 会造成部署后白屏。
+        # 入口页引用带哈希资源，缓存旧 HTML 会造成部署后白屏。no-transform 同时禁止
+        # Cloudflare 等中间代理改写 HTML 并注入 Bot 检测脚本；系统不依赖这类脚本，
+        # 避免其 deprecated API 警告污染客户浏览器的开发者工具。
+        return "no-store, must-revalidate, no-transform"
     if relative.startswith("assets/"):
         return "public, max-age=31536000, immutable"  # Vite 文件名含内容哈希，可安全永久缓存。
     return "public, max-age=604800"

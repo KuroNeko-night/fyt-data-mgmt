@@ -5,10 +5,12 @@ import re
 import tempfile
 import unittest
 import zipfile
+from unittest import mock
 
 import openpyxl
 
 from core import common_core
+from core import common_workbook
 from core import pivot_core
 
 
@@ -68,6 +70,26 @@ class TestLargeWorkbookStreaming(unittest.TestCase):
             wb.close()
         self.assertEqual(len(rows), 121)
         self.assertEqual(rows[-1][1], "M0120")
+
+    def test_read_helpers_skip_external_link_relationships(self):
+        """只读业务加载和公式检查不得解析与当前计算无关的外部链接。"""
+
+        with mock.patch.object(
+            common_workbook.openpyxl,
+            "load_workbook",
+            wraps=openpyxl.load_workbook,
+        ) as loader:
+            workbook = common_core.load_data_only_stream(self.path)
+            workbook.close()
+            common_workbook.detect_uncached_formula(self.path)
+
+        self.assertGreaterEqual(loader.call_count, 3)
+        for call in loader.call_args_list:
+            self.assertIs(
+                call.kwargs.get("keep_links"),
+                False,
+                "只读 Excel 路径恢复了外部链接，会造成无意义的性能和内存开销",
+            )
 
     def test_pivot_analysis_keeps_all_rows(self):
         """销售表分析使用流式路径时不得因 A1 范围声明丢失业务行。"""

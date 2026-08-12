@@ -234,6 +234,33 @@ class BusinessResultCoreTests(unittest.TestCase):
         self.assertEqual(conflict["difference"], "2")
         self.assertEqual(presentation["sections"][0]["columns"][3]["label"], "峰运通数量")
 
+    def test_shipping_review_projection_lists_exceptions(self):
+        """发运评审投影应展示差异指标和物料明细，不让前端重新读取报告。"""
+
+        presentation = business_result_core.present("shipping_review.run", {
+            "package_sheet": "包装日计划",
+            "review_sheet": "评审A",
+            "obsolete_rows": 2,
+            "counts": {
+                "total_materials": 3,
+                "full_match": 2,
+                "quantity_match": 2,
+                "quantity_diff": 1,
+                "name_issues": 0,
+                "only_package": 0,
+                "only_review": 0,
+            },
+            "details": [{
+                "code": "A-01", "package_name": "螺栓", "review_name": "螺栓",
+                "package_quantity": 10, "review_quantity": 8, "difference": 2,
+                "status": "数量差异",
+            }],
+        })
+        self.assertEqual(presentation["kind"], "shipping_review")
+        self.assertEqual(presentation["metrics"][3]["value"], "1")
+        self.assertEqual(presentation["sections"][0]["rows"][0]["code"], "A-01")
+        self.assertEqual(presentation["parameters"][1]["value"], "评审A")
+
     def test_reconcile_statement_projection_hides_path(self):
         """对账单结果只展示文件名，不能把服务器绝对路径暴露给前端。"""
 

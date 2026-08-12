@@ -79,7 +79,7 @@ WORKSHOP_ISSUE_TEMPLATE_FIELDS = {
 }  # Core 只维护业务字段；Web 在此补充 SQLite 列定义，避免两处重复维护名称和长度。
 
 WEB_ACTIONS = {
-    "attendance.run", "reconcile.run", "pivot.run", "purchase.run",
+    "attendance.run", "reconcile.run", "pivot.run", "purchase.run", "shipping_review.run",
     "delivery.run", "supplier_batch.run", "purchase_plan.run", "purchase_plan.diff", "rename.apply", "pdf.run",
     "excel.run", "currency.convert", "text.transform", "invoice_match.run", "attendance_archive.run",
     "reconcile_statement.scan", "reconcile_statement.build", "web.arrival", "web.invoice", "web.compare",
@@ -100,6 +100,7 @@ FEATURES = [
     {"key": "arrival", "title": "到料明细", "group": "业务", "description": "上传送货计划，自动统计到料与未收料"},
     {"key": "pivot", "title": "销售透视", "group": "业务", "description": "上传采购明细，自动清洗汇总成透视表"},
     {"key": "purchase", "title": "采购对账", "group": "业务", "description": "上传双方采购表，逐行比对数量差异"},
+    {"key": "shipping_review", "title": "发运评审对比", "group": "业务", "description": "过滤作废 BOX，汇总包装数量并与发运评审表逐项核对"},
     {"key": "delivery", "title": "送货计划", "group": "业务", "description": "上传物料与供应商清单，自动生成送货计划"},
     {"key": "supplier_batch", "title": "供应商批次表", "group": "业务", "description": "上传批次清单，按供应商生成采购明细"},
     {"key": "purchase_plan", "title": "采购计划导入", "group": "业务", "description": "上传辅料清单与模板，生成批次采购计划"},

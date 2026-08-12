@@ -260,6 +260,41 @@ export function PurchasePage() {
   </section></div>;
 }
 
+interface ShippingReviewResult {
+  report_path: string;
+  out_dir: string;
+  package_sheet: string;
+  review_sheet: string;
+  source_rows: number;
+  kept_rows: number;
+  obsolete_rows: number;
+  package_materials: number;
+  review_materials: number;
+  counts: { total_materials: number; full_match: number; quantity_diff: number; name_issues: number; only_package: number; only_review: number };
+}
+
+/** 过滤包装日计划中的已作废 BOX，按物料汇总后与发运评审活动页签逐项核对。 */
+export function ShippingReviewPage() {
+  const [packagePlan, setPackagePlan] = useState<string[]>([]);
+  const [reviewWorkbook, setReviewWorkbook] = useState<string[]>([]);
+  const [packageSheet, setPackageSheet] = useState("");
+  const [reviewSheet, setReviewSheet] = useState("");
+  const packageSheets = useSheets(packagePlan[0] || "");
+  const reviewSheets = useSheets(reviewWorkbook[0] || "");
+  const task = useBridgeTask<ShippingReviewResult>();
+  const changePackage = (next: string[]) => { setPackagePlan(next); setPackageSheet(""); task.reset(); };
+  const changeReview = (next: string[]) => { setReviewWorkbook(next); setReviewSheet(""); task.reset(); };
+  return <div className="fyt-page-flow fyt-wide-flow"><section className="fyt-feature-form">
+    <FilePickerField label="包装日计划" description="系统会排除 BOX 状态为“已作废”的记录，再按物料号与物料描述汇总实际包装数量。" value={packagePlan} onChange={changePackage} filters={excelFilters} />
+    <SheetSelect label="包装工作表" sheets={packageSheets} value={packageSheet} onChange={(next) => { setPackageSheet(next); task.reset(); }} />
+    <FilePickerField label="发运评审表" description="默认读取文件保存时的活动工作表，并按 Part No 汇总 Chinese Name 与总数。" value={reviewWorkbook} onChange={changeReview} filters={excelFilters} />
+    {reviewSheets.length > 1 ? <FieldRow label="评审工作表" hint="保持“文件活动工作表”即可按文件保存状态读取"><select value={reviewSheet} onChange={(event) => { setReviewSheet(event.target.value); task.reset(); }}><option value="">文件活动工作表</option>{reviewSheets.map((sheet) => <option key={sheet}>{sheet}</option>)}</select></FieldRow> : null}
+    <TaskPanel busy={task.busy} error={task.error} logs={task.logs} progress={task.progress} onCancel={() => void task.cancel()} canRun={Boolean(packagePlan.length && reviewWorkbook.length)} runLabel="生成对比报告" onRun={() => void task.run("shipping_review.run", { package_plan: packagePlan, review_workbook: reviewWorkbook, package_sheet: packageSheet, review_sheet: reviewSheet })} outDir={task.outDir} outputPath={task.result?.report_path}>
+      {task.presentation ? <BusinessResultView presentation={task.presentation} /> : task.result ? <ResultSummary><strong>完整一致 {task.result.counts.full_match} / {task.result.counts.total_materials} 项</strong><span>数量差异 {task.result.counts.quantity_diff} · 名称问题 {task.result.counts.name_issues} · 已排除作废 {task.result.obsolete_rows} 行</span></ResultSummary> : null}
+    </TaskPanel>
+  </section></div>;
+}
+
 interface DeliveryResult { plan_path: string; out_dir: string; rows: number; matched: number; missing: unknown[]; order_type: string; case_hit: number; case_used: boolean; supplier_used: boolean; }
 
 /**

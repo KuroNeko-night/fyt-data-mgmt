@@ -21,6 +21,7 @@ export const NAV_ITEMS: NavItem[] = [
   { key: "arrival", group: "销售", title: "到料明细表", description: "上传送货计划，统计到料与未收料", icon: "truck" },
   { key: "pivot", group: "销售", title: "销售表透视", description: "上传采购明细，汇总成透视表", icon: "chart" },
   { key: "purchase", group: "销售", title: "采购数对账", description: "上传双方采购表，逐行比对数量差异", icon: "compare" },
+  { key: "shipping_review", group: "销售", title: "发运评审对比", description: "过滤作废 BOX，汇总包装数量并与评审表核对", icon: "compare" },
   { key: "delivery", group: "销售", title: "送货计划表", description: "上传物料与供应商清单，生成送货计划", icon: "route" },
   { key: "supplier_batch", group: "销售", title: "供应商批次表", description: "上传批次清单，按供应商生成采购明细", icon: "excel" },
   { key: "purchase_plan", group: "销售", title: "采购计划导入", description: "上传辅料清单与模板，生成批次采购计划", icon: "route" },
@@ -45,5 +46,5 @@ export const NAV_ITEMS: NavItem[] = [
 
 // 工作台只从完整导航中挑选高频入口，标题、说明和图标继续复用同一对象。
 export const HOME_SHORTCUTS = NAV_ITEMS.filter((item) =>
-  ["attendance", "reconcile", "arrival", "pivot", "purchase", "delivery", "supplier_batch", "library", "invoice", "currency"].includes(item.key),
+  ["attendance", "reconcile", "arrival", "pivot", "purchase", "shipping_review", "delivery", "supplier_batch", "library", "invoice", "currency"].includes(item.key),
 );

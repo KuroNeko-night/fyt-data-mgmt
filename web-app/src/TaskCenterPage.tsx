@@ -22,7 +22,7 @@ const labels: Record<string, string> = {
 };
 
 const actionLabels: Record<string, string> = {
-  "attendance.run": "考勤填报", "reconcile.run": "工时对账", "web.reconcile.review": "工时对账复核", "web.arrival": "到料明细", "pivot.run": "销售透视", "web.pivot.review": "销售透视复核", "purchase.run": "采购对账", "delivery.run": "送货计划", "supplier_batch.run": "供应商批次表", "web.supplier_batch.review": "供应商批次表复核", "library.import": "数据资料归档", "web.invoice": "发票台账", "web.invoice.review": "发票复核", "rename.apply": "批量重命名", "text.transform": "文本处理", "pdf.run": "PDF 文件处理", "excel.run": "Excel 表格处理", "web.compare": "表格比对", "web.compare.review": "表格比对复核", "currency.convert": "金额大写转换",
+  "attendance.run": "考勤填报", "reconcile.run": "工时对账", "web.reconcile.review": "工时对账复核", "web.arrival": "到料明细", "pivot.run": "销售透视", "web.pivot.review": "销售透视复核", "purchase.run": "采购对账", "shipping_review.run": "发运评审对比", "delivery.run": "送货计划", "supplier_batch.run": "供应商批次表", "web.supplier_batch.review": "供应商批次表复核", "library.import": "数据资料归档", "web.invoice": "发票台账", "web.invoice.review": "发票复核", "rename.apply": "批量重命名", "text.transform": "文本处理", "pdf.run": "PDF 文件处理", "excel.run": "Excel 表格处理", "web.compare": "表格比对", "web.compare.review": "表格比对复核", "currency.convert": "金额大写转换",
 };
 
 const FILTER_OPTIONS: Array<{ value: TaskFilter; label: string }> = [

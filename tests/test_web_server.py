@@ -142,7 +142,10 @@ class WebServerTests(unittest.TestCase):
         (web_server.STATIC_ROOT / "logo.txt").write_text("FYT", encoding="utf-8")
 
         with urllib.request.urlopen(self.base + "/", timeout=10) as response:
-            self.assertEqual(response.headers["Cache-Control"], "no-store, must-revalidate")
+            self.assertEqual(
+                response.headers["Cache-Control"],
+                "no-store, must-revalidate, no-transform",
+            )
             self.assertIn("峰运通", response.read().decode("utf-8"))
         with urllib.request.urlopen(self.base + "/assets/app-123.js", timeout=10) as response:
             self.assertEqual(
@@ -152,7 +155,10 @@ class WebServerTests(unittest.TestCase):
         with urllib.request.urlopen(self.base + "/logo.txt", timeout=10) as response:
             self.assertEqual(response.headers["Cache-Control"], "public, max-age=604800")
         with urllib.request.urlopen(self.base + "/client/route", timeout=10) as response:
-            self.assertEqual(response.headers["Cache-Control"], "no-store, must-revalidate")
+            self.assertEqual(
+                response.headers["Cache-Control"],
+                "no-store, must-revalidate, no-transform",
+            )
             self.assertIn("峰运通", response.read().decode("utf-8"))
 
     def test_text_task_and_upload_download(self):

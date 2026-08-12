@@ -54,7 +54,7 @@ class TestResolveOutputDir(unittest.TestCase):
 
     def test_feature_dirs_cover_all_features(self):
         for key in ("attendance", "reconcile", "arrival", "pivot",
-                    "purchase", "delivery", "invoice", "excel_tools", "pdf_tools"):
+                    "purchase", "shipping_review", "delivery", "invoice", "excel_tools", "pdf_tools"):
             self.assertIn(key, paths.FEATURE_DIRS)
 
     def test_timestamp_format(self):

@@ -208,7 +208,7 @@ def _health(_payload):
         "platform": sys.platform,
         "project_root": os.path.dirname(os.path.dirname(os.path.abspath(__file__))),  # 仅桌面本机诊断使用，Web 不直接暴露此响应。
         "features": [
-            "attendance", "reconcile", "arrival", "pivot", "purchase",
+            "attendance", "reconcile", "arrival", "pivot", "purchase", "shipping_review",
             "delivery", "supplier_batch", "purchase_plan", "library", "mappings", "templates", "invoice",
             "currency", "rename", "text", "pdf", "excel", "compare",
             "settings", "tasks",
@@ -505,6 +505,26 @@ def _purchase_run(payload):
         name1=str((payload or {}).get("name1") or "我方"),
         name2=str((payload or {}).get("name2") or "供方"), log=log,
         progress=progress))
+
+
+def _shipping_review_run(payload):
+    """执行包装日计划与发运评审表的汇总对比。"""
+
+    from . import shipping_review_core
+    package_plan = _payload_file(payload, "package_plan")
+    review_workbook = _payload_file(payload, "review_workbook")
+    return _task(
+        "shipping_review",
+        "发运评审对比",
+        lambda log, progress: shipping_review_core.run(
+            package_plan,
+            review_workbook,
+            package_sheet=(payload or {}).get("package_sheet") or None,
+            review_sheet=(payload or {}).get("review_sheet") or None,
+            log=log,
+            progress=progress,
+        ),
+    )
 
 
 def _delivery_analyze(payload):
@@ -993,6 +1013,7 @@ _ACTIONS = {
     "pivot.analyze": _pivot_analyze,
     "pivot.run": _pivot_run,
     "purchase.run": _purchase_run,
+    "shipping_review.run": _shipping_review_run,
     "delivery.analyze": _delivery_analyze,
     "delivery.run": _delivery_run,
     "supplier_batch.analyze": _supplier_batch_analyze,
