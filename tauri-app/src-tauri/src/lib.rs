@@ -10,7 +10,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{ChildStderr, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Mutex, OnceLock};
 use std::thread;
@@ -106,6 +106,44 @@ fn make_command(executable: &Path, root: &Path) -> Command {
     command
 }
 
+/// 在独立线程消费 Python stderr，并把带协议前缀的行转成结构化事件。
+///
+/// 必须持续读取 stderr，否则 Python 大量输出日志时会填满操作系统管道，导致业务子进程
+/// 无法继续写入或退出。普通文本只留在返回字符串中，避免开发诊断信息直接出现在客户界面。
+fn spawn_stderr_reader(
+    stderr: Option<ChildStderr>,
+    event_sender: Option<mpsc::Sender<Value>>,
+) -> thread::JoinHandle<String> {
+    thread::spawn(move || {
+        let mut plain = Vec::new();
+        if let Some(stream) = stderr {
+            for line in BufReader::new(stream).lines().map_while(Result::ok) {
+                if let Some(raw) = line.strip_prefix("__FYT_EVENT__") {
+                    // 单条事件损坏或前端关闭接收端时只丢弃该事件，不中断核心业务。
+                    if let (Some(sender), Ok(event)) =
+                        (event_sender.as_ref(), serde_json::from_str::<Value>(raw))
+                    {
+                        let _ = sender.send(event);
+                    }
+                } else {
+                    plain.push(line); // 失败时并入稳定错误文本，正常任务不向用户展示调试输出。
+                }
+            }
+        }
+        plain.join("\n")
+    })
+}
+
+/// 从可取消进程表移除已结束请求；清理失败不覆盖业务结果，因为进程已经退出。
+fn remove_active_process(request_id: &str) {
+    if request_id.is_empty() {
+        return;
+    }
+    if let Ok(mut processes) = active_processes().lock() {
+        processes.remove(request_id);
+    }
+}
+
 ///
 /// 同步执行一次桥接请求，并可把 stderr 中的结构化事件转发给调用方。
 ///
@@ -138,25 +176,7 @@ fn bridge_request_sync_with_events(
             .map_err(|_| "任务进程表已损坏".to_string())?
             .insert(request_id.clone(), child_id);
     }
-    let stderr = child.stderr.take();
-    let stderr_thread = thread::spawn(move || {
-        let mut plain = Vec::new();
-        if let Some(stream) = stderr {
-            for line in BufReader::new(stream).lines().map_while(Result::ok) {
-                if let Some(raw) = line.strip_prefix("__FYT_EVENT__") {
-                    // 事件解析或接收端关闭时丢弃单条事件，不中断仍在运行的业务子进程。
-                    if let (Some(sender), Ok(event)) =
-                        (event_sender.as_ref(), serde_json::from_str::<Value>(raw))
-                    {
-                        let _ = sender.send(event);
-                    }
-                } else {
-                    plain.push(line); // 普通 stderr 不实时展示，失败时再并入稳定错误文本。
-                }
-            }
-        }
-        plain.join("\n")
-    });
+    let stderr_thread = spawn_stderr_reader(child.stderr.take(), event_sender);
     child
         .stdin
         .take()
@@ -167,11 +187,7 @@ fn bridge_request_sync_with_events(
     let output = child
         .wait_with_output()
         .map_err(|error| format!("等待 Python 核心失败：{error}"))?;
-    if !request_id.is_empty() {
-        if let Ok(mut processes) = active_processes().lock() {
-            processes.remove(&request_id);
-        }
-    }
+    remove_active_process(&request_id);
     let stderr = stderr_thread.join().unwrap_or_else(|_| "读取 Python 错误输出失败".into());
     let envelope: BridgeEnvelope = serde_json::from_slice(&output.stdout).map_err(|error| {
         format!("Python 核心返回无效 JSON：{error}；{stderr}")

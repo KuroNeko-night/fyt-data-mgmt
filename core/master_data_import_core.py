@@ -347,6 +347,104 @@ def _append_relation(
     return True
 
 
+def _sheet_cell(values: list[object], columns: dict[str, int], field: str) -> object:
+    """按已识别列读取当前行字段；短行和缺列统一视为空值。"""
+
+    index = columns.get(field)
+    return values[index] if isinstance(index, int) and index < len(values) else None
+
+
+def _collect_sheet_relations(
+    sheet_name: str,
+    layout: dict[str, object],
+    rows: Iterable[tuple[int, list[object]]],
+    relations: dict[tuple[str, str], dict[str, list[dict[str, object]]]],
+) -> tuple[int, dict[str, object]]:
+    """扫描一个已识别页签并写入关系池，返回有效行数和页签审计摘要。"""
+
+    columns = layout["columns"]
+    header_row = int(layout["header_row"])
+    sheet_rows = 0
+    for row_number, values in rows:
+        if row_number <= header_row:
+            continue
+
+        used = False
+        material_code = _sheet_cell(values, columns, "material_code")
+        if _text(material_code):
+            # 同一物料的名称、规格、单位和供应商关系分别记录，缺一列不影响其他关系学习。
+            used |= _append_relation(
+                relations, "material_name", material_code,
+                _sheet_cell(values, columns, "material_name"), sheet_name, row_number,
+            )
+            used |= _append_relation(
+                relations, "material_spec", material_code,
+                _sheet_cell(values, columns, "material_spec"), sheet_name, row_number,
+            )
+            used |= _append_relation(
+                relations, "material_unit", material_code,
+                _sheet_cell(values, columns, "material_unit"), sheet_name, row_number,
+            )
+            used |= _append_relation(
+                relations, "material_supplier", material_code,
+                _sheet_cell(values, columns, "supplier_name"), sheet_name, row_number,
+            )
+        # 供应商代码关系独立于材料关系，供应商表只需提供名称和编码即可被学习。
+        used |= _append_relation(
+            relations,
+            "supplier_code",
+            _sheet_cell(values, columns, "supplier_name"),
+            _sheet_cell(values, columns, "supplier_code"),
+            sheet_name,
+            row_number,
+        )
+        if used:
+            sheet_rows += 1
+    return sheet_rows, {
+        "sheet": sheet_name,
+        "header_row": header_row,
+        "fields": sorted(columns),
+        "recognized_rows": sheet_rows,
+    }
+
+
+def _build_candidates(
+    relations: dict[tuple[str, str], dict[str, list[dict[str, object]]]],
+    catalog: dict[str, object],
+) -> list[dict[str, object]]:
+    """根据关系池和主数据库快照生成稳定候选，集中处理冲突判定规则。"""
+
+    candidates = []
+    for (relation_type, key), value_sources in sorted(relations.items()):
+        values = sorted(value_sources)
+        current = material_catalog.relation_value(catalog, relation_type, key)
+        reasons = []
+        if len(values) > 1:
+            reasons.append("同一表格中存在多个不同值")
+        if current and any(value != current for value in values):
+            reasons.append("与正式主数据库当前值不同")
+        conflict = bool(reasons)
+        # 唯一且未与正式库冲突的关系可以预选；有冲突的关系必须经过管理员决策。
+        selected_value = values[0] if len(values) == 1 and not conflict else ""
+        candidates.append({
+            "id": _candidate_id(relation_type, key),
+            "relation_type": relation_type,
+            "relation_title": RELATION_TITLES[relation_type],
+            "key": key,
+            "values": [
+                {"value": value, "count": len(value_sources[value]), "sources": value_sources[value]}
+                for value in values
+            ],
+            "current_value": current,
+            "expected_current_value": current,
+            "conflict": conflict,
+            "conflict_reasons": reasons,
+            "selected_value": selected_value,
+            "decision": None,
+        })
+    return candidates
+
+
 def _analyze_workbook(path: str, log: Callable[[str], None] | None = None) -> dict[str, object]:
     """扫描上传工作簿，生成关系候选、冲突原因和可追溯来源。
 
@@ -371,69 +469,14 @@ def _analyze_workbook(path: str, log: Callable[[str], None] | None = None) -> di
                 "reason": "未找到可识别的材料编号或供应商编码表头",
             })
             continue
-        columns = layout["columns"]
-        header_row = int(layout["header_row"])
-        sheet_rows = 0
-        for row_number, values in rows:
-            if row_number <= header_row:
-                continue
-
-            def cell(field: str) -> object:
-                """按已识别列安全读取当前行字段，缺列或短行返回空值。"""
-                index = columns.get(field)
-                return values[index] if isinstance(index, int) and index < len(values) else None
-
-            used = False  # 一行生成任意一条关系后才计入有效行数。
-            material_code = cell("material_code")
-            if _text(material_code):
-                used |= _append_relation(relations, "material_name", material_code, cell("material_name"), sheet_name, row_number)
-                used |= _append_relation(relations, "material_spec", material_code, cell("material_spec"), sheet_name, row_number)
-                used |= _append_relation(relations, "material_unit", material_code, cell("material_unit"), sheet_name, row_number)
-                used |= _append_relation(relations, "material_supplier", material_code, cell("supplier_name"), sheet_name, row_number)
-            used |= _append_relation(
-                relations, "supplier_code", cell("supplier_name"), cell("supplier_code"),
-                sheet_name, row_number,
-            )
-            if used:
-                sheet_rows += 1
-                recognized_rows += 1
-        recognized_sheets.append({
-            "sheet": sheet_name,
-            "header_row": header_row,
-            "fields": sorted(columns),
-            "recognized_rows": sheet_rows,
-        })
+        sheet_rows, sheet_summary = _collect_sheet_relations(
+            sheet_name, layout, rows, relations,
+        )
+        recognized_rows += sheet_rows
+        recognized_sheets.append(sheet_summary)
 
     catalog = material_catalog.load()  # 仅作为当前值快照，分析阶段不写正式库。
-    candidates = []
-    for (relation_type, key), value_sources in sorted(relations.items()):
-        values = sorted(value_sources)
-        current = material_catalog.relation_value(catalog, relation_type, key)
-        reasons = []
-        if len(values) > 1:
-            reasons.append("同一表格中存在多个不同值")
-        if current and any(value != current for value in values):
-            reasons.append("与正式主数据库当前值不同")
-        conflict = bool(reasons)
-        # 无冲突的唯一候选可预选；存在任何冲突时必须由管理员明确决策。
-        selected_value = values[0] if len(values) == 1 and not conflict else ""
-        candidates.append({
-            "id": _candidate_id(relation_type, key),
-            "relation_type": relation_type,
-            "relation_title": RELATION_TITLES[relation_type],
-            "key": key,
-            "values": [
-                {"value": value, "count": len(value_sources[value]), "sources": value_sources[value]}
-                for value in values
-            ],
-            "current_value": current,
-            # 合并时用此值做乐观并发校验，防止确认后主库被其他批次改变。
-            "expected_current_value": current,
-            "conflict": conflict,
-            "conflict_reasons": reasons,
-            "selected_value": selected_value,
-            "decision": None,
-        })
+    candidates = _build_candidates(relations, catalog)
 
     if log:
         log("已识别 %d 个工作表、%d 行有效数据、%d 条对应关系。" % (

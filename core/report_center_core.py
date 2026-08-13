@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import os
+import tempfile
 from datetime import datetime, timedelta
 
 import openpyxl
@@ -82,21 +83,17 @@ def _parse_time(text: str) -> datetime | None:
         return None
 
 
-def build_report(items: list[dict[str, object]], out_path: str, range_label: str) -> int:
-    """把已筛选任务列表汇总为两页 Excel，并返回写入的明细行数。
+def _report_rows(items: list[dict[str, object]]) -> tuple[dict[str, object], dict[str, object]]:
+    """把任务记录转换为明细行和按业务模块聚合的统计。"""
 
-    每条任务提取开始时间、模块、标题、状态和结果文件数；按原始 feature 统计总量、
-    完成和失败。汇总页展示总体指标及模块分布，明细页逐条保留客户可读名称。函数
-    不创建父目录，也不执行权限或日期筛选，调用方必须先完成这些工作。
-    """
     from collections import Counter
+
     feature_stats: dict[str, Counter] = {}
     details: list[dict[str, object]] = []
     for item in items:
         feature = _text(item.get("feature")) or "其他"
         status = _text(item.get("status"))
         stats = feature_stats.setdefault(feature, Counter())
-        # Counter 缺失键自动为零，适合逐状态累加并保持输出字段简洁。
         stats["total"] += 1
         if status in DONE_STATUSES:
             stats["done"] += 1
@@ -109,10 +106,104 @@ def build_report(items: list[dict[str, object]], out_path: str, range_label: str
             "status": STATUS_TITLES.get(status, status or "未知"),
             "files": int(item.get("files") or 0),
         })
+    return feature_stats, details
+
+
+def _style_report_header(worksheet, row_index: int, count: int, *, font, fill, border) -> None:
+    """统一设置报表页签表头样式。"""
+
+    for column in range(1, count + 1):
+        cell = worksheet.cell(row_index, column)
+        cell.font = font
+        cell.fill = fill
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.border = border
+
+
+def _write_report_summary(workbook, feature_stats, details, range_label, *, border, title_font, head_font, cell_font, head_fill) -> None:
+    """写入汇总页，顶部展示总指标，下部展示模块分布。"""
+
+    summary = workbook.create_sheet("汇总")
+    for column, width in {"A": 22, "B": 14, "C": 14, "D": 14, "E": 14}.items():
+        summary.column_dimensions[column].width = width
     total = len(details)
-    # 未完成、取消和运行中只进入 total，因此成功率分母反映范围内全部任务。
     done = sum(stats["done"] for stats in feature_stats.values())
     failed = sum(stats["failed"] for stats in feature_stats.values())
+    summary.cell(1, 1, "峰运通业务报表").font = title_font
+    summary.cell(2, 1, "统计范围：%s" % range_label).font = cell_font
+    summary.cell(3, 1, "生成时间：%s" % datetime.now().strftime("%Y-%m-%d %H:%M")).font = cell_font
+    for row, label, value in (
+        (5, "任务总数", total),
+        (6, "已完成", done),
+        (7, "失败/中断", failed),
+        (8, "成功率", "%.1f%%" % (done / total * 100 if total else 0)),
+    ):
+        summary.cell(row, 1, label).font = head_font
+        summary.cell(row, 2, value)
+        for column in (1, 2):
+            summary.cell(row, column).border = border
+    summary.cell(10, 1, "模块分布").font = head_font
+    header_row = 11
+    for column, name in enumerate(("模块", "任务数", "完成", "失败", "成功率"), start=1):
+        summary.cell(header_row, column, name)
+    _style_report_header(summary, header_row, 5, font=head_font, fill=head_fill, border=border)
+    for row_index, (feature, stats) in enumerate(sorted(feature_stats.items()), start=header_row + 1):
+        values = [
+            FEATURE_TITLES.get(feature, feature),
+            stats["total"],
+            stats["done"],
+            stats["failed"],
+            "%.1f%%" % (stats["done"] / stats["total"] * 100 if stats["total"] else 0),
+        ]
+        for column, value in enumerate(values, start=1):
+            cell = summary.cell(row_index, column, value)
+            cell.font = cell_font
+            cell.border = border
+
+
+def _write_report_details(workbook, details, *, border, head_font, cell_font, head_fill) -> None:
+    """写入客户可读明细页，不包含任务 ID 或绝对路径。"""
+
+    detail = workbook.create_sheet("明细")
+    for column, width in {"A": 19, "B": 14, "C": 40, "D": 10, "E": 10}.items():
+        detail.column_dimensions[column].width = width
+    for column, name in enumerate(("开始时间", "模块", "任务", "状态", "结果文件"), start=1):
+        detail.cell(1, column, name)
+    _style_report_header(detail, 1, 5, font=head_font, fill=head_fill, border=border)
+    for index, row in enumerate(details, start=2):
+        for column, value in enumerate((row["started_at"], row["feature"], row["title"], row["status"], row["files"]), start=1):
+            cell = detail.cell(index, column, value)
+            cell.font = cell_font
+            cell.border = border
+
+
+def _save_report_workbook(workbook, out_path: str) -> None:
+    """在目标目录内保存临时文件并原子替换正式报表。"""
+
+    parent = os.path.dirname(os.path.abspath(out_path))
+    descriptor, temp_path = tempfile.mkstemp(prefix="report_", suffix=".xlsx", dir=parent)
+    os.close(descriptor)  # openpyxl 需要自行打开路径，先释放 mkstemp 创建的 Windows 句柄。
+    try:
+        workbook.save(temp_path)
+        os.replace(temp_path, out_path)
+    finally:
+        workbook.close()
+        if os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except OSError:
+                # 清理失败不能覆盖真正的保存异常；临时文件前缀可供维护人员识别。
+                pass
+
+
+def build_report(items: list[dict[str, object]], out_path: str, range_label: str) -> int:
+    """把已筛选任务列表汇总为两页 Excel，并返回写入的明细行数。
+
+    每条任务提取开始时间、模块、标题、状态和结果文件数；按原始 feature 统计总量、
+    完成和失败。汇总页展示总体指标及模块分布，明细页逐条保留客户可读名称。函数
+    不创建父目录，也不执行权限或日期筛选，调用方必须先完成这些工作。
+    """
+    feature_stats, details = _report_rows(items)
 
     workbook = openpyxl.Workbook()
     # 删除默认空页，确保报告只有明确命名的“汇总”和“明细”。
@@ -125,73 +216,17 @@ def build_report(items: list[dict[str, object]], out_path: str, range_label: str
     head_font = Font(name="宋体", size=10, bold=True)
     cell_font = Font(name="宋体", size=10)
 
-    def style_header(worksheet, row_index: int, count: int) -> None:
-        """为指定行前若干列统一应用报表表头样式。"""
-        for column in range(1, count + 1):
-            cell = worksheet.cell(row_index, column)
-            cell.font = head_font
-            cell.fill = head_fill
-            cell.alignment = Alignment(horizontal="center", vertical="center")
-            cell.border = border
-
-    # 汇总页顶部给管理者总体指标，下部再按模块拆分，打开文件即可先看结论。
-    summary = workbook.create_sheet("汇总")
-    summary.column_dimensions["A"].width = 22
-    summary.column_dimensions["B"].width = 14
-    summary.column_dimensions["C"].width = 14
-    summary.column_dimensions["D"].width = 14
-    summary.cell(1, 1, "峰运通业务报表").font = title_font
-    summary.cell(2, 1, "统计范围：%s" % range_label).font = cell_font
-    summary.cell(3, 1, "生成时间：%s" % datetime.now().strftime("%Y-%m-%d %H:%M")).font = cell_font
-    summary.cell(5, 1, "任务总数").font = head_font
-    summary.cell(5, 2, total)
-    summary.cell(6, 1, "已完成").font = head_font
-    summary.cell(6, 2, done)
-    summary.cell(7, 1, "失败/中断").font = head_font
-    summary.cell(7, 2, failed)
-    summary.cell(8, 1, "成功率").font = head_font
-    # total 为零时显示 0%，避免空范围触发除零错误。
-    summary.cell(8, 2, "%.1f%%" % (done / total * 100 if total else 0))
-    for row in range(5, 9):
-        for column in (1, 2):
-            summary.cell(row, column).border = border
-    summary.cell(10, 1, "模块分布").font = head_font
-    header_row = 11
-    for column, name in enumerate(("模块", "任务数", "完成", "失败", "成功率"), start=1):
-        summary.cell(header_row, column, name)
-    style_header(summary, header_row, 5)
-    row_index = header_row + 1
-    for feature, stats in sorted(feature_stats.items()):
-        # 按内部 feature 排序可保持重复导出顺序稳定，展示时再翻译为中文名称。
-        feature_total = stats["total"]
-        feature_done = stats["done"]
-        feature_failed = stats["failed"]
-        values = [
-            FEATURE_TITLES.get(feature, feature), feature_total, feature_done,
-            feature_failed, "%.1f%%" % (feature_done / feature_total * 100 if feature_total else 0),
-        ]
-        for column, value in enumerate(values, start=1):
-            cell = summary.cell(row_index, column, value)
-            cell.font = cell_font
-            cell.border = border
-        row_index += 1
-
-    # 明细页不输出内部任务 ID、绝对路径等实现信息，只保留客户可理解字段。
-    detail = workbook.create_sheet("明细")
-    widths = {"A": 19, "B": 14, "C": 40, "D": 10, "E": 10}
-    for column, width in widths.items():
-        detail.column_dimensions[column].width = width
-    for column, name in enumerate(("开始时间", "模块", "任务", "状态", "结果文件"), start=1):
-        detail.cell(1, column, name)
-    style_header(detail, 1, 5)
-    for index, row in enumerate(details, start=2):
-        values = [row["started_at"], row["feature"], row["title"], row["status"], row["files"]]
-        for column, value in enumerate(values, start=1):
-            cell = detail.cell(index, column, value)
-            cell.font = cell_font
-            cell.border = border
-    workbook.save(out_path)
-    return total
+    _write_report_summary(
+        workbook, feature_stats, details, range_label,
+        border=border, title_font=title_font, head_font=head_font,
+        cell_font=cell_font, head_fill=head_fill,
+    )
+    _write_report_details(
+        workbook, details, border=border, head_font=head_font,
+        cell_font=cell_font, head_fill=head_fill,
+    )
+    _save_report_workbook(workbook, out_path)
+    return len(details)
 
 
 def unique_report_path(out_dir: str, range_label: str) -> str:

@@ -678,41 +678,68 @@ def _batch_track_search(payload):
     return batch_track_core.search(keyword)
 
 
+def _report_file_count(output_dir: str) -> int:
+    """统计任务输出目录第一层普通文件数量；目录异常时返回零。"""
+
+    import os as _os
+
+    if not output_dir or not _os.path.isdir(output_dir):
+        return 0
+    try:
+        return sum(
+            1
+            for name in _os.listdir(output_dir)
+            if _os.path.isfile(_os.path.join(output_dir, name))
+        )
+    except OSError:
+        # 目录可能已被移动或当前进程无权限；保留任务记录但不伪造输出文件数。
+        return 0
+
+
+def _report_task_item(task: dict[str, object], start) -> dict[str, object] | None:
+    """将一条任务历史转换为报表中心使用的安全字段。"""
+
+    from . import report_center_core
+
+    started_at = str(task.get("started_at") or "")
+    started = report_center_core._parse_time(started_at)
+    if started is None or started < start:
+        return None
+    return {
+        "feature": task.get("feature") or "",
+        "title": task.get("title") or "",
+        "status": task.get("status") or "",
+        "started_at": started_at,
+        "files": _report_file_count(str(task.get("output_dir") or "")),
+    }
+
+
+def _collect_report_tasks(limit: int, start) -> list[dict[str, object]]:
+    """按时间范围读取任务历史，并裁剪为报表所需字段。"""
+
+    from . import report_center_core
+
+    items = []
+    for task in task_history.list_recent(limit):
+        item = _report_task_item(task, start)
+        if item is not None:
+            items.append(item)
+    return items
+
+
 def _report_build(payload):
     """从本机任务历史生成指定时间范围的业务汇总报表。
 
     任务历史只保存输出目录，因此这里实时统计目录第一层普通文件数量。读取失败按零文件
     处理，不让已存在的任务记录阻止整份报表生成。
     """
-    import os as _os
-    from . import paths as _paths, report_center_core, task_history
+    from . import paths as _paths, report_center_core
     range_key = str((payload or {}).get("range") or "30d")
     if range_key not in ("7d", "30d", "month", "all"):
         raise ValueError("报表范围参数无效")
     limit = 10000 if range_key == "all" else 2000  # “全部”仍设硬上限，避免无限加载历史数据库。
     start = report_center_core.range_start(range_key)
-    items = []
-    for task in task_history.list_recent(limit):
-        started = report_center_core._parse_time(str(task.get("started_at") or ""))
-        if started is None or started < start:
-            continue
-        out_dir = str(task.get("output_dir") or "")
-        file_count = 0
-        if out_dir and _os.path.isdir(out_dir):
-            try:
-                file_count = sum(
-                    1 for name in _os.listdir(out_dir)
-                    if _os.path.isfile(_os.path.join(out_dir, name))
-                )
-            except OSError:
-                file_count = 0  # 输出目录被移动或无权限时保留任务行，不伪造文件。
-        items.append({
-            "feature": task.get("feature") or "",
-            "title": task.get("title") or "",
-            "status": task.get("status") or "",
-            "started_at": task.get("started_at") or "",
-            "files": file_count,
-        })
+    items = _collect_report_tasks(limit, start)
     if not items:
         raise ValueError("所选时间范围内没有任务记录")
     out_dir = _paths.resolve_output_dir("report_center", **settings_mod.get_settings().output_kwargs())

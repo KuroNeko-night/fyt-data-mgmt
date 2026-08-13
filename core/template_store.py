@@ -150,6 +150,66 @@ def _template_id(name, role_kind, sheet_name):
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:20]
 
 
+def _find_template(data, template_id):
+    """在模板仓库中查找模板族；无效历史项不会阻止新模板保存。"""
+
+    return next(
+        (
+            item for item in data["templates"]
+            if isinstance(item, dict) and item.get("id") == template_id
+        ),
+        None,
+    )
+
+
+def _new_template(name, role_kind, sheet_name, template_id, now):
+    """创建模板族初始记录，首个表头版本由后续版本函数写入。"""
+
+    return {
+        "id": template_id,
+        "name": name or "未命名模板",
+        "role_kind": role_kind or "custom",
+        "sheet": sheet_name or "",
+        "versions": [],
+        "rules": [],
+        "updated_at": now,
+    }
+
+
+def _save_template_version(record, headers, mapping_id, notes, now):
+    """更新模板当前版本或插入新版本，并返回版本指纹。"""
+
+    versions = record.setdefault("versions", [])
+    fingerprint = header_fingerprint(headers)
+    if versions and versions[0].get("fingerprint") == fingerprint:
+        # 相同结构只更新人工映射与备注，避免反复保存制造无意义版本。
+        versions[0]["mapping_id"] = mapping_id or versions[0].get("mapping_id", "")
+        versions[0]["notes"] = notes or versions[0].get("notes", "")
+        versions[0]["updated_at"] = now
+        return fingerprint
+    previous = versions[0] if versions else None
+    version = int(previous.get("version", 0)) + 1 if previous else 1
+    version_diff = diff_headers(previous.get("headers", []), headers) if previous else {
+        "added": [],
+        "removed": [],
+        "moved": [],
+        "changed": [],
+        "same": True,
+        "summary": "初始版本",
+    }
+    versions.insert(0, {
+        "version": version,
+        "fingerprint": fingerprint,
+        "headers": headers,
+        "mapping_id": mapping_id or "",
+        "notes": notes or "",
+        "diff": version_diff,
+        "created_at": now,
+        "updated_at": now,
+    })
+    return fingerprint
+
+
 def save_template(name, role_kind, sheet_name, headers, mapping_id="",
                   notes="", template_id=None, path=None):
     """保存模板族当前结构，并按指纹决定更新现版或创建新版本。
@@ -164,32 +224,12 @@ def save_template(name, role_kind, sheet_name, headers, mapping_id="",
     with file_lock(target):
         # 锁必须覆盖查找、版本决策和写盘，防止并发保存产生相同版本号或丢记录。
         data = _read_all(path)
-        record = next((item for item in data["templates"]
-                       if isinstance(item, dict) and item.get("id") == tid), None)
         now = time.strftime("%Y-%m-%d %H:%M:%S")
+        record = _find_template(data, tid)
         if record is None:
-            # 新模板族从空版本列表开始，初次结构会成为版本 1。
-            record = {"id": tid, "name": name or "未命名模板",
-                      "role_kind": role_kind or "custom", "sheet": sheet_name or "",
-                      "versions": [], "rules": [], "updated_at": now}
+            record = _new_template(name, role_kind, sheet_name, tid, now)
             data["templates"].insert(0, record)
-        versions = record.setdefault("versions", [])
-        fp = header_fingerprint(headers)
-        if versions and versions[0].get("fingerprint") == fp:
-            # 空字符串不覆盖已有人工映射或备注，允许仅“重新确认”而不清除说明。
-            versions[0]["mapping_id"] = mapping_id or versions[0].get("mapping_id", "")
-            versions[0]["notes"] = notes or versions[0].get("notes", "")
-            versions[0]["updated_at"] = now
-        else:
-            previous = versions[0] if versions else None
-            version = int(previous.get("version", 0)) + 1 if previous else 1
-            version_diff = diff_headers(previous.get("headers", []), headers) if previous else {
-                "added": [], "removed": [], "moved": [], "changed": [],
-                "same": True, "summary": "初始版本"}
-            versions.insert(0, {"version": version, "fingerprint": fp,
-                                 "headers": headers, "mapping_id": mapping_id or "",
-                                 "notes": notes or "", "diff": version_diff,
-                                 "created_at": now, "updated_at": now})
+        _save_template_version(record, headers, mapping_id, notes, now)
         record["updated_at"] = now
         # 模板族按首次创建插入首部；截断控制仓库规模，不裁剪单个模板的版本历史。
         data["templates"] = data["templates"][:200]

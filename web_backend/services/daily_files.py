@@ -134,6 +134,19 @@ class DailyFileTrashSpec:
     conflict_message: str
 
 
+@dataclass(frozen=True)
+class DailySourceUploadSpec:
+    """一次日清成品资料上传在落盘前已经验证的请求参数。"""
+
+    kind: str
+    report_date: str
+    original_name: str
+    length: int
+    upload_id: str
+    folder: Path
+    target: Path
+
+
 _PLAN_TRASH = DailyFileTrashSpec(
     table="daily_production_plans",
     kind="daily_production_plan",
@@ -303,6 +316,98 @@ def delete_daily_production_plan(handler: Any, path: str, deps: DailyManagementD
     )
     handler.send_json({"message": "生产计划已移入回收站"})
 
+
+def _daily_source_upload_spec(
+    handler: Any,
+    actor_id: int,
+    deps: DailyManagementDependencies,
+) -> DailySourceUploadSpec:
+    """解析并校验日清上传参数，尚未创建目录或读取请求体。"""
+    query = parse_qs(urlparse(handler.path).query)
+    kind = str((query.get("kind") or [""])[0]).strip().lower()
+    if kind not in {"arrival", "safety"}:
+        raise ApiError(HTTPStatus.BAD_REQUEST, "日清资料类型无效")
+    report_date = deps.report_date(
+        (query.get("date") or [deps.business_today().isoformat()])[0]
+    )
+    original_name = deps.safe_name((query.get("name") or [""])[0])
+    supported = (
+        deps.safety_check_core.SUPPORTED_EXTENSIONS
+        if kind == "safety" else {".xlsx", ".xlsm"}
+    )
+    if Path(original_name).suffix.lower() not in supported:
+        raise ApiError(HTTPStatus.BAD_REQUEST, "日清资料仅支持 .xlsx 或 .xlsm 文件")
+    length = _request_length(handler.headers, deps.request_max_upload_bytes)
+    if length > deps.max_upload_bytes:
+        raise ApiError(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "日清资料文件不能超过 50 MB")
+    upload_id = uuid.uuid4().hex
+    folder = deps.data_root / "users" / str(actor_id) / "daily-sources" / upload_id
+    return DailySourceUploadSpec(
+        kind=kind,
+        report_date=report_date,
+        original_name=original_name,
+        length=length,
+        upload_id=upload_id,
+        folder=folder,
+        target=folder / original_name,
+    )
+
+
+def _analyze_daily_source(
+    spec: DailySourceUploadSpec,
+    deps: DailyManagementDependencies,
+) -> dict[str, object]:
+    """调用对应 Core 解析成品资料，并拒绝表内日期与看板日期不一致。"""
+    try:
+        if spec.kind == "safety":
+            summary = deps.safety_check_core.analyze(
+                spec.target,
+                image_dir=spec.folder / "images",
+            )
+            date_label = "文件内检查日期"
+        else:
+            summary = deps.arrival_core.analyze_finished_report(spec.target)
+            date_label = "文件名中的到料日期"
+    except ValueError as exc:
+        raise ApiError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
+    file_date = str(summary.get("report_date") or "")
+    if file_date and file_date != spec.report_date:
+        raise ApiError(
+            HTTPStatus.BAD_REQUEST,
+            f"{date_label}为 {file_date}，请切换到该日期后上传",
+        )
+    return summary
+
+
+def _insert_daily_source(
+    spec: DailySourceUploadSpec,
+    summary: dict[str, object],
+    actor_id: int,
+    deps: DailyManagementDependencies,
+) -> Any:
+    """在一个 SQLite 事务中写入资料记录和审计记录，并返回展示所需联表行。"""
+    created = deps.now_iso()
+    content_type = mimetypes.guess_type(spec.original_name)[0] or "application/octet-stream"
+    with deps.db_lock, deps.db() as connection:
+        connection.execute(
+            "INSERT INTO daily_source_uploads(id, kind, report_date, data_month, original_name, path, size, "
+            "content_type, summary, uploaded_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                spec.upload_id, spec.kind, spec.report_date, spec.report_date[:7],
+                spec.original_name, str(spec.target), spec.length, content_type,
+                json.dumps(summary, ensure_ascii=False), actor_id, created, created,
+            ),
+        )
+        row = connection.execute(
+            _daily_source_select() + "WHERE s.id = ?", (spec.upload_id,),
+        ).fetchone()
+        connection.execute(
+            "INSERT INTO audit_log(actor_id, action, created_at) VALUES (?, ?, ?)",
+            (actor_id, f"daily_source_upload:{spec.kind}:{spec.upload_id}", created),
+        )
+    return row
+
+
 def upload_daily_source(handler: Any, deps: DailyManagementDependencies) -> None:
     """接收成品到料或安全检查资料，解析后直接写入日清看板。
 
@@ -311,70 +416,23 @@ def upload_daily_source(handler: Any, deps: DailyManagementDependencies) -> None
     安全检查解析产生的图片与源文件保存在同一上传目录，便于整体回收和恢复。
     """
     actor = handler.require_user(admin=True)
-    query = parse_qs(urlparse(handler.path).query)
-    kind = str((query.get("kind") or [""])[0]).strip().lower()
-    if kind not in {"arrival", "safety"}:
-        raise ApiError(HTTPStatus.BAD_REQUEST, "日清资料类型无效")
-    report_date = deps.report_date((query.get("date") or [deps.business_today().isoformat()])[0])
-    original_name = deps.safe_name((query.get("name") or [""])[0])
-    supported = deps.safety_check_core.SUPPORTED_EXTENSIONS if kind == "safety" else {".xlsx", ".xlsm"}  # 各 Core 决定自身格式边界。
-    if Path(original_name).suffix.lower() not in supported:
-        raise ApiError(HTTPStatus.BAD_REQUEST, "日清资料仅支持 .xlsx 或 .xlsm 文件")
-    length = _request_length(handler.headers, deps.request_max_upload_bytes)
-    if length > deps.max_upload_bytes:
-        raise ApiError(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "日清资料文件不能超过 50 MB")
-    upload_id = uuid.uuid4().hex
-    folder = deps.data_root / "users" / str(actor["id"]) / "daily-sources" / upload_id
-    target = folder / original_name
-    folder.mkdir(parents=True, exist_ok=True)
+    actor_id = int(actor["id"])
+    spec = _daily_source_upload_spec(handler, actor_id, deps)
+    spec.folder.mkdir(parents=True, exist_ok=True)
     try:
         _receive_upload_stream(
             handler,
-            target,
-            length,
+            spec.target,
+            spec.length,
             incomplete_message="日清资料文件上传不完整",
         )
-        try:
-            if kind == "safety":
-                summary = deps.safety_check_core.analyze(target, image_dir=folder / "images")
-                file_date = str(summary.get("report_date") or "")
-                if file_date and file_date != report_date:
-                    raise ApiError(
-                        HTTPStatus.BAD_REQUEST,
-                        f"文件内检查日期为 {file_date}，请切换到该日期后上传",
-                    )
-            else:
-                summary = deps.arrival_core.analyze_finished_report(target)
-                file_date = str(summary.get("report_date") or "")
-                if file_date and file_date != report_date:
-                    raise ApiError(
-                        HTTPStatus.BAD_REQUEST,
-                        f"文件名中的到料日期为 {file_date}，请切换到该日期后上传",
-                    )
-        except ValueError as exc:
-            raise ApiError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
-        created = deps.now_iso()
-        with deps.db_lock, deps.db() as connection:
-            connection.execute(
-                "INSERT INTO daily_source_uploads(id, kind, report_date, data_month, original_name, path, size, "
-                "content_type, summary, uploaded_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    upload_id, kind, report_date, report_date[:7], original_name, str(target), length,
-                    mimetypes.guess_type(original_name)[0] or "application/octet-stream",
-                    json.dumps(summary, ensure_ascii=False), actor["id"], created, created,
-                ),
-            )
-            row = connection.execute(
-                _daily_source_select() + "WHERE s.id = ?", (upload_id,),
-            ).fetchone()
-            connection.execute(
-                "INSERT INTO audit_log(actor_id, action, created_at) VALUES (?, ?, ?)",
-                (actor["id"], f"daily_source_upload:{kind}:{upload_id}", created),
-            )
+        summary = _analyze_daily_source(spec, deps)
+        # 文件先完整落盘并通过 Core 校验，数据库记录才可见；否则列表会短暂暴露无效路径。
+        row = _insert_daily_source(spec, summary, actor_id, deps)
     except Exception:
-        shutil.rmtree(folder, ignore_errors=True)
+        shutil.rmtree(spec.folder, ignore_errors=True)
         raise  # 文件日期不符、解析失败或入库失败都不留下不可见上传。
-    title = "安全检查日报" if kind == "safety" else "每日到料资料"
+    title = "安全检查日报" if spec.kind == "safety" else "每日到料资料"
     handler.send_json({"message": f"{title}已上传并完成解析", "upload": deps.source_upload_public(row)}, HTTPStatus.CREATED)
 
 def list_daily_sources(handler: Any, deps: DailyManagementDependencies) -> None:

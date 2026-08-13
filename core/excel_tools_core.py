@@ -331,6 +331,63 @@ def convert(files, target, out_dir=None, log=None):
     return {"out_files": outs, "out_dir": out_dir, "out_file": outs[0]}
 
 
+def _stack_header_keys(header, filename):
+    """生成忽略空白和大小写的字段键，并拒绝同一表头内的重复字段。
+
+    空字段使用位置占位，只有处于相同列位的空表头才会被视为同一字段；否则无法证明
+    两份模板的空列语义一致，不能冒险按位置合并。
+    """
+    keys, seen = [], set()
+    for index, value in enumerate(header, 1):
+        text = "".join(_common.clean_str(value).split()).lower()
+        key = text or "__blank_%d" % index
+        if key in seen:
+            raise ExcelToolError(
+                "%s 的表头存在重复列「%s」，无法安全纵向合并"
+                % (os.path.basename(filename), value or "空列")
+            )
+        seen.add(key)
+        keys.append(key)
+    return keys
+
+
+def _stack_reorder_plan(base_keys, header, filename, log):
+    """验证后续表头集合并返回按首表字段顺序取值的位置计划。"""
+    keys = _stack_header_keys(header, filename)
+    if set(keys) != set(base_keys):
+        missing = [key for key in base_keys if key not in keys]
+        extra = [key for key in keys if key not in base_keys]
+        raise ExcelToolError(
+            "%s 的表头与首表不一致（缺少:%s；新增:%s），请先统一结构"
+            % (
+                os.path.basename(filename),
+                ",".join(missing) or "无",
+                ",".join(extra) or "无",
+            )
+        )
+    if keys != base_keys:
+        log("%s 的表头顺序不同，已按列名重排后合并" % os.path.basename(filename))
+    source_positions = {key: index for index, key in enumerate(keys)}
+    return [source_positions[key] for key in base_keys]
+
+
+def _stack_align_row(row, *, base_cols, reorder, filename, log):
+    """按表头计划重排行，并把最终宽度固定到首表列数。"""
+    values = list(row)
+    if reorder is not None:
+        # 尾部缺列按 None 补齐，既避免索引越界，也保持每个字段仍落在首表对应列。
+        values = [values[index] if index < len(values) else None for index in reorder]
+    if len(values) == base_cols:
+        return values
+    log(
+        "警告:%s 某行列数为 %d,与首表 %d 列不一致,已补齐/截断对齐"
+        % (os.path.basename(filename), len(values), base_cols)
+    )
+    if len(values) < base_cols:
+        return values + [None] * (base_cols - len(values))
+    return values[:base_cols]
+
+
 def stack_tables(files, has_header=True, out_dir=None,
                  out_name="纵向合并.xlsx", log=None):
     """把多个同结构文件的首个页签纵向合并为一张可追溯明细表。
@@ -349,71 +406,43 @@ def stack_tables(files, has_header=True, out_dir=None,
     total_rows = 0
     base_cols = None
     base_keys = None
-
-    def header_keys(header, filename):
-        """生成忽略空白和大小写的字段键，并拒绝同表内重复字段。"""
-        keys, seen = [], set()
-        for index, value in enumerate(header, 1):
-            # 空字段使用位置占位，确保两个模板的空列只有在相同位置才被视为一致。
-            text = "".join(_common.clean_str(value).split()).lower()
-            key = text or "__blank_%d" % index
-            if key in seen:
-                raise ExcelToolError("%s 的表头存在重复列「%s」，无法安全纵向合并"
-                                     % (os.path.basename(filename), value or "空列"))
-            seen.add(key)
-            keys.append(key)
-        return keys
-    for f in files:
-        sheets = _read_sheets(f)
-        if not sheets:
-            continue
-        rows = sheets[0][1]
-        if not rows:
-            log("跳过空表 %s" % os.path.basename(f)); continue
-        start = 0
-        reorder = None
-        if has_header:
-            if not header_written:
-                # 第一份有效表决定输出的可读表头、字段顺序和基准列数。
-                ws.append(list(rows[0]) + ["来源文件"])
-                header_written = True
-                base_cols = len(rows[0])
-                base_keys = header_keys(rows[0], f)
-            else:
-                keys = header_keys(rows[0], f)
-                if set(keys) != set(base_keys):
-                    # 集合不一致意味着无法无损对齐；报出双方差异而不是按位置硬拼。
-                    missing = [base_keys[i] for i in range(len(base_keys))
-                               if base_keys[i] not in keys]
-                    extra = [key for key in keys if key not in base_keys]
-                    raise ExcelToolError("%s 的表头与首表不一致（缺少:%s；新增:%s），请先统一结构"
-                                         % (os.path.basename(f), ",".join(missing) or "无",
-                                            ",".join(extra) or "无"))
-                source_pos = {key: index for index, key in enumerate(keys)}
-                if keys != base_keys:
-                    log("%s 的表头顺序不同，已按列名重排后合并" % os.path.basename(f))
-                reorder = [source_pos[key] for key in base_keys]
-            start = 1
-        else:
-            if base_cols is None:
-                base_cols = len(rows[0])
-        for r in rows[start:]:
-            row = list(r)
-            if reorder is not None:
-                # 短行缺失的尾部单元格按 None 补齐，避免索引越界并保持列语义。
-                row = [row[index] if index < len(row) else None for index in reorder]
-            # 行宽异常不能改变后续“来源文件”列的位置，因此显式补齐或截断到基准宽度。
-            if base_cols is not None and len(row) != base_cols:
-                log("警告:%s 某行列数为 %d,与首表 %d 列不一致,已补齐/截断对齐"
-                    % (os.path.basename(f), len(row), base_cols))
-                if len(row) < base_cols:
-                    row = row + [None] * (base_cols - len(row))
+    try:
+        for f in files:
+            sheets = _read_sheets(f)
+            if not sheets:
+                continue
+            rows = sheets[0][1]
+            if not rows:
+                log("跳过空表 %s" % os.path.basename(f))
+                continue
+            start, reorder = 0, None
+            if has_header:
+                if not header_written:
+                    # 第一份有效表决定可读表头、输出顺序和固定数据宽度。
+                    base_keys = _stack_header_keys(rows[0], f)
+                    base_cols = len(rows[0])
+                    ws.append(list(rows[0]) + ["来源文件"])
+                    header_written = True
                 else:
-                    row = row[:base_cols]
-            ws.append(row + [os.path.basename(f)])
-            total_rows += 1
-        log("追加 %s:%d 行" % (os.path.basename(f), len(rows) - start))
-    out_file = os.path.join(out_dir, out_name)
-    wb.save(out_file)
+                    reorder = _stack_reorder_plan(base_keys, rows[0], f, log)
+                start = 1
+            elif base_cols is None:
+                base_cols = len(rows[0])  # 无表头模式只能以第一行宽度作为安全对齐基准。
+            for source_row in rows[start:]:
+                row = _stack_align_row(
+                    source_row,
+                    base_cols=base_cols,
+                    reorder=reorder,
+                    filename=f,
+                    log=log,
+                )
+                ws.append(row + [os.path.basename(f)])
+                total_rows += 1
+            log("追加 %s:%d 行" % (os.path.basename(f), len(rows) - start))
+        out_file = os.path.join(out_dir, out_name)
+        wb.save(out_file)
+    finally:
+        # 表头验证或保存失败时也释放工作簿持有的临时资源，便于 Windows 立即重试。
+        wb.close()
     log("已纵向合并 %d 个文件、共 %d 行数据 → %s" % (len(files), total_rows, out_file))
     return {"out_file": out_file, "out_dir": out_dir, "out_files": [out_file]}

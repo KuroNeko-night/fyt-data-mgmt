@@ -231,6 +231,85 @@ def _fill_empty_names(items: Mapping[str, dict[str, object]], resolver, counts: 
             item["names"].add(addition["name"])
 
 
+def _cell_value(values: tuple[object, ...] | list[object], column: int | None) -> object:
+    """安全读取行内单元格；短行视为缺失而不是让列索引异常泄漏到界面。"""
+
+    return values[column] if isinstance(column, int) and column < len(values) else None
+
+
+def _parse_package_row(
+    values: tuple[object, ...] | list[object],
+    *,
+    columns: Mapping[str, int],
+    optional: Mapping[str, int],
+    file_name: str,
+    sheet: str,
+    row_number: int,
+) -> tuple[str, dict[str, object] | None]:
+    """把包装表的一行归类为跳过、已作废或有效记录。
+
+    先校验物料号与数量，再按 BOX 状态分流，确保“有数量但无物料号”的行不会被当作
+    普通说明行吞掉；已作废记录只返回审计所需字段，不进入数量聚合。
+    """
+
+    code = _material_code(_cell_value(values, columns.get("code")))
+    if not code:
+        # 空白、合计和说明行可以跳过；但带数量的无编码行会破坏按物料汇总，必须报错。
+        quantity_value = _cell_value(values, columns.get("quantity"))
+        if any(_text(value) for value in values) and _text(quantity_value):
+            raise ValueError(f"《{file_name}》工作表“{sheet}”第 {row_number} 行有数量但物料号为空。")
+        return "skip", None
+
+    name = _text(_cell_value(values, columns.get("name")))
+    status = _text(_cell_value(values, columns.get("status")))
+    quantity = _decimal(
+        _cell_value(values, columns.get("quantity")),
+        file_name=file_name,
+        sheet=sheet,
+        row=row_number,
+        label="实际包装数量",
+    )
+    record = {
+        "code": code,
+        "name": name,
+        "status": status,
+        "quantity": quantity,
+    }
+    if status == "已作废":
+        record.update({
+            "row": row_number,
+            "box_no": _text(_cell_value(values, optional.get("box_no"))),
+            "quantity": _json_number(quantity),
+        })
+        return "obsolete", record
+    return "keep", record
+
+
+def _add_package_record(
+    record: Mapping[str, object],
+    *,
+    by_code: dict[str, dict[str, object]],
+    pivot: dict[tuple[str, str], dict[str, object]],
+) -> None:
+    """将一条有效包装记录同时累加到物料总表和描述透视表。"""
+
+    code = str(record["code"])
+    name = str(record["name"])
+    quantity = record["quantity"]
+    key = _code_key(code)
+    item = by_code.setdefault(key, _new_item(code))
+    item["quantity"] += quantity
+    item["rows"] += 1
+    _add_name(item, name)
+    pivot_key = (key, name)
+    pivot_item = pivot.setdefault(
+        pivot_key,
+        {"code": code, "name": name, "quantity": Decimal("0"), "rows": 0},
+    )
+    pivot_item["quantity"] += quantity
+    pivot_item["rows"] += 1
+
+
 def _read_package(path: str, requested_sheet: str | None, resolver, fill_counts, log, progress):
     """读取包装计划，记录状态审计，并建立描述维度透视和物料号汇总。"""
 
@@ -247,48 +326,27 @@ def _read_package(path: str, requested_sheet: str | None, resolver, fill_counts,
         file_name = os.path.basename(path)
         # dimension 不可信时无法预知总行数，进度仍由阶段切换保证单调，逐行 tick 退化为提示性进度。
         data_total = max(1, (worksheet.max_row or header_row + 1) - header_row)
-        for offset, values in enumerate(
-            worksheet.iter_rows(min_row=header_row + 1, values_only=True), start=1,
-        ):
-            code = _material_code(values[columns["code"]] if columns["code"] < len(values) else None)
-            if not code:
-                # 完全空白、汇总和说明行不属于物料数据；含数量但无物料号则不能安全聚合。
-                if any(_text(value) for value in values):
-                    quantity_value = values[columns["quantity"]] if columns["quantity"] < len(values) else None
-                    if _text(quantity_value):
-                        raise ValueError(f"《{file_name}》工作表“{worksheet.title}”第 {header_row + offset} 行有数量但物料号为空。")
+        for offset, values in enumerate(worksheet.iter_rows(min_row=header_row + 1, values_only=True), start=1):
+            row_number = header_row + offset
+            kind, record = _parse_package_row(
+                values,
+                columns=columns,
+                optional=optional,
+                file_name=file_name,
+                sheet=worksheet.title,
+                row_number=row_number,
+            )
+            if kind == "skip":
                 progress.tick(offset, data_total)
                 continue
             source_rows += 1
-            row_number = header_row + offset
-            name = _text(values[columns["name"]] if columns["name"] < len(values) else None)
-            status = _text(values[columns["status"]] if columns["status"] < len(values) else None)
+            status = str(record["status"])
             status_counts[status or "（空白）"] += 1
-            quantity = _decimal(
-                values[columns["quantity"]] if columns["quantity"] < len(values) else None,
-                file_name=file_name, sheet=worksheet.title, row=row_number, label="实际包装数量",
-            )
-            if status == "已作废":
-                excluded.append({
-                    "row": row_number,
-                    "box_no": _text(values[optional["box_no"]]) if "box_no" in optional and optional["box_no"] < len(values) else "",
-                    "code": code,
-                    "name": name,
-                    "quantity": _json_number(quantity),
-                    "status": status,
-                })
-                progress.tick(offset, data_total)
-                continue
-            kept_rows += 1
-            key = _code_key(code)
-            item = by_code.setdefault(key, _new_item(code))
-            item["quantity"] += quantity
-            item["rows"] += 1
-            _add_name(item, name)
-            pivot_key = (key, name)
-            pivot_item = pivot.setdefault(pivot_key, {"code": code, "name": name, "quantity": Decimal("0"), "rows": 0})
-            pivot_item["quantity"] += quantity
-            pivot_item["rows"] += 1
+            if kind == "obsolete":
+                excluded.append(record)
+            else:
+                kept_rows += 1
+                _add_package_record(record, by_code=by_code, pivot=pivot)
             progress.tick(offset, data_total)
         _fill_empty_names(by_code, resolver, fill_counts)
         # 描述为空的透视行只在主数据库确有名称时补空，不覆盖任何源描述。
@@ -324,24 +382,23 @@ def _read_review(path: str, requested_sheet: str | None, resolver, fill_counts, 
         source_rows = 0
         file_name = os.path.basename(path)
         data_total = max(1, (worksheet.max_row or header_row + 1) - header_row)
-        for offset, values in enumerate(
-            worksheet.iter_rows(min_row=header_row + 1, values_only=True), start=1,
-        ):
-            code = _material_code(values[columns["code"]] if columns["code"] < len(values) else None)
-            if not code:
-                progress.tick(offset, data_total)
-                continue
-            source_rows += 1
+        for offset, values in enumerate(worksheet.iter_rows(min_row=header_row + 1, values_only=True), start=1):
             row_number = header_row + offset
-            quantity = _decimal(
-                values[columns["quantity"]] if columns["quantity"] < len(values) else None,
-                file_name=file_name, sheet=worksheet.title, row=row_number, label="总数",
-            )
-            key = _code_key(code)
-            item = items.setdefault(key, _new_item(code))
-            item["quantity"] += quantity
-            item["rows"] += 1
-            _add_name(item, values[columns["name"]] if columns["name"] < len(values) else None)
+            code = _material_code(_cell_value(values, columns.get("code")))
+            if code:
+                source_rows += 1
+                quantity = _decimal(
+                    _cell_value(values, columns.get("quantity")),
+                    file_name=file_name,
+                    sheet=worksheet.title,
+                    row=row_number,
+                    label="总数",
+                )
+                key = _code_key(code)
+                item = items.setdefault(key, _new_item(code))
+                item["quantity"] += quantity
+                item["rows"] += 1
+                _add_name(item, _cell_value(values, columns.get("name")))
             progress.tick(offset, data_total)
         _fill_empty_names(items, resolver, fill_counts)
         return {

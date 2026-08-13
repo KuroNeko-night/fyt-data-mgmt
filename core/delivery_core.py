@@ -371,40 +371,8 @@ def build_plan_sheet(ws, master_rows, sup_map, order_type=None,
     ws.row_dimensions[2].height = _HEAD_ROW_H
 
     case_map = case_map or {}
-    # 先把供应商与参考信息连接到每行，仍保持 master_rows 的原始顺序。
-    recs = []
-    missing = []
-    for row in master_rows:
-        code = norm_code(row["code"])
-        sup = sup_map.get(code)
-        if sup is None:
-            # 区分“完全无映射”与“映射存在但某字段为空”，只把前者计入未匹配编码。
-            missing.append(code)
-        sc, sn = (sup if sup else (None, None))
-        recs.append({"row": row, "sc": sc, "sn": sn, "cinfo": case_map.get(code)})
-
-    hit_case = 0
-    r = 3
-    for i, rc in enumerate(recs, 1):
-        row, sc, sn = rc["row"], rc["sc"], rc["sn"]
-        cinfo = rc["cinfo"]
-        if cinfo:
-            hit_case += 1
-        ca, cq, tm = (cinfo if cinfo else (None, None, None))
-        # 列表顺序与 OUT_HEADERS 一一对应；跟单列写 None，避免输出虚假默认值。
-        vals = [i, row["code"], row.get("cname"), sc, sn, order_type or None,
-                row.get("qty"), None, None, None, None,
-                # 通过列常量生成公式，表头位置变化时无需查找散落的字母列号。
-                "=%s%d-%s%d" % (get_column_letter(_C_RECV), r,
-                                get_column_letter(_C_QTY), r),
-                ca, cq, tm, None]
-        for c, v in enumerate(vals, 1):
-            cell = ws.cell(r, c, v)
-            cell.font = _DATA_FONT
-            cell.alignment = _CENTER
-            cell.border = _BORDER
-        ws.row_dimensions[r].height = _DATA_ROW_H
-        r += 1
+    recs, missing, hit_case = _prepare_plan_records(master_rows, sup_map, case_map)
+    _write_plan_rows(ws, recs, order_type, start_row=3)
 
     for c, w in enumerate(_WIDTHS, 1):
         ws.column_dimensions[get_column_letter(c)].width = w
@@ -412,7 +380,58 @@ def build_plan_sheet(ws, master_rows, sup_map, order_type=None,
         # 最多展示前八个缺失编码，保留可操作线索且避免大批缺失淹没任务日志。
         log("有 %d 个物料在供应商明细中未找到供应商，已留空：%s%s"
             % (len(missing), "、".join(missing[:8]), " 等" if len(missing) > 8 else ""))
-    return r - 3, missing, hit_case
+    return len(recs), missing, hit_case
+
+
+def _prepare_plan_records(master_rows, sup_map, case_map):
+    """连接供应商和参考计划信息，保持物料清单顺序并统计缺失与命中。"""
+
+    records = []
+    missing = []
+    hit_case = 0
+    for row in master_rows:
+        code = norm_code(row["code"])
+        supplier = sup_map.get(code)
+        if supplier is None:
+            # 映射不存在才算缺失；映射存在但某字段为空交给人工补写，不重复报警。
+            missing.append(code)
+        case_info = case_map.get(code)
+        if case_info:
+            hit_case += 1
+        supplier_code, supplier_name = supplier if supplier else (None, None)
+        records.append({
+            "row": row,
+            "supplier_code": supplier_code,
+            "supplier_name": supplier_name,
+            "case_info": case_info,
+        })
+    return records, missing, hit_case
+
+
+def _write_plan_rows(ws, records, order_type, *, start_row):
+    """把已连接的内部记录写入固定 16 列协议，并生成剩余未收数公式。"""
+
+    for index, record in enumerate(records, start=1):
+        row_number = start_row + index - 1
+        source = record["row"]
+        case_value, case_quantity, team = record["case_info"] or (None, None, None)
+        values = [
+            index, source["code"], source.get("cname"),
+            record["supplier_code"], record["supplier_name"], order_type or None,
+            source.get("qty"), None, None, None, None,
+            # 通过列常量生成公式，表头位置变化时无需查找散落的字母列号。
+            "=%s%d-%s%d" % (
+                get_column_letter(_C_RECV), row_number,
+                get_column_letter(_C_QTY), row_number,
+            ),
+            case_value, case_quantity, team, None,
+        ]
+        for column, value in enumerate(values, start=1):
+            cell = ws.cell(row_number, column, value)
+            cell.font = _DATA_FONT
+            cell.alignment = _CENTER
+            cell.border = _BORDER
+        ws.row_dimensions[row_number].height = _DATA_ROW_H
 
 
 def build_supplier_map(sup_rows, log=None):
@@ -488,24 +507,32 @@ def _match_ref_header(ws, scan_rows=8):
     编码角色仅接受精确表头，防止“计数项:物料编码”等透视统计列误命中。
     """
     for hr in range(1, min(scan_rows, ws.max_row) + 1):
-        col = {}
-        for c in range(1, ws.max_column + 1):
-            txt = cell_text(ws.cell(hr, c).value)
-            if not txt:
-                continue
-            for role, keys in _REF_KEYS.items():
-                if role in col:
-                    continue
-                # 编码只认精确文本；CASE、托数和班组允许带前后业务说明的包含匹配。
-                if role == "code":
-                    if any(k == txt for k in keys):
-                        col[role] = c
-                elif any(k == txt for k in keys) or any(k in txt for k in keys):
-                    col[role] = c
+        col = _reference_columns(ws, hr)
         # CASE 加班组/托数组合能有效排除只有计数和分组字段的透视汇总页。
         if "code" in col and "case" in col and ("team" in col or "case_qty" in col):
             return hr, col
     return None, {}
+
+
+def _reference_columns(ws, header_row):
+    """识别参考计划单行表头，编码严格匹配，其余字段允许带业务前缀。"""
+
+    columns = {}
+    for column in range(1, ws.max_column + 1):
+        text = cell_text(ws.cell(header_row, column).value)
+        if not text:
+            continue
+        for role, keys in _REF_KEYS.items():
+            if role in columns:
+                continue
+            # “计数项:物料编码”不能作为明细编码列，编码角色只接受精确表头。
+            if role == "code":
+                matched = any(key == text for key in keys)
+            else:
+                matched = any(key == text or key in text for key in keys)
+            if matched:
+                columns[role] = column
+    return columns
 
 
 def _find_reference_detail_sheet(workbook):
