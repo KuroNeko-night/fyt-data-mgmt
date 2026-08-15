@@ -491,12 +491,16 @@ def run(targets, sources, opts=None, log=None, out_dir=None, progress=None):
         targets = [targets]
     if isinstance(sources, str):
         sources = [sources]
+    if not targets:
+        raise ValueError("请选择待填写的考勤表模板")
+    if not sources:
+        raise ValueError("请选择打卡来源表")
     # 写回工作簿和保存文件通常比读取更耗时，因此把大部分进度权重分配给填表阶段。
     prog = cc.Progress(progress, stages=[("read", 30), ("fill", 70)])
     ts = cc.timestamp()
     if out_dir is None:
         # 统一目录解析异常时兼容旧部署逻辑，保证历史环境仍能完成核心业务。
-        out_dir = _unified_out_dir("attendance", ts, src=targets[0]) or cc.make_out_dir(targets[0])
+        out_dir = _unified_out_dir("attendance", ts, src=targets[0], log=log) or cc.make_out_dir(targets[0])
     else:
         os.makedirs(out_dir, exist_ok=True)
     log("采用选项：" + opts.summary())
@@ -540,12 +544,12 @@ def run(targets, sources, opts=None, log=None, out_dir=None, progress=None):
     }
 
 
-def _unified_out_dir(feature, ts=None, src=None):
+def _unified_out_dir(feature, ts=None, src=None, log=None):
     """按当前设置解析统一输出目录，失败时返回 ``None`` 触发旧逻辑回退。
 
     ``src`` 仅在“输出到源文件旁”模式中补充定位依据。这里采用延迟导入并容忍异常，
     是为了兼容早期独立分发过的考勤模块；正式项目环境应正常走 ``core.paths``。
-    回退只影响输出位置，不改变任何业务计算。
+    回退只影响输出位置，不改变任何业务计算；失败原因写入日志，避免静默吞掉配置错误。
     """
     try:
         from . import paths as _paths
@@ -556,6 +560,8 @@ def _unified_out_dir(feature, ts=None, src=None):
             # 调用方显式配置的 src_path 优先，本函数只在缺失时用首个目标模板补全。
             kw["src_path"] = src
         return _paths.resolve_output_dir(feature, ts=ts, **kw)
-    except Exception:
+    except Exception as error:
         # 由 run 使用 common_core.make_out_dir 接管，旧环境不会因路径模块不可用而中断。
+        if log:
+            log("统一输出目录不可用，回退到源文件旁输出：%s" % error)
         return None

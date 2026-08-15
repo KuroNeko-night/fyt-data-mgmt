@@ -12,6 +12,7 @@ from typing import Any, Callable
 from urllib.parse import parse_qs, quote, urlparse
 
 from web_backend.errors import ApiError
+from web_backend.config import BUSINESS_TZ
 
 
 REPORT_RANGE_LABELS = {
@@ -169,7 +170,7 @@ def _auto_report_if_due(
 
 def auto_weekly_report_if_due(deps: ReportDependencies) -> str:
     """每周一自动生成全量周报，同一周只执行一次。"""
-    today = datetime.now()
+    today = datetime.now(BUSINESS_TZ)  # 按业务时区判“今天”，避免服务器本地时区与业务时区不一致时错日触发。
     return _auto_report_if_due(
         deps,
         due=today.weekday() == 0,
@@ -185,7 +186,7 @@ def auto_weekly_report_if_due(deps: ReportDependencies) -> str:
 
 def auto_monthly_report_if_due(deps: ReportDependencies) -> str:
     """每月一号自动生成全量月报，同一月份只执行一次。"""
-    today = datetime.now()
+    today = datetime.now(BUSINESS_TZ)  # 按业务时区判“今天”，避免服务器本地时区与业务时区不一致时错日触发。
     return _auto_report_if_due(
         deps,
         due=today.day == 1,

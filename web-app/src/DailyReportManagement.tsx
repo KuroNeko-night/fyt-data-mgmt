@@ -56,9 +56,10 @@ const BRIEF_STATUS_LABELS: Record<DailyBriefStatus, string> = {
   open: "未开始", in_progress: "进行中", done: "已完成", cancelled: "已取消",
 };
 
-const EMPTY_PERSON = {
+// 使用工厂函数而不是共享对象，确保每次重置参会人表单都获得独立引用，避免原地修改污染后续表单。
+const EMPTY_PERSON = () => ({
   name: "", person_type: "participant" as DailyPersonType, unit: "", shift: "", sort_order: 0, active: true,
-};
+});
 // 使用工厂函数而不是共享对象，确保每次重置表单都获得独立的 shifts 数组。
 const EMPTY_PRODUCTION_GROUP = (): DailyProductionGroupInput => ({
   name: "", sort_order: 0, active: true,
@@ -156,7 +157,7 @@ export function AttendanceTab({ date, data, onRefresh }: { date: string; data: D
   const [records, setRecords] = useState<DailyAttendance[]>(data.attendance.people);
   const [productionGroups, setProductionGroups] = useState<DailyProductionGroup[]>([]);
   const [productionRecords, setProductionRecords] = useState<DailyProductionAttendance[]>(data.attendance.production_groups || []);
-  const [newPerson, setNewPerson] = useState(EMPTY_PERSON);
+  const [newPerson, setNewPerson] = useState(() => EMPTY_PERSON());
   const [newProductionGroup, setNewProductionGroup] = useState<DailyProductionGroupInput>(() => EMPTY_PRODUCTION_GROUP());
   // busy 保存操作类型或记录 id，用一个状态互斥所有会改变主数据和日报的请求。
   const [busy, setBusy] = useState("");
@@ -206,7 +207,7 @@ export function AttendanceTab({ date, data, onRefresh }: { date: string; data: D
     setBusy("person-create"); setError(""); setNotice("");
     try {
       const result = await createDailyPerson({ ...newPerson, name: newPerson.name.trim(), unit: newPerson.unit.trim(), shift: newPerson.shift.trim() });
-      setPeople((current) => [...current, result.person]); setNewPerson(EMPTY_PERSON); setNotice(result.message); await onRefresh();
+      setPeople((current) => [...current, result.person]); setNewPerson(EMPTY_PERSON()); setNotice(result.message); await onRefresh();
     } catch (reason) { setError(reason instanceof Error ? reason.message : "人员添加失败"); }
     finally { setBusy(""); }
   }

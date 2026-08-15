@@ -220,9 +220,13 @@ def reset_user_password(handler: Any, path: str, body: dict[str, object], deps: 
         raise ApiError(HTTPStatus.BAD_REQUEST, policy_error)
     salt, digest = deps.hash_password(password)
     with deps.db_lock, deps.db() as connection:
-        target = connection.execute("SELECT id FROM users WHERE id = ?", (user_id,)).fetchone()
+        target = connection.execute("SELECT id, role FROM users WHERE id = ?", (user_id,)).fetchone()
         if target is None:
             raise ApiError(HTTPStatus.NOT_FOUND, "用户不存在")
+        if target["role"] == "admin":
+            # 与其他账号管理接口一致：管理员（含内置 admin 恢复入口）的密码只能通过
+            # 需要旧密码的自助修改或 out-of-band 重置脚本处理，避免管理员之间横向接管。
+            raise ApiError(HTTPStatus.BAD_REQUEST, "不能通过此接口重置管理员账号密码")
         connection.execute(
             "UPDATE users SET salt = ?, password_hash = ? WHERE id = ?", (salt, digest, user_id)
         )

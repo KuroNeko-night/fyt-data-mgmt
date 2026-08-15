@@ -51,6 +51,7 @@ from web_backend.http.handler import ApiHandler, HandlerBindings
 from web_backend.serializers import json_list as _json_list_from_backend
 from web_backend.serializers import json_object as _json_object_from_backend
 from web_backend.serializers import json_value as _json_value_from_backend
+from web_backend.passwords import password_policy_error
 from web_backend.services import auth as auth_service
 from web_backend.services import maintenance as maintenance_service
 from web_backend.services import daily_report as daily_report_service
@@ -137,8 +138,13 @@ def notify_webhook(title: str, content: str) -> None:
         促使连接正常结束，但第三方返回内容不参与业务判断。
         """
         try:
+            # 脱敏错误信息里可能出现的服务端绝对路径，避免向外部 webhook 泄露部署目录结构。
+            safe_content = str(content)
+            for base in (str(DATA_ROOT), str(ROOT)):
+                if base:
+                    safe_content = safe_content.replace(base, "<数据目录>")
             payload = json.dumps(
-                {"msgtype": "text", "text": {"content": f"{title}\n{content}"}},
+                {"msgtype": "text", "text": {"content": f"{title}\n{safe_content}"}},
                 ensure_ascii=False,
             ).encode("utf-8")
             request = urllib.request.Request(
@@ -315,17 +321,6 @@ def verify_password(password: str, salt_hex: str, digest_hex: str) -> bool:
     """以恒定时间比较校验登录密码，避免摘要比较泄漏信息。"""
     _, candidate = hash_password(password, bytes.fromhex(salt_hex))
     return hmac.compare_digest(candidate, digest_hex)
-
-
-def password_policy_error(password: str) -> str:
-    """返回面向用户的密码策略错误，空字符串表示通过。"""
-    if len(password) < 10:
-        return "密码至少 10 位"
-    if len(password) > 128:
-        return "密码不能超过 128 位"
-    if not any(char.isalpha() for char in password) or not any(char.isdigit() for char in password):
-        return "密码需同时包含字母和数字"
-    return ""
 
 
 def _daily_management_dependencies() -> daily_management_service.DailyManagementDependencies:
@@ -992,16 +987,27 @@ workshop_issue_can_delete = presenters.workshop_issue_can_delete
 workshop_issue_public = presenters.workshop_issue_public
 
 
+# update_job 可更新的任务列白名单：键只来自服务端内部状态机，任何新列必须先在此登记，
+# 防止未来调用方传入未清洗的键参与列名拼接（值仍使用参数化 SQL，不参与拼接）。
+_JOB_UPDATE_COLUMNS = frozenset({
+    "status", "progress", "result", "error", "files", "logs",
+    "cancelled", "assignee_id", "payload",
+})
+
+
 def update_job(job_id: str, **values: object) -> None:
     """更新 Web 任务的一组受控字段，并统一刷新版本时间。
 
-    调用方传入的键只来自服务端内部状态机，不接受 HTTP 字段；值仍使用参数化 SQL。
-    一次语句更新全部字段，避免进度、状态和错误信息出现可观察的中间组合。
+    调用方传入的键必须命中 ``_JOB_UPDATE_COLUMNS`` 白名单，不接受 HTTP 字段；值仍使用
+    参数化 SQL。一次语句更新全部字段，避免进度、状态和错误信息出现可观察的中间组合。
     """
     if not values:
         return
+    unknown = set(values) - _JOB_UPDATE_COLUMNS
+    if unknown:
+        raise ValueError("不允许更新这些任务字段：%s" % "、".join(sorted(unknown)))
     values["updated_at"] = now_iso()
-    columns = ", ".join(f"{key} = ?" for key in values)  # 键为内部常量，业务值不参与 SQL 拼接。
+    columns = ", ".join(f"{key} = ?" for key in values)  # 键已通过白名单校验，业务值不参与 SQL 拼接。
     with DB_LOCK, db() as connection:
         connection.execute(
             f"UPDATE web_jobs SET {columns} WHERE id = ?",

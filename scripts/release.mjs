@@ -60,12 +60,15 @@ console.log("[提示] Cargo.lock 会在下次 cargo/tauri 构建时自动跟随 
 
 if (process.argv.includes("--build")) {
   // 构建是可选的耗时步骤；默认模式只做快速版本同步，便于发布前单独审阅变更。
+  // Windows 下 npm 是批处理文件，需显式使用 npm.cmd；其余平台用 npm，避免 shell:true
+  // 引入额外的 shell 解析层和潜在的参数拼接风险。
+  const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
   for (const dir of ["web-app", "tauri-app"]) {
     console.log(`\n[构建] ${dir} ...`);
-    const result = spawnSync("npm", ["run", "build"], {
+    const result = spawnSync(npmCommand, ["run", "build"], {
       cwd: path.join(root, dir),
       stdio: "inherit",
-      shell: true,
+      shell: false,
     });
     if (result.status !== 0) process.exit(result.status ?? 1); // 保留子构建退出码，便于 CI 准确判定失败。
   }

@@ -354,6 +354,13 @@ def restore_trash(handler: Any, path: str, deps: TrashDependencies) -> None:
             raise ApiError(HTTPStatus.BAD_REQUEST, "回收站数据类型无效")
         record, versions, images = _stored_parts(item, deps)
         target = _restore_target(item, deps)
+        # 跨部署恢复时 record_json 里的旧绝对路径已失效；用本次恢复目标重写 path，
+        # 保证恢复出的记录在后续下载时仍能通过当前数据根下的路径校验，而不是指向旧目录。
+        if "path" in record:
+            record["path"] = str(target)
+        for image in images:
+            if isinstance(image, dict) and "path" in image:
+                image["path"] = str(target / Path(str(image.get("name") or "")).name)
         payload = deps.data_root / "trash" / trash_id / "payload"
         if item["kind"] == "workshop_issue" and not payload.exists():  # 现场问题图片是报告的一部分，缺失时拒绝半恢复。
             raise ApiError(HTTPStatus.CONFLICT, "现场图片已不存在，无法恢复这条问题")

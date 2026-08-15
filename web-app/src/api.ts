@@ -505,7 +505,6 @@ export type JobTemplate = { id: string; name: string; action: string; payload: R
 export type SearchResponse = { jobs: Array<{ id: string; title: string; action: string; status: string; created_at: string; updated_at: string }>; files: Array<{ name: string; size: number; url: string; job_id: string; title: string }>; messages: Array<{ id: number; title: string; content: string; created_at: string; read_at: string | null }> };
 
 const API_BASE = import.meta.env.VITE_API_BASE || "";
-const tokenKey = "fyt_web_session";
 type ApiRequestOptions = RequestInit & {
   timeoutMs?: number;
   timeoutMessage?: string;
@@ -515,12 +514,12 @@ type ApiRequestOptions = RequestInit & {
 
 class ApiResponseError extends Error {}
 
-/** 读取当前浏览器会话令牌；空字符串表示尚未登录。 */
-export function getToken() { return localStorage.getItem(tokenKey) || ""; }
-/** 在登录成功后保存服务端签发的会话令牌，后续请求会自动附带。 */
-export function setToken(token: string) { localStorage.setItem(tokenKey, token); }
-/** 清除本机令牌；服务端会话撤销仍应通过 `logout` 或设备管理接口完成。 */
-export function clearToken() { localStorage.removeItem(tokenKey); }
+// 会话鉴权统一由服务端 HttpOnly + SameSite=Strict Cookie 承载；前端不再把令牌写入
+// localStorage 或通过 X-Session-Token 头回传，避免 XSS 通过读取 localStorage 窃取会话。
+// 以下三个函数保留为兼容旧调用方的空实现，登录/登出实际由 Set-Cookie 生效。
+export function getToken() { return ""; }
+export function setToken(_token: string) {}
+export function clearToken() {}
 
 /**
  * 发送 JSON API 请求并统一处理会话、超时、网络重试和错误消息。
@@ -1124,12 +1123,16 @@ export function uploadFile(file: File, group: string, onProgress?: (progress: nu
     const token = getToken();
     if (token) xhr.setRequestHeader("X-Session-Token", token);
     xhr.withCredentials = true;
+    xhr.timeout = 180_000; // 大文件上传同样需要超时兜底，避免网络挂起时 Promise 永不落定。
     xhr.upload.onprogress = (event) => { if (event.lengthComputable) onProgress?.(Math.round(event.loaded / event.total * 100)); };
     xhr.onerror = () => reject(new Error(`上传 ${file.name} 失败，请检查网络连接`));
+    xhr.ontimeout = () => reject(new Error(`上传 ${file.name} 超时，请检查网络后重试`));
     xhr.onabort = () => reject(new Error(`上传 ${file.name} 已取消`));
     xhr.onload = () => {
-      const data = JSON.parse(xhr.responseText || "{}");
-      if (xhr.status < 200 || xhr.status >= 300) { reject(new Error(data.error || `上传 ${file.name} 失败`)); return; }
+      let data: Record<string, unknown> = {};
+      try { data = JSON.parse(xhr.responseText || "{}"); }
+      catch { reject(new Error(`上传 ${file.name} 失败`)); return; } // 服务端返回非 JSON（如反向代理错误页）时也保证 Promise 落定。
+      if (xhr.status < 200 || xhr.status >= 300) { reject(new Error(String(data.error || `上传 ${file.name} 失败`))); return; }
       onProgress?.(100); resolve(data as UploadedFile);
     };
     xhr.send(file);

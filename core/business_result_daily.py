@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from .business_result_common import (
+    MAX_DETAIL_ROWS,
     _basename,
     _integer,
     _mapping,
@@ -192,7 +193,7 @@ def _present_arrival(value: object, limit: int) -> dict[str, object] | None:
              ("shortage_quantity", "缺口数")],
             missing_material_rows,
             description="逐项列出尚未到齐的物料及数量缺口。",
-            limit=max(1, len(missing_material_rows)),
+            limit=MAX_DETAIL_ROWS,
         ))
     return {
         "kind": "arrival",

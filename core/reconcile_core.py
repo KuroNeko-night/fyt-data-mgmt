@@ -10,6 +10,7 @@
 """
 import copy
 import datetime
+import logging
 import os
 from dataclasses import dataclass
 
@@ -1407,6 +1408,8 @@ def _unified_out_dir(feature, src=None):
             # 显式配置的 src_path 优先，避免覆盖调用环境已经选定的源文件基准。
             kw["src_path"] = src
         return _paths.resolve_output_dir(feature, **kw)
-    except Exception:
-        # 兼容入口不能阻断对账主流程；正式环境中的路径问题会由后续输出创建操作暴露。
+    except Exception as exc:
+        # 兼容入口不能阻断对账主流程；正式环境中的路径问题会由后续输出创建操作暴露，
+        # 这里记日志避免静默掩盖真实配置或权限错误。
+        logging.getLogger(__name__).warning("统一输出目录不可用：%s", exc)
         return None

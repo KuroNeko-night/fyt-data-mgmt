@@ -360,7 +360,9 @@ def bundle_windows_cloudflared(staging: str, work: str) -> str:
         os.makedirs(download_dir, exist_ok=True)
         source = os.path.join(download_dir, "cloudflared.exe")
         print("[下载] 本机未找到 cloudflared，正在下载官方 Windows amd64 客户端")
-        urllib.request.urlretrieve(CLOUDFLARED_WINDOWS_URL, source)
+        # urlretrieve 已弃用且无超时；改用带超时的 urlopen 分块写入，避免网络挂起无限阻塞打包。
+        with urllib.request.urlopen(CLOUDFLARED_WINDOWS_URL, timeout=120) as response, open(source, "wb") as handle:
+            shutil.copyfileobj(response, handle)
 
     tools_dir = os.path.join(staging, "tools")
     os.makedirs(tools_dir, exist_ok=True)

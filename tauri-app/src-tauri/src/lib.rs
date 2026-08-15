@@ -253,6 +253,9 @@ fn cancel_bridge_request_sync(request_id: &str) -> Result<bool, String> {
 #[tauri::command]
 /// 通过 Python 更新器安装指定包，成功启动安装后退出当前桌面进程。
 async fn install_update(app: tauri::AppHandle, path: String) -> Result<Value, String> {
+    // 与 open_local_path 一致：Rust 边界先拒绝相对路径和不存在的安装包，避免把任意路径
+    // 交给高权限安装命令；最终能否安装仍由 Python updater 二次校验。
+    let _ = validate_open_path(&path)?;
     let request = BridgeRequest {
         action: "updater.install".into(),
         payload: serde_json::json!({"path": path}),

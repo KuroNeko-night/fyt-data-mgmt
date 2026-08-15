@@ -81,6 +81,9 @@ def _ensure_initial_admin(
         "VALUES (?, ?, ?, ?, 'admin', 'approved', ?, ?)",
         ("admin", "系统管理员", salt, digest, created_at, created_at),
     )
+    # 建号成功后立即清除进程环境中的明文密码，避免其在服务进程整个生命周期内驻留，
+    # 可通过 /proc/<pid>/environ 或等价手段被读取。文件来源的 Docker secret 由部署方管理。
+    os.environ.pop("FYT_ADMIN_PASSWORD", None)
 
 
 def _load_initial_admin_password() -> str:

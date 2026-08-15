@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from web_backend.errors import ApiError
+from web_backend.config import BUSINESS_TZ
 
 
 @dataclass(frozen=True)
@@ -250,7 +251,7 @@ def auto_backup_if_due(deps: BackupDependencies) -> str:
     继续重试。
     """
     state_path = deps.data_root / "auto_backup_state.json"
-    today = datetime.now().strftime("%Y%m%d")
+    today = datetime.now(BUSINESS_TZ).strftime("%Y%m%d")  # 按业务时区去重，避免服务器本地时区导致同一天重复备份或漏备份。
     last = ""
     try:
         if state_path.is_file():

@@ -39,6 +39,15 @@ class AuthDependencies:
     login_lock_seconds: int
 
 
+def _secure_cookie_flag(handler: Any) -> str:
+    """返回会话 Cookie 的 Secure 属性。
+
+    登录签发与登出清除必须使用同一组属性，否则同名 Secure/非 Secure Cookie 会并存，
+    登出无法真正清除会话。此处信任反向代理透传的 X-Forwarded-Proto 以识别 HTTPS。
+    """
+    return "; Secure" if handler.headers.get("X-Forwarded-Proto", "").lower() == "https" else ""
+
+
 def register(handler: Any, body: dict[str, object], deps: AuthDependencies) -> None:
     """创建待审核账号，并返回不包含密码信息的申请结果。"""
     username = str(body.get("username", "")).strip().lower()  # 账号统一小写，避免 Alice 与 alice 绕过唯一约束形成视觉重复。
@@ -126,7 +135,7 @@ def login(handler: Any, body: dict[str, object], deps: AuthDependencies) -> None
                 timestamp, address, str(handler.headers.get("User-Agent", ""))[:300],
             ),
         )
-    secure = "; Secure" if handler.headers.get("X-Forwarded-Proto", "").lower() == "https" else ""  # 反向代理终止 TLS 时仍让浏览器仅经 HTTPS 携带 Cookie。
+    secure = _secure_cookie_flag(handler)  # 反向代理终止 TLS 时仍让浏览器仅经 HTTPS 携带 Cookie。
     cookie = f"fyt_session={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age={deps.session_days * 86400}{secure}"
     handler.send_json({"token": token, "user": deps.user_public(row)}, cookie=cookie)
 
@@ -138,7 +147,7 @@ def logout(handler: Any, deps: AuthDependencies) -> None:
         connection.execute("DELETE FROM sessions WHERE token = ?", (token,))
     handler.send_json(
         {"message": "已退出登录"},
-        cookie="fyt_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0",
+        cookie=f"fyt_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0{_secure_cookie_flag(handler)}",
     )
 
 

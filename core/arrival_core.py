@@ -359,14 +359,16 @@ def _style(cell, bold=False, fill=False, align=CENTER):
     if fill:
         cell.fill = BLUE_FILL
 
-def _write_batch(ws, c0, batch_no, materials, total, remark, top_label):
+def _write_batch(ws, c0, batch_no, materials, total, remark, top_label, pending=0):
     """从起始列写入一个横向批次区块，并返回缺料与已到类别数。
 
     每个区块固定占七个业务列，外加两个空列形成九列步长。``materials`` 一行代表一个
-    未收物料类别，因此差异是明细行数，已到类别数按总类别数减差异计算。
+    未收物料类别，因此差异是明细行数；``pending`` 是“剩余未收数”读不到值（公式未刷新）
+    的行数，不能当作已到货。已到类别数按总类别数减差异再减待核对数计算，异常负值仍由
+    上层结果质量提示处理。
     """
     diff = len(materials)
-    arrived = total - diff  # 保留源业务口径；异常负值由上层结果质量提示处理。
+    arrived = total - diff - pending  # 公式未刷新的待核对行不得计入已到货，避免误报“全部已到货”。
     # 第一、二行是截止标签与批次号，横跨区块前三列并保持白底。
     for row, val in [(1, top_label), (2, batch_no)]:
         ws.cell(row=row, column=c0, value=val)
@@ -412,7 +414,8 @@ def build_workbook(batches, top_label, out_path):
     col = FIRST_COL
     for b in batches:
         diff, arrived = _write_batch(ws, col, b["batch_no"], b["materials"],
-                                     b["total"], b.get("remark", ""), top_label)
+                                     b["total"], b.get("remark", ""), top_label,
+                                     b.get("pending", 0))
         results.append((b["batch_no"], diff, arrived, b["total"]))
         col += BATCH_STRIDE  # 七个业务列后留两列间隔，避免相邻批次视觉粘连。
     # 与 purchase/delivery 一致: 目标被 Excel 占用时给出友好提示
@@ -460,7 +463,8 @@ def build_batches(rows_data, top_label, log=None, resolver=None, fill_counts=Non
             total = auto_total or DEFAULT_TOTAL
         remark = row.get("remark", "")
         batches.append({"batch_no": bn, "materials": materials,
-                        "total": total, "auto_total": auto_total, "remark": remark})
+                        "total": total, "auto_total": auto_total, "remark": remark,
+                        "pending": inspection.get("pending", 0)})
         if bn:
             mem[bn] = {"total": total, "remark": remark}
     return batches, mem

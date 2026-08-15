@@ -76,15 +76,19 @@ def detect_uncached_formula(
 
 
 def warn_if_uncached(path: str, log, sheet: str | None = None, what: str = "数据") -> bool:
-    """发现公式缓存风险时记录客户可执行的修复步骤。"""
+    """发现公式缓存风险时记录客户可执行的修复步骤。
 
+    ``log`` 允许为 ``None``（各业务入口默认不传回调）；此时只返回是否命中，不再写日志，
+    避免把“公式未刷新”的预警升级成 ``TypeError`` 中断整个业务任务。
+    """
     if not detect_uncached_formula(path, sheet):
         return False
-    log(
-        "⚠ 警告：《%s》中%s所在列含未刷新的公式（读取值为空），可能导致漏算或算错。"
-        % (os.path.basename(path), what)
-    )
-    log("  请先用 Excel 打开该表、按 Ctrl+S 保存一次以刷新公式后重试。")
+    if log is not None:
+        log(
+            "⚠ 警告：《%s》中%s所在列含未刷新的公式（读取值为空），可能导致漏算或算错。"
+            % (os.path.basename(path), what)
+        )
+        log("  请先用 Excel 打开该表、按 Ctrl+S 保存一次以刷新公式后重试。")
     return True
 
 

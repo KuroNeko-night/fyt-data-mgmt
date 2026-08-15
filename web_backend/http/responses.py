@@ -20,7 +20,7 @@ def send_json(
     cookie: str = "",
 ) -> None:
     """发送 UTF-8 JSON 响应，并禁止浏览器缓存接口数据。"""
-    raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")  # 保留中文可读性，再按字节长度生成 Content-Length。
+    raw = json.dumps(payload, ensure_ascii=False, allow_nan=False).encode("utf-8")  # 保留中文可读性；禁用 NaN/Infinity，避免生成浏览器无法解析的非标准 JSON。
     handler.send_response(status)
     handler.send_header("Content-Type", "application/json; charset=utf-8")
     handler.send_header("Content-Length", str(len(raw)))

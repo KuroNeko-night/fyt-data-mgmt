@@ -16,12 +16,15 @@
 import datetime
 import contextlib
 import json
+import logging
 import os
 import sqlite3
 import time
 import uuid
 
 from . import paths
+
+_log = logging.getLogger(__name__)  # 历史记录是辅助能力，失败只降级不阻断业务，但必须留下可观测日志。
 
 
 _SCHEMA = """
@@ -103,8 +106,9 @@ def start_task(feature, title, meta=None, db_path=None):
                   _now_text(), now_ts,
                  json.dumps(meta or {}, ensure_ascii=False, default=str), request_id))
         return task_id
-    except Exception:
+    except Exception as exc:
         # 历史记录故障不能阻断业务入口，空 ID 会让 finish_task 安全地跳过。
+        _log.warning("写入任务开始记录失败：%s", exc)
         return ""
 
 
@@ -133,8 +137,9 @@ def finish_task(task_id, status="ok", message="", output_dir="", db_path=None):
                 (status, _now_text(), duration_ms, str(message or "")[:2000],
                  str(output_dir or ""), task_id))
         return True
-    except Exception:
+    except Exception as exc:
         # 与 start_task 一致，历史写入失败只通过返回值告知调用方。
+        _log.warning("写入任务结束记录失败：%s", exc)
         return False
 
 
@@ -154,7 +159,8 @@ def mark_interrupted(db_path=None):
                 "message=CASE WHEN message='' THEN '程序退出前任务未正常结束' ELSE message END "
                 "WHERE status='running'", (_now_text(), now_ts))
             return cur.rowcount
-    except Exception:
+    except Exception as exc:
+        _log.warning("标记中断任务失败：%s", exc)
         return 0
 
 
@@ -172,7 +178,8 @@ def list_recent(limit=100, db_path=None):
                 "message,output_dir FROM task_history ORDER BY started_ts DESC LIMIT ?",
                 (limit,)).fetchall()
         return [dict(row) for row in rows]
-    except Exception:
+    except Exception as exc:
+        _log.warning("读取最近任务失败：%s", exc)
         return []
 
 
@@ -187,8 +194,8 @@ def summary(db_path=None):
                 # 若历史数据库未来出现新状态，也会动态加入结果并计入 total。
                 result[row["status"]] = int(row["n"])
                 result["total"] += int(row["n"])
-    except Exception:
-        pass
+    except Exception as exc:
+        _log.warning("汇总任务历史失败：%s", exc)
     return result
 
 
@@ -202,7 +209,8 @@ def clear_finished(db_path=None):
         with _connect(db_path) as conn:
             cur = conn.execute("DELETE FROM task_history WHERE status!='running'")
             return cur.rowcount
-    except Exception:
+    except Exception as exc:
+        _log.warning("清理已完成任务失败：%s", exc)
         return 0
 
 
@@ -224,5 +232,6 @@ def cancel_request(request_id, db_path=None):
                 "WHERE request_id=? AND status='running'",
                 (_now_text(), now_ts, request_id))
             return cur.rowcount
-    except Exception:
+    except Exception as exc:
+        _log.warning("取消任务登记失败：%s", exc)
         return 0

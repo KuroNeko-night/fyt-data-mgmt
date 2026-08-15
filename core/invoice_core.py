@@ -34,7 +34,8 @@ _COMPANY = re.compile(
 _DATE = re.compile(r"(\d{4})年(\d{1,2})月(\d{1,2})日")  # 月日允许一位，提取后统一补零。
 _NUM = re.compile(r"发票号码[:：]?(\d{20}|\d{8})")  # 锚定全电 20 位或旧版 8 位票号。
 _NUM_LOOSE = re.compile(r"\d{20}|\d{8}")  # 无锚点时的宽松兜底。
-_MONEY = re.compile(r"¥\s*([\d\s]+\.\s*\d\s*\d)")
+# 金额支持千分位逗号、整数金额与 PDF 拆散的空白；小数点后允许空白，转换前统一清理。
+_MONEY = re.compile(r"¥\s*([\d,\s]+(?:\.\s*[\d,\s]*\d)?)")
 _RATE = re.compile(r"(\d+)%")
 _SKIP_LINE = ("开户", "账号", "地址", "电话")
 
@@ -87,7 +88,7 @@ def _money3(raw):
     PDF 文本层常把金额数字拆入空格，正则允许并在转换前移除。发票明细区可能有多笔单价
     和金额，合计区通常位于末尾，因此采用最后三个。少于三个时返回空值并交给存疑流程。
     """
-    vals = [float(re.sub(r"\s+", "", m.group(1))) for m in _MONEY.finditer(raw)]
+    vals = [float(re.sub(r"[,\s]+", "", m.group(1))) for m in _MONEY.finditer(raw)]  # 同时移除千分位逗号和 PDF 拆散的空白。
     if len(vals) >= 3:
         return vals[-3], vals[-2], vals[-1]
     return None, None, None
@@ -520,10 +521,16 @@ def write_xlsx(rows, out_path, ym=""):
 
 
 def _as_date(s, datetime):
-    """把规范 ``YYYY-MM-DD`` 文本转换为 Excel 可识别的 datetime，其他值原样返回。"""
+    """把规范 ``YYYY-MM-DD`` 文本转换为 Excel 可识别的 datetime，其他值原样返回。
+
+    非法日历日期（如 2 月 30 日）会抛 ValueError，这里回退原始文本而非中断整表生成。
+    """
     m = re.match(r"(\d{4})-(\d{2})-(\d{2})", str(s or ""))
     if m:
-        return datetime.datetime(*[int(x) for x in m.groups()])
+        try:
+            return datetime.datetime(*[int(x) for x in m.groups()])
+        except ValueError:
+            return s or ""
     return s or ""
 
 

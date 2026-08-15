@@ -770,9 +770,16 @@ def delete_workshop_issue(handler: Any, path: str, deps: WorkshopDependencies) -
     folder = deps.issue_dir(int(row["user_id"]), issue_id)
     if row["status"] == "draft":
         with deps.storage_lock:
-            shutil.rmtree(folder, ignore_errors=True)
+            # 先以状态守卫删除记录：并发发布会把状态改为 published，守卫令 rowcount 为 0，
+            # 从而避免把刚公开的问题按草稿路径永久删除（绕过回收站）。记录删除成功后才清理
+            # 图片目录，保证“已发布却被删记录”的情况不会发生。
             with deps.db_lock, deps.db() as connection:
-                connection.execute("DELETE FROM workshop_issues WHERE id = ?", (issue_id,))
+                changed = connection.execute(
+                    "DELETE FROM workshop_issues WHERE id = ? AND status = 'draft'", (issue_id,)
+                ).rowcount
+            if not changed:
+                raise ApiError(HTTPStatus.CONFLICT, "问题状态已经发生变化")
+            shutil.rmtree(folder, ignore_errors=True)
         handler.send_json({"message": "未发布草稿已删除"})
         return
     images = _workshop_issue_images(issue_id, deps)

@@ -20,7 +20,7 @@ import type { StatusKey } from "./ui/status";
 import "./workflows.css";
 
 type FieldKind = "text" | "select" | "checkbox" | "textarea" | "month";
-type OptionField = { key: string; label: string; kind: FieldKind; value: string | boolean; choices?: Array<[string, string]>; placeholder?: string };
+type OptionField = { key: string; label: string; kind: FieldKind; value: string | boolean; choices?: Array<[string, string]>; placeholder?: string; optional?: boolean };
 type FileGroup = { key: string; label: string; description: string; multiple?: boolean; optional?: boolean; accept: string };
 type FeatureSpec = { action: string; reviewAction?: string; reviewOnly?: boolean; files: FileGroup[]; options: OptionField[]; runLabel: string; reviewLabel?: string };
 
@@ -54,7 +54,7 @@ const SPECS: Record<string, FeatureSpec> = {
     { key: "night_start_hour", label: "夜班开始时间（时）", kind: "text", value: "17" },
     { key: "night_workday_hours", label: "夜班标准工时", kind: "text", value: "11" },
     { key: "night_max_hours", label: "夜班合理工时上限", kind: "text", value: "16" },
-    { key: "skip_extra", label: "额外假休标记（可选）", kind: "textarea", value: "", placeholder: "用逗号或换行分隔，例如：培训、外勤" },
+    { key: "skip_extra", label: "额外假休标记（可选）", kind: "textarea", value: "", optional: true, placeholder: "用逗号或换行分隔，例如：培训、外勤" },
   ] },
   attendance_archive: { action: "attendance_archive.run", runLabel: "生成月度汇总", files: [
     { key: "paths", label: "考勤填报表", description: "可多选本月已填写的考勤表，自动按姓名汇总出勤天数、工时、加班与异常。", multiple: true, accept: ".xlsx,.xlsm" },
@@ -255,7 +255,11 @@ export function FeatureWorkspace({ feature, onBack, onCompleted, initialJobId }:
   const canRun = isReconcile ? Boolean(reconcileHandles.length && selected.size && month.trim())
     : isArrival ? arrivalRows.some((row) => row.include && row.total > 0 && row.batch_no.trim())
     : spec.files.every((group) => group.optional || (files[group.key]?.length || 0) > 0)
-    && spec.options.filter((field) => ["textarea"].includes(field.kind) || field.key === "amount").every((field) => String(options[field.key] || "").trim());
+    // 仅“明确必填”的输入项参与可用性判断：金额，以及未标记 optional 的文本域；可选文本域
+    // （如考勤的“额外假休标记”）留空不应阻止启动，否则会把可选字段误判成必填导致按钮永远禁用。
+    && spec.options
+      .filter((field) => !field.optional && (field.kind === "textarea" || field.key === "amount"))
+      .every((field) => String(options[field.key] || "").trim());
 
   useEffect(() => {
     // 历史同时匹配正式动作与分析动作，使待复核任务也能在当前功能下恢复。

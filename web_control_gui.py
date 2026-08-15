@@ -27,6 +27,10 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import messagebox, simpledialog, ttk
 
+# 密码策略与 Web 服务端共用 web_backend/passwords.py（纯标准库，不引入业务算法），
+# 控制台只做预检提示；此处保留 ``_password_policy_error`` 旧名以兼容测试导入。
+from web_backend.passwords import password_policy_error as _password_policy_error
+
 
 ROOT = Path(__file__).resolve().parent
 # 打包兼容：frozen 下 ROOT 指向部署包根目录（web-data、web-app/dist 与其同级），
@@ -278,25 +282,18 @@ def _admin_account_exists(path: Path = DB_PATH) -> bool:
     """
     if not path.is_file():
         return False
+    connection = None
     try:
-        with sqlite3.connect(path) as connection:
-            row = connection.execute(
-                "SELECT 1 FROM users WHERE username = 'admin' AND role = 'admin' LIMIT 1"
-            ).fetchone()
+        connection = sqlite3.connect(path)
+        row = connection.execute(
+            "SELECT 1 FROM users WHERE username = 'admin' AND role = 'admin' LIMIT 1"
+        ).fetchone()
         return row is not None
     except sqlite3.Error:
         return False
-
-
-def _password_policy_error(password: str) -> str:
-    """与服务端保持一致的首次管理员密码规则。"""
-    if len(password) < 10:
-        return "密码至少 10 位"
-    if len(password) > 128:
-        return "密码不能超过 128 位"
-    if not any(char.isalpha() for char in password) or not any(char.isdigit() for char in password):
-        return "密码需同时包含字母和数字"
-    return ""
+    finally:
+        if connection is not None:
+            connection.close()  # 只读查询也显式关闭，避免 Windows 上短暂占用数据库文件句柄。
 
 
 def _windows_process_image(pid: int) -> str:

@@ -1022,6 +1022,8 @@ def analyze_workbooks(in_paths, on_file=None, resolver=None, fill_counts=None):
        也不修改源工作簿；调用方必须把计划展示给人工后再进入 ``apply_plan``。
        """
     import os
+    if isinstance(in_paths, str):
+        in_paths = [in_paths]  # 入口统一归一化，避免单字符串路径被逐字符遍历。
     resolver = resolver or material_catalog.CatalogResolver()
     sheets = []
     sid = 0
@@ -1470,6 +1472,8 @@ def analyze(in_paths, log=None, progress=None):
     ``log`` 与 ``progress`` 只报告状态，不改变分析结果。该入口读取全部源文件并返回
     人工复核计划，不创建输出文件。
     """
+    if isinstance(in_paths, str):
+        in_paths = [in_paths]  # 兼容直接传单个路径字符串的调用方，避免 len/遍历按字符计。
     if log:
         log("正在分析 %d 个文件…" % len(in_paths))
     on_file = None

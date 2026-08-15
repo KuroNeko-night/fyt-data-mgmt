@@ -363,6 +363,8 @@ def export_report(result, out_dir=None, out_name="差异报告.xlsx", log=None):
     对应原始整行并标黄。没有单边记录时仍创建只有关键列表头的空页，使报告结构
     固定，便于人工查看和后续程序读取。
     """
+    # 只取文件名，拒绝调用方通过 ``out_name`` 携带目录片段越出输出目录。
+    out_name = os.path.basename(out_name) or "差异报告.xlsx"
     out_dir = out_dir or os.getcwd()
     if not os.path.isdir(out_dir):
         # 允许调用方传入尚不存在的业务输出目录，避免保存时才抛出路径错误。

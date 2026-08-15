@@ -103,7 +103,12 @@ def _detect_layout(worksheet) -> tuple[int, dict[str, int]] | None:
     openpyxl 的 1 基行列号；没有完整必要字段时返回 ``None``。
     """
     best = None
-    scan_rows = min(12, worksheet.max_row or 12)
+    max_row = worksheet.max_row
+    if not max_row:
+        # 空表或缺少 dimension 的第三方导出页签没有可扫描的行，直接跳过，避免 fallback 成 12
+        # 后随机访问 worksheet[row] 触发 IndexError。
+        return None
+    scan_rows = min(12, max_row)
     for row_index in range(1, scan_rows + 1):
         columns: dict[str, int] = {}
         for cell in worksheet[row_index]:

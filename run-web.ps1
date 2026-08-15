@@ -24,7 +24,9 @@ if ($Foreground) {
   # 前台模式有意使用 python.exe，使终端可直接接收标准输出、错误和 Ctrl+C。
   Write-Host "[启动] 峰运通 Web 服务: http://$HostAddress`:$Port"
   & $python $server
-  exit $LASTEXITCODE
+  $code = $LASTEXITCODE
+  Remove-Item Env:FYT_ADMIN_PASSWORD -ErrorAction SilentlyContinue  # 服务进程已在启动时读取密码，立即清理本进程环境。
+  exit $code
 }
 
 # 日志与 PID 跟随实际数据根，避免自定义 FYT_WEB_DATA 后停止脚本找不到进程记录。
@@ -41,5 +43,6 @@ $process = Start-Process -FilePath $pythonw `
   -RedirectStandardOutput $stdoutLog `
   -RedirectStandardError $stderrLog `
   -PassThru
+Remove-Item Env:FYT_ADMIN_PASSWORD -ErrorAction SilentlyContinue  # 子进程已继承密码副本，立即清理本进程环境，避免后续进程读取明文密码。
 Set-Content -LiteralPath (Join-Path $logDir "web-service.pid") -Value $process.Id -Encoding ascii  # 仅记录数字 PID，供受控停止脚本使用。
 Write-Host "[完成] Web 服务已在后台启动，进程号: $($process.Id)"

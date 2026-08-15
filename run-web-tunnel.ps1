@@ -1,4 +1,4 @@
-﻿param(
+param(
   [int]$Port = 8787,
   [string]$AdminPassword = "",
   [string]$TunnelName = ""
@@ -66,6 +66,7 @@ if (-not $existingWeb) {
 } else {
   Write-Host "[提示] Web 服务已经运行，进程号：$($existingWeb.Id)"
 }
+Remove-Item Env:FYT_ADMIN_PASSWORD -ErrorAction SilentlyContinue  # 首次建库密码仅供 Web 服务启动读取，随后立即清理本进程环境。
 
 # 命名隧道由本机既有凭据决定路由；快速隧道则明确代理到当前 Web 回环端口。
 $tunnelArguments = if ($TunnelName) {

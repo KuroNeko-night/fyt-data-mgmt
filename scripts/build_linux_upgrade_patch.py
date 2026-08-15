@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import os
 import shutil
@@ -50,16 +51,24 @@ def sha256(path: Path) -> str:
 
 
 def read_version() -> str:
-    """从项目版本单一事实源读取版本号，缺失时终止打包。"""
+    """从项目版本单一事实源读取版本号，缺失时终止打包。
 
-    namespace: dict[str, object] = {}
+    仅用 AST 解析 ``VERSION`` 的字符串字面量赋值，不执行版本文件，避免版本文件被污染
+    时给构建脚本引入任意代码执行面（构建常在 CI/自动化环境以高权限运行）。
+    """
     version_file = ROOT / "core" / "version.py"
-    # 直接执行版本模块可保留其常量推导规则，同时避免为构建脚本修改 sys.path。
-    exec(compile(version_file.read_bytes(), str(version_file), "exec"), namespace)
-    version = str(namespace.get("VERSION", "")).strip()
-    if not version:
-        raise RuntimeError("无法从 core/version.py 读取版本号")
-    return version
+    tree = ast.parse(version_file.read_text(encoding="utf-8"))
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        for target in node.targets:
+            if isinstance(target, ast.Name) and target.id == "VERSION":
+                value = node.value
+                if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                    version = value.value.strip()
+                    if version:
+                        return version
+    raise RuntimeError("无法从 core/version.py 读取版本号")
 
 
 def copy_runtime_payload(payload: Path) -> None:
