@@ -1,13 +1,17 @@
 import type { ReactNode } from "react";
 
+/** 图标组件参数：name 对应路径表中的图标键，size 控制像素尺寸。 */
 type Props = { name: string; size?: number };
 
 /**
  * 项目内置线性图标组件。
  * 所有图标共用同一 viewBox、描边和 currentColor，未知名称回退到网格图标而不让按钮空白。
+ * @param name 路径表 key；未知 key 回退到 `grid` 占位图标。
+ * @param size 图标宽高，默认 20 像素。
  */
 export function Icon({ name, size = 20 }: Props) {
   // aria-hidden 表示图标只作装饰，可访问名称由外层按钮的文字或 aria-label 提供。
+  // 统一 24x24 视口与 currentColor 描边，图标颜色自动跟随文字，主题切换无需换图。
   const common = { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round" as const, strokeLinejoin: "round" as const, "aria-hidden": true };
   // 路径表集中管理图形，避免为每个小图标创建独立组件和额外模块请求。
   const paths: Record<string, ReactNode> = {

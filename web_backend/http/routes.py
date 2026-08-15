@@ -172,6 +172,7 @@ def patch_routes(handler, body: dict[str, object]) -> tuple[dict[str, Callable[[
     """返回 PATCH 路由。"""
     return (
         {},
+        # PATCH 一律先读 JSON 再路由；具体编号由领域服务二次校验，路由只固定前缀。
         (
             ("/api/admin/users/", "", "", lambda value: handler.update_user(value, body)),
             ("/api/admin/daily-people/", "", "", lambda value: handler.update_daily_person(value, body)),
@@ -205,6 +206,7 @@ def delete_routes(handler) -> tuple[dict[str, Callable[[], None]], tuple[Pattern
             ("/api/admin/announcements/", "", "", handler.delete_announcement),
             ("/api/templates/", "", "", handler.delete_template),
             ("/api/library/files/", "", "", handler.delete_library_file),
+            # 图片删除规则必须先于通用问题删除，否则带 /images/ 的路径会被更宽泛的问题规则抢先匹配。
             ("/api/workshop/issues/", "", "/images/", handler.delete_workshop_issue_image),
             ("/api/workshop/issues/", "", "", handler.delete_workshop_issue),
         ),

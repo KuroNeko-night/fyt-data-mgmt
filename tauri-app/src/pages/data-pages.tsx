@@ -11,11 +11,16 @@ import { bridgeRequest, type LibraryItem, type LibrarySummary } from "../lib/bri
 import { confirmAction, openLocalPath } from "../lib/files";
 import Icon from "../components/Icon";
 
+/** 主数据与报表页面共用的 Excel 文件筛选器。 */
 const excelFilters = [{ name: "Excel 表格", extensions: ["xlsx", "xlsm", "xls"] }];
 
+/** 主数据完整快照：供应商与材料档案均以核心层返回值为准。 */
 type CatalogData = {
+  /** 供应商名称到编码的映射。 */
   suppliers: Record<string, string>;
+  /** 材料编号到名称、规格、单位、供应商的映射；字段允许缺省。 */
   materials: Record<string, { name?: string; spec?: string; unit?: string; supplier?: string }>;
+  /** 主数据最近更新时间。 */
   updated_at: string;
 };
 
@@ -99,6 +104,7 @@ export function CatalogPage() {
   </div>;
 }
 
+/** 字段映射业务类型键到中文使用场景的展示映射。 */
 const ROLE_KIND_LABELS: Record<string, string> = {
   att_source: "填报·系统数据表", att_target: "填报·待填考勤表",
   rec_source: "对账·数据来源", rec_zong: "对账·待对总表", rec_labor: "对账·劳务对账单",
@@ -107,6 +113,7 @@ const ROLE_KIND_LABELS: Record<string, string> = {
   custom: "自定义映射",
 };
 
+/** 字段角色键到中文列语义的展示映射。 */
 const ROLE_KEY_LABELS: Record<string, string> = {
   name: "姓名", date: "日期", on: "上班1打卡", off: "下班1打卡",
   sys_on: "上班(系统)", act_on: "上班(实际)", sys_off: "下班(系统)", act_off: "下班(实际)",
@@ -159,6 +166,7 @@ function humanSize(bytes: number) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
+/** 批次跟踪结果中的功能键到中文标题的展示映射。 */
 const TRACK_FEATURE_TITLES: Record<string, string> = {
   attendance: "考勤填报", reconcile: "工时对账", arrival: "到料明细", pivot: "销售透视",
   purchase: "采购对账", shipping_review: "发运评审对比", delivery: "送货计划", supplier_batch: "供应商批次表",
@@ -214,6 +222,7 @@ function itemKey(item: LibraryItem) {
   return `${item.category}\u0000${item.name}`;
 }
 
+/** 文件数据库导入动作结果。 */
 interface ImportResult { items: LibraryItem[]; }
 
 /**
@@ -338,8 +347,11 @@ export function DataLibraryPage({ initial, onSummary }: { initial: LibrarySummar
   </div>;
 }
 
+/** 字段映射记录：核心层学习到的列角色与表头位置。 */
 interface MappingItem {
+  /** id 为映射唯一标识；name 为来源文件或模板名称；role_kind 为业务类型键；sheet 为工作表名；header 为表头行（以零为起点）。 */
   id: string; name: string; role_kind: string; sheet: string; header: number;
+  /** roles 为列角色键到列号（以零为起点）的映射；updated_at 为最近更新时间。 */
   roles: Record<string, number>; updated_at: string;
 }
 
@@ -387,8 +399,11 @@ export function MappingPage() {
   </section></div>;
 }
 
+/** 模板版本：记录特定文件结构指纹对应的表头快照；version 为版本号，fingerprint 为结构指纹，headers 为表头，diff 为结构差异。 */
 interface TemplateVersion { version: number; fingerprint: string; headers: string[]; notes: string; diff: { summary: string }; created_at: string; }
+/** 模板版本间调整规则：from/to 为适用版本范围，rules 为列名替换、删除列和默认列调整。 */
 interface TemplateRule { from: number; to: number; rules: Record<string, unknown>; updated_at: string; }
+/** 模板条目：同一文件结构下的全部版本与调整规则。 */
 interface TemplateItem { id: string; name: string; role_kind: string; sheet: string; versions: TemplateVersion[]; rules: TemplateRule[]; updated_at: string; }
 
 /** 统计一条模板版本规则中的改名、删列和默认列数量，用于折叠区摘要。 */

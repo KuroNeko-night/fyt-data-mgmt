@@ -78,9 +78,13 @@ def _parse_time(text: str) -> datetime | None:
     本地筛选协议。该辅助函数不应替代需要严格时区换算的服务端业务日期逻辑。
     """
     try:
-        return datetime.fromisoformat(str(text).replace("Z", "+00:00").split("+")[0])
+        parsed = datetime.fromisoformat(str(text).replace("Z", "+00:00"))
     except (TypeError, ValueError):
         return None
+    if parsed.tzinfo is not None:
+        # 统一剥离时区并返回 naive 时间；兼容负偏移（如 -05:00），避免与 naive 时间比较时抛 TypeError。
+        parsed = parsed.replace(tzinfo=None)
+    return parsed
 
 
 def _report_rows(items: list[dict[str, object]]) -> tuple[dict[str, object], dict[str, object]]:

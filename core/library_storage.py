@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""本机文件库归档、删除和人工重分类所需的文件事务步骤。"""
+"""本机文件库归档、删除和人工重分类所需的文件事务步骤。
+
+本模块只提供纯文件系统步骤和索引条目构造，不负责加锁与事务编排；锁的获取顺序和
+整体回滚决策由 :mod:`library` 统筹。所有清理函数都采用尽力而为语义：逻辑提交完成后
+物理删除失败不应把成功操作改判为失败，因此异常被限制在单个文件上。"""
 
 from __future__ import annotations
 
@@ -24,6 +28,7 @@ def prepare_import_backup(destination: str) -> tuple[bool, str]:
     backup = destination + ".bak"
     if not os.path.exists(destination):
         return False, backup
+    # 同一归档只保留最近一次覆盖前的备份，旧备份不累积。
     if os.path.exists(backup):
         os.remove(backup)
     shutil.copy2(destination, backup)
@@ -46,6 +51,7 @@ def build_library_item(path: str, destination: str, info: dict, updated: str) ->
     return {
         "name": os.path.basename(path),
         "category": category,
+        # 多标签字段由分类结果提供；旧调用方缺省时退回主类别单标签。
         "categories": info.get("categories") or [category],
         "path": destination,
         "updated": updated,
@@ -87,6 +93,7 @@ def partition_items(items, category: str, name: str):
 def delete_item_files(items) -> None:
     """尽力删除归档及普通覆盖备份；逻辑删除已提交后不回滚索引。"""
 
+    # 归档与 .bak 一起清理，残留备份会在界面中表现为重复数据。
     for item in items:
         archive = item.get("path") or ""
         for candidate in (archive, archive + ".bak"):

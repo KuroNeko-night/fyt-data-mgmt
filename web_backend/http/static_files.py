@@ -19,7 +19,12 @@ class StaticFileDependencies:
 
 
 def _cache_control(relative: str, candidate: Path) -> str:
-    """按入口页、哈希资源和固定名称资源返回缓存策略。"""
+    """按入口页、哈希资源和固定名称资源返回缓存策略。
+
+    ``relative`` 是去除前导斜杠的请求路径，``candidate`` 是已通过路径穿越校验的最终
+    文件。入口页必须禁用缓存；带内容哈希的 assets 可永久缓存；其余固定名称资源使用
+    一周缓存，在部署更新和重复下载之间取平衡。
+    """
     if candidate.name == "index.html":
         # 入口页引用带哈希资源，缓存旧 HTML 会造成部署后白屏。no-transform 同时禁止
         # Cloudflare 等中间代理改写 HTML 并注入 Bot 检测脚本；系统不依赖这类脚本，
@@ -31,7 +36,11 @@ def _cache_control(relative: str, candidate: Path) -> str:
 
 
 def serve_static(handler: Any, path: str, deps: StaticFileDependencies) -> None:
-    """托管 Vite 构建产物，并为前端路由提供入口页回退。"""
+    """托管 Vite 构建产物，并为前端路由提供入口页回退。
+
+    未命中文件时回退到 ``index.html``，由 React Router 处理客户端路由；API 路径不会
+    进入本函数。任何 ``..`` 或符号链接逃逸都在发送前用 ``resolve`` 后的路径祖先关系拒绝。
+    """
     if not deps.static_root.exists():
         handler.send_json(
             {"error": "前端尚未构建，请运行 web-app\\npm run build"},

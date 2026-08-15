@@ -1,3 +1,9 @@
+/**
+ * 账号安全页。
+ *
+ * 提供当前账号的密码修改和登录设备管理；会话撤销、改密后的设备失效和
+ * 会话 Cookie 规则均由服务端执行，页面只做表单校验与结果同步。
+ */
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { changePassword, deleteLoginSession, loginSessions, type LoginSession } from "./api";
 import { Icon } from "./icons";

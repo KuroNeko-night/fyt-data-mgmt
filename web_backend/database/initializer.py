@@ -48,6 +48,8 @@ def initialize(
             hash_password=hash_password,
             password_policy_error=password_policy_error,
         )
+        # 清理过期会话与重启残留任务放在同一事务最后；失败回滚会连带撤销前面的建号或迁移，
+        # 保证服务不会在状态不确定的数据库上继续启动。
         _cleanup_runtime_state(connection)
 
 
@@ -81,6 +83,9 @@ def _ensure_initial_admin(
         "VALUES (?, ?, ?, ?, 'admin', 'approved', ?, ?)",
         ("admin", "系统管理员", salt, digest, created_at, created_at),
     )
+    # 建号成功后立即清除进程环境中的明文密码，避免其在服务进程整个生命周期内驻留，
+    # 可通过 /proc/<pid>/environ 或等价手段被读取。文件来源的 Docker secret 由部署方管理。
+    os.environ.pop("FYT_ADMIN_PASSWORD", None)
 
 
 def _load_initial_admin_password() -> str:
@@ -114,10 +119,12 @@ def _cleanup_runtime_state(connection: Any) -> None:
         "DELETE FROM sessions WHERE expires_at < ?",
         (now_timestamp,),
     )
+    # 登录失败记录只保留最近 24 小时，过期键不再参与锁定窗口计算。
     connection.execute(
         "DELETE FROM login_attempts WHERE last_failed_at < ?",
         (now_timestamp - 86400,),
     )
+    # 服务端重启后，排队中和运行中的任务不可能继续完成，统一标记为中断供用户重试。
     connection.execute(
         "UPDATE web_jobs SET status = 'interrupted', error = ? "
         "WHERE status IN ('queued', 'running')",

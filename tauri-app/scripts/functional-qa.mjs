@@ -33,8 +33,14 @@ function ensure(condition, message) {
 /**
  * 创建带有模拟 Tauri 桥接的独立页面。
  *
- * settingsDelay 专门模拟桌面设置读取较慢的情况。每次调用均创建新页面和新模拟状态，
- * 防止前一个用例的 localStorage、文件选择队列或任务执行次数污染后续断言。
+ * @param {import("playwright").Browser} browser 已经启动的无头 Chrome 浏览器实例。
+ * @param {{ settingsDelay?: number }} [options] 可选配置；settingsDelay 专门模拟桌面
+ *   设置读取较慢的情况，大于 0 时页面会在设置返回前先渲染出来。
+ * @returns {Promise<{ page: import("playwright").Page, errors: string[] }>}
+ *   返回隔离页面与运行期间收集到的控制台错误列表。
+ *
+ * 每次调用均创建新页面和新模拟状态，防止前一个用例的 localStorage、文件选择队列
+ * 或任务执行次数污染后续断言。
  */
 async function createMockPage(browser, { settingsDelay = 0 } = {}) {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
@@ -61,6 +67,7 @@ async function createMockPage(browser, { settingsDelay = 0 } = {}) {
     const task = (result, outDir = "C:\\mock\\output") => ({
       result, logs: [], task_id: `mock-${Date.now()}`, out_dir: outDir,
     });
+    // 桥接动作按真实白名单逐一返回合成结果；未声明的动作抛错，保证测试与桥接同步演进。
     const bridge = async (request) => {
       const { action, payload = {} } = request;
       if (action === "system.health") return { app_name: "峰运通数据管理系统", version: "1.3.0", python: "mock", platform: "win32", project_root: "C:\\mock", features: [] };
@@ -113,6 +120,7 @@ async function createMockPage(browser, { settingsDelay = 0 } = {}) {
         throw new Error(`未模拟 Tauri 命令：${command}`);
       },
     };
+    // 当前页面不消费 Tauri 事件插件，提供空实现以满足运行时初始化要求。
     window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener() {} };
     localStorage.setItem("fyt-desktop-mode", "local"); // 明确进入本机桌面模式，避免误走 Web 登录协议。
     Object.keys(localStorage).forEach((key) => key.startsWith("fyt-page-guide-v1:") && localStorage.removeItem(key));
@@ -130,6 +138,7 @@ async function createMockPage(browser, { settingsDelay = 0 } = {}) {
   return { page, errors };
 }
 
+// 全部功能用例共用一个浏览器实例，结束时由 finally 统一关闭。
 const browser = await chromium.launch({ executablePath: chromePath, headless: true });
 try {
   const { page, errors } = await createMockPage(browser);

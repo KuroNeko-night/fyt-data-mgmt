@@ -1,8 +1,15 @@
+/**
+ * 批次跟踪页面。
+ *
+ * 通过服务端跨任务检索同一批次号在考勤、到料、对账、采购等环节的处理记录，
+ * 前端只负责展示动作中文名与状态，不参与批次解析或结果文件内容读取。
+ */
 import { FormEvent, useState } from "react";
 import { batchTrack, type BatchTrackItem } from "./api";
 import { Icon } from "./icons";
 import PageHeader from "./ui/PageHeader";
 
+// 服务端动作键到客户界面业务名称的映射；未知动作由调用方回退为“业务处理”。
 const ACTION_LABELS: Record<string, string> = {
   "attendance.run": "考勤填报", "reconcile.run": "工时对账", "web.reconcile.review": "工时对账复核",
   "web.arrival": "到料明细", "pivot.run": "销售透视", "web.pivot.review": "销售透视复核",
@@ -41,7 +48,7 @@ export function BatchTrackPage() {
     <form className="fyt-batch-search" onSubmit={(event) => void search(event)}><Icon name="search" size={16} /><input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="输入批次号，例如 26036-02" /><button type="submit" disabled={busy || !keyword.trim()}>{busy ? "搜索中" : "搜索"}</button></form>
     {error ? <div className="fyt-notice fyt-notice-error" role="alert">{error}</div> : null}
     {searched && !busy && !error ? <div className="fyt-batch-results">
-      {items.length ? items.map((item) => <article className="fyt-batch-result-row" key={item.job_id}><div className={`fyt-batch-result-icon ${item.status}`}><Icon name={item.status === "completed" ? "check" : item.status === "failed" ? "x" : "activity"} size={17} /></div><div className="fyt-batch-result-main"><div className="fyt-batch-result-title"><strong>{ACTION_LABELS[item.action] || item.action}</strong><span className={`fyt-batch-result-status ${item.status}`}><i />{statusLabel(item.status)}</span></div><small>{new Date(item.created_at).toLocaleString("zh-CN")} · {item.title}{item.files.length ? ` · 结果：${item.files.join("、")}` : ""}</small></div></article>) : <div className="fyt-empty-state"><img src="/illustrations/search-results.svg" alt="" /><span>没有找到与「{keyword.trim()}」相关的任务记录</span></div>}
+      {items.length ? items.map((item) => <article className="fyt-batch-result-row" key={item.job_id}><div className={`fyt-batch-result-icon ${item.status}`}><Icon name={item.status === "completed" ? "check" : item.status === "failed" ? "x" : "activity"} size={17} /></div><div className="fyt-batch-result-main"><div className="fyt-batch-result-title"><strong>{ACTION_LABELS[item.action] || "业务处理"}</strong><span className={`fyt-batch-result-status ${item.status}`}><i />{statusLabel(item.status)}</span></div><small>{new Date(item.created_at).toLocaleString("zh-CN")} · {item.title}{item.files.length ? ` · 结果：${item.files.join("、")}` : ""}</small></div></article>) : <div className="fyt-empty-state"><img src="/illustrations/search-results.svg" alt="" /><span>没有找到与「{keyword.trim()}」相关的任务记录</span></div>}
     </div> : null}
   </div>;
 }

@@ -116,6 +116,7 @@ def _start_bridge_process(job_id: str, user_id: int, deps: BridgeDependencies):
             "无法启动任务进程：%s（命令：%r，工作目录：%s，frozen=%s）"
             % (exc, command, work_dir, getattr(sys, "frozen", False))
         ) from exc
+    # 登记必须与启动在同一临界区可见：取消接口随时可能按任务编号查找句柄，漏登记会让取消失效。
     with deps.job_lock:
         deps.job_processes[job_id] = process
     return process
@@ -180,6 +181,8 @@ def run_bridge(
         assert process.stdin is not None
         process.stdin.write(request)
         process.stdin.close()
+        # 先关闭子进程 stdin，再启动 stderr 消费线程，最后阻塞读取 stdout。stderr 若无人
+        # 读取会写满管道并导致子进程阻塞；stdout 必须由主线程同步读回完整响应。
         reader.start()
         assert process.stdout is not None
         raw_output = process.stdout.read()

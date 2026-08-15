@@ -13,6 +13,12 @@ import Button from "../ui/Button";
 import IconButton from "../ui/IconButton";
 import Notice from "../ui/Notice";
 
+/**
+ * 文件选择区的受控属性。
+ *
+ * `value` 由父页面持有，选择、拖放和排序结果都通过 `onChange` 回传；
+ * 组件只负责文件选择交互，不读取文件内容也不执行业务。
+ */
 interface FilePickerFieldProps {
   label: string;
   description: string;
@@ -134,6 +140,12 @@ export function FilePickerField({
   );
 }
 
+/**
+ * 任务面板的快照属性。
+ *
+ * 面板不持有任务本身：运行、取消、日志、进度和结果路径均由父页面通过 Hook 提供，
+ * 这里只负责派生展示阶段和提供“打开结果/输出目录”的本地系统调用。
+ */
 interface TaskPanelProps {
   busy: boolean;
   error: string;
@@ -148,6 +160,7 @@ interface TaskPanelProps {
   onCancel?: () => void;
 }
 
+/** 固定三步处理流程的客户文案，步骤编号与完成边界由 WorkflowSteps 统一计算。 */
 const WORKFLOW_STEPS = ["准备文件", "检查设置", "运行并查看结果"];
 
 /** 根据当前阶段渲染固定的三步业务流程，`done` 表示已完成边界，`step` 表示当前高亮边界。 */
@@ -176,6 +189,7 @@ export function TaskPanel({
   const [actionError, setActionError] = useState("");
   // 只有任务已停止、无业务错误且存在可访问结果时，才把流程判定为完整成功。
   const succeeded = !busy && !error && Boolean(outputPath || outDir);
+  // step 决定高亮到哪一步，done 决定哪些步骤显示完成勾；两者由同一批状态派生，保持视觉一致。
   const step = succeeded || busy ? 3 : canRun ? 2 : 1;
   const done = succeeded ? 3 : busy ? 2 : canRun ? 1 : 0;
 

@@ -7,6 +7,12 @@
  */
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
+/**
+ * 引导组件的受控属性。
+ *
+ * `open` 决定是否渲染；`refreshKey` 变化会驱动步骤重新采集；`reduceMotion`
+ * 只控制滚动动画，不影响步骤生成与键盘焦点圈定。
+ */
 interface GuidedTourProps {
   open: boolean;
   pageKey: string;
@@ -17,6 +23,7 @@ interface GuidedTourProps {
   refreshKey: string;
 }
 
+/** 单条引导步骤：持有真实 DOM 引用、客户文案与初始方位。 */
 interface TourStep {
   key: string;
   element: HTMLElement;

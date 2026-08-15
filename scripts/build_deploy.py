@@ -41,6 +41,7 @@ VENV_PYINSTALLER = [PYTHON, "-m", "PyInstaller"]
 # Docker 与 Linux 包共用同一运行依赖锁文件，避免部署方式之间悄然出现版本差异。
 RUNTIME_REQUIREMENTS_PATH = os.path.join(ROOT, "requirements-runtime.txt")
 
+# Linux 安装与 systemd 单元模板的事实源；构建时只从该目录筛选，避免出现多份漂移副本。
 LINUX_SCRIPTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "packaging", "linux")
 
 LINUX_README = """# 峰运通数据管理系统 —— Linux 服务端部署包
@@ -238,14 +239,34 @@ SOURCE_IGNORED_DIRS = {
 
 
 def run(command: list[str]) -> None:
-    """在仓库根目录执行构建命令，失败时立即停止后续打包。"""
+    """在仓库根目录执行构建命令，失败时立即停止后续打包。
+
+    参数：
+        command: 要执行的命令及参数列表；执行前会打印，便于人工核对打包动作。
+    返回值：
+        无。
+    副作用：
+        在仓库根目录启动子进程，标准输出与错误直接继承当前控制台。
+    异常：
+        命令非零退出时抛出 ``subprocess.CalledProcessError``，用于快速终止整条打包链。
+    """
 
     print(">>", " ".join(str(item) for item in command))
     subprocess.run(command, cwd=ROOT, check=True)
 
 
 def build_web_dist() -> None:
-    """构建 Web 静态文件；Windows 通过 cmd 解析 npm.cmd，其他平台直接调用 npm。"""
+    """构建 Web 静态文件；Windows 通过 cmd 解析 npm.cmd，其他平台直接调用 npm。
+
+    返回值：
+        无。
+    副作用：
+        在 ``web-app/dist`` 生成或覆盖静态文件。
+    不变量：
+        任何部署包复制前端产物前都必须先调用本函数，保证页面与当前源码版本一致。
+    异常：
+        由 ``run`` 透传的 ``subprocess.CalledProcessError``。
+    """
 
     if sys.platform.startswith("win"):
         run(["cmd", "/c", "npm", "--prefix", "web-app", "run", "build"])
@@ -265,6 +286,7 @@ def _source_ignore(directory: str, names: list[str]) -> set[str]:
     """
 
     ignored: set[str] = set()
+    # 统一为 POSIX 相对路径，保证 Windows 构建机上逐级目录比较与白名单书写一致。
     relative_dir = os.path.relpath(directory, ROOT).replace("\\", "/")
     for name in names:
         path = os.path.join(directory, name)
@@ -302,6 +324,15 @@ def build_source_bundle(version: str) -> str:
 
     同版本暂存目录会被重建，但删除范围严格限定在 ``dist/deploy/source`` 下。维护规范
     现在属于仓库根文件；仅在兼容旧工作区布局时，才从仓库上一级补充 ``AGENTS.md``。
+
+    参数：
+        version: ``core/version.py`` 中的版本号，只用于命名暂存目录。
+    返回值：
+        组装完成的暂存目录绝对路径。
+    副作用：
+        重建 ``dist/deploy/source/<版本>`` 并写入 ``源码包说明.md``；不触碰仓库源文件。
+    异常：
+        源目录缺失或复制失败时由 ``shutil.copy2``/``copytree`` 抛出 ``OSError``。
     """
 
     work = os.path.join(ROOT, "dist", "deploy", "source")
@@ -327,13 +358,20 @@ def build_source_bundle(version: str) -> str:
     if not os.path.isfile(staged_agents) and os.path.isfile(legacy_agents):
         # 旧工作区曾把维护规范放在中文项目目录上一级；保留只读回退，避免历史源码包缺文件。
         shutil.copy2(legacy_agents, staged_agents)
+    # 说明文件统一 LF 换行，兼容 Linux 预览与 Windows 记事本，避免 CRLF 混入源码包。
     with open(os.path.join(staging, "源码包说明.md"), "w", encoding="utf-8", newline="\n") as handle:
         handle.write(SOURCE_README)
     return staging
 
 
 def _find_windows_cloudflared() -> str | None:
-    """按显式环境变量、PATH、仓库工具目录和标准安装目录查找 cloudflared。"""
+    """按显式环境变量、PATH、仓库工具目录和标准安装目录查找 cloudflared。
+
+    返回值：
+        第一个实际存在的候选程序路径；全部未命中时返回 ``None``，由调用方决定是否下载。
+    不变量：
+        只做路径探测与 ``os.path.isfile`` 检查，不下载、不执行、不修改环境变量。
+    """
 
     candidates = [
         os.environ.get("FYT_CLOUDFLARED_EXE"),
@@ -344,6 +382,7 @@ def _find_windows_cloudflared() -> str | None:
         base = os.environ.get(variable)
         if base:
             candidates.append(os.path.join(base, "cloudflared", "cloudflared.exe"))
+    # 显式环境变量优先于 PATH 与标准安装目录；只返回确实存在的文件，避免把无效路径交给复制步骤。
     return next((path for path in candidates if path and os.path.isfile(path)), None)
 
 
@@ -352,6 +391,16 @@ def bundle_windows_cloudflared(staging: str, work: str) -> str:
 
     优先复用管理员显式指定或本机已安装的程序；都不存在时才从官方发行地址下载。复制后
     必须成功执行 ``--version``，从而在交付前拦截错误架构、损坏下载或不可执行文件。
+
+    参数：
+        staging: Windows 交付目录根，函数在其中创建 ``tools`` 子目录。
+        work: PyInstaller 工作目录，下载候选放在其 ``_downloads`` 子目录。
+    返回值：
+        ``tools/cloudflared.exe`` 的最终路径。
+    副作用：
+        可能访问外网下载客户端；在 ``staging/tools`` 写入可执行文件与版本来源说明。
+    异常：
+        下载失败、复制失败或 ``--version`` 非零退出都会抛出对应异常并终止打包。
     """
 
     source = _find_windows_cloudflared()
@@ -360,8 +409,11 @@ def bundle_windows_cloudflared(staging: str, work: str) -> str:
         os.makedirs(download_dir, exist_ok=True)
         source = os.path.join(download_dir, "cloudflared.exe")
         print("[下载] 本机未找到 cloudflared，正在下载官方 Windows amd64 客户端")
-        urllib.request.urlretrieve(CLOUDFLARED_WINDOWS_URL, source)
+        # urlretrieve 已弃用且无超时；改用带超时的 urlopen 分块写入，避免网络挂起无限阻塞打包。
+        with urllib.request.urlopen(CLOUDFLARED_WINDOWS_URL, timeout=120) as response, open(source, "wb") as handle:
+            shutil.copyfileobj(response, handle)
 
+    # 无论复用本地文件还是新下载，都先复制到包内再验证，确保验证对象与交付文件完全一致。
     tools_dir = os.path.join(staging, "tools")
     os.makedirs(tools_dir, exist_ok=True)
     target = os.path.join(tools_dir, "cloudflared.exe")
@@ -390,6 +442,17 @@ def build_windows_bundle(version: str) -> str:
     服务端、任务桥接和 Tkinter 控制台分别保留各自 ``_internal``，避免多个 PyInstaller
     onedir 目录合并后同名动态库相互覆盖。spec 文件负责 GUI/控制台窗口策略，本函数只做
     产物编排、静态前端、辅助脚本及 Cloudflare 客户端装配。
+
+    参数：
+        version: 用于命名暂存目录和最终压缩包。
+    返回值：
+        组装完成的 Windows 暂存目录路径。
+    副作用：
+        重建 ``dist/deploy/windows/<版本>``，执行三次 PyInstaller 打包，并写入 BAT、
+        使用说明、Cloudflare 客户端与辅助脚本。
+    异常：
+        任一步骤失败都会向上抛出（通常为 ``subprocess.CalledProcessError`` 或 ``OSError``），
+        不会交付半成品目录。
     """
 
     work = os.path.join(ROOT, "dist", "deploy", "windows")
@@ -448,6 +511,16 @@ def build_linux_bundle(version: str) -> str:
     包目录与安装目标均使用 ASCII 名称，规避部分 systemd、旧 shell 和运维工具处理中文
     工作路径时的兼容问题。目标机的 Python 选择、依赖安装、数据迁移、服务切换与回滚由
     ``packaging/linux/install.sh`` 负责，本函数只复制其唯一事实源和运行所需代码。
+
+    参数：
+        version: 用于命名包目录和 ``VERSION`` 文件。
+    返回值：
+        组装完成的 Linux 暂存目录路径。
+    副作用：
+        仅清理并重建 ``dist/deploy/linux`` 下的历史暂存目录；不读取、不覆盖、不删除
+        目标机 ``/var/lib/fyt-web``。包内写入 ``VERSION``、``README.md`` 与运行依赖。
+    异常：
+        依赖清单或前端 ``dist`` 缺失时由文件操作抛出 ``OSError``，终止打包。
     """
 
     work = os.path.join(ROOT, "dist", "deploy", "linux")
@@ -481,6 +554,7 @@ def build_linux_bundle(version: str) -> str:
     )
     # Linux 包沿用容器和源码服务的统一运行依赖锁文件，不携带 PyInstaller 等开发工具。
     shutil.copy2(RUNTIME_REQUIREMENTS_PATH, os.path.join(staging, "requirements.txt"))
+    # 只挑选安装、升级、服务控制脚本与 systemd 模板；排序后复制保证构建结果可重复比对。
     for name in sorted(os.listdir(LINUX_SCRIPTS_DIR)):
         if name.endswith((".sh", ".service")):
             shutil.copy2(os.path.join(LINUX_SCRIPTS_DIR, name), os.path.join(staging, name))
@@ -492,7 +566,18 @@ def build_linux_bundle(version: str) -> str:
 
 
 def make_zip(folder: str, name: str) -> str:
-    """把 Windows 或源码暂存目录压缩为普通 ZIP，并返回最终路径。"""
+    """把 Windows 或源码暂存目录压缩为普通 ZIP，并返回最终路径。
+
+    参数：
+        folder: 已组装好的暂存目录。
+        name: ZIP 文件名（不含 ``.zip``），同时决定 ``dist`` 下的输出路径。
+    返回值：
+        压缩包完整路径。
+    副作用：
+        覆盖同路径旧压缩包；遍历目录读取每个文件。
+    异常：
+        文件读取或写入失败时抛出 ``OSError``。
+    """
 
     target = os.path.join(ROOT, "dist", f"{name}.zip")
     if os.path.isfile(target):
@@ -512,6 +597,17 @@ def make_linux_zip(folder: str, name: str) -> str:
     Python 在 Windows 上写 ZIP 时默认不会附带 Linux 执行位，因此这里为 Shell 脚本设置
     ``0755``，其余普通文件设置 ``0644``。这样解压工具若尊重外部属性，安装脚本可直接
     执行；即使不尊重，README 仍统一建议使用 ``bash install.sh``。
+
+    参数：
+        folder: Linux 暂存目录。
+        name: ZIP 文件名（不含 ``.zip``）。
+    返回值：
+        压缩包完整路径；相邻位置还会生成同名 ``.sha256`` 校验文件。
+    副作用：
+        删除旧同目标压缩包与旧中文命名 Linux 压缩包；写入 ``dist/<name>.zip`` 与
+        ``dist/<name>.zip.sha256``。
+    异常：
+        任一文件读取或写入失败均向上抛出 ``OSError``。
     """
 
     target = os.path.join(ROOT, "dist", f"{name}.zip")
@@ -528,6 +624,7 @@ def make_linux_zip(folder: str, name: str) -> str:
             for file in files:
                 full = os.path.join(directory, file)
                 relative = os.path.relpath(full, os.path.dirname(folder)).replace(os.sep, "/")
+                # 显式使用源文件 mtime 并声明 Unix 创建系统，避免继承构建机时间与平台差异。
                 info = zipfile.ZipInfo(relative, time.localtime(os.path.getmtime(full))[:6])
                 info.create_system = 3  # 3 表示 Unix，解压器才会解释 external_attr 中的权限位。
                 mode = stat.S_IFREG | (0o755 if file.endswith(".sh") else 0o644)
@@ -545,7 +642,17 @@ def make_linux_zip(folder: str, name: str) -> str:
 
 
 def main() -> None:
-    """根据命令行模式构建交付物，并以版本单一事实源命名所有产物。"""
+    """根据命令行模式构建交付物，并以版本单一事实源命名所有产物。
+
+    参数：
+        命令行参数：``--linux-only`` 只构建 Linux 包。
+    返回值：
+        无。
+    副作用：
+        在 ``dist`` 下生成源码包、Windows 包、Linux 包及对应压缩包。
+    异常：
+        构建或网络失败时向上抛出，未捕获异常会让进程以非零退出码结束。
+    """
 
     parser = argparse.ArgumentParser(description="构建峰运通服务端交付包")
     parser.add_argument(

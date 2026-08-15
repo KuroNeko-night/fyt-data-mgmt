@@ -1,6 +1,12 @@
 /** 当前页面标题、更新提示、引导、主题和快捷面板操作栏。 */
 import Icon from "../components/Icon";
 
+/**
+ * 顶栏展示与操作回调的快照属性。
+ *
+ * 组件保持无业务状态，只按父组件传入的标题、更新提示和面板/主题状态渲染，
+ * 用户意图全部通过回调向上传递。
+ */
 interface AppTopbarProps {
   title: string;
   description: string;
@@ -15,6 +21,7 @@ interface AppTopbarProps {
 
 /** 顶栏保持无业务状态，只根据父组件快照渲染并回调用户意图。 */
 export default function AppTopbar({ title, description, updateAvailable, dark, panelOpen, onOpenGuide, onToggleTheme, onTogglePanel, onOpenUpdate }: AppTopbarProps) {
+  // 更新入口仅在发现新版时出现；主题与快捷面板按钮始终保留，确保用户随时能切换。
   return (
     <header className="fyt-tauri-topbar">
       <div className="fyt-tauri-topbar-title" data-tour="page-heading">

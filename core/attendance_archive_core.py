@@ -103,7 +103,12 @@ def _detect_layout(worksheet) -> tuple[int, dict[str, int]] | None:
     openpyxl 的 1 基行列号；没有完整必要字段时返回 ``None``。
     """
     best = None
-    scan_rows = min(12, worksheet.max_row or 12)
+    max_row = worksheet.max_row
+    if not max_row:
+        # 空表或缺少 dimension 的第三方导出页签没有可扫描的行，直接跳过，避免 fallback 成 12
+        # 后随机访问 worksheet[row] 触发 IndexError。
+        return None
+    scan_rows = min(12, max_row)
     for row_index in range(1, scan_rows + 1):
         columns: dict[str, int] = {}
         for cell in worksheet[row_index]:
@@ -165,6 +170,17 @@ def _read_attendance(path: str, log=None) -> list[dict[str, object]]:
     封面和说明页因识别不到必要字段而跳过。空行、合计行和无效日期不进入结果；缺少
     加班或异常列时使用零和空串，缺失/非法工时也按零保留。整本工作簿没有任何有效
     记录时抛出带文件名的业务错误。
+
+    参数：
+        path: 考勤工作簿路径；读取前调用公式缓存检查并提示未刷新的公式。
+        log: 可选日志回调，透传给公式缓存检查。
+
+    返回：
+        有效记录列表，每项为包含 name/date/hours/ot/abnormal 的字典；工时字段
+        已兜底为浮点数。
+
+    异常：
+        ValueError: 未识别到任何有效记录时抛出，并附带源文件名。
     """
     common_core.warn_if_uncached(path, log, what="工时")
     # 只按顺序读取公式计算值，不修改样式；read_only 适合月度批量归档的大数据量。
@@ -191,7 +207,11 @@ def _read_attendance(path: str, log=None) -> list[dict[str, object]]:
 
 
 def _validated_archive_files(files) -> list[str]:
-    """规范化并一次性验证全部归档输入，避免读取一半后才发现坏路径。"""
+    """规范化并一次性验证全部归档输入，避免读取一半后才发现坏路径。
+
+    空输入、文件不存在或扩展名不在白名单时都在读取前失败；返回绝对路径并按输入
+    顺序排列，供后续逐份读取与进度编号使用。
+    """
     normalized = [
         os.path.abspath(str(value)) for value in (files or []) if str(value).strip()
     ]
@@ -211,7 +231,11 @@ def _merge_attendance_row(
     detail_rows: list[tuple[str, str, float, float, str]],
     months: dict[str, int],
 ) -> None:
-    """把一条有效考勤记录合并到人员汇总、月份计数和原始明细。"""
+    """把一条有效考勤记录合并到人员汇总、月份计数和原始明细。
+
+    这是聚合阶段的唯一写入点，三份状态在同一处更新，保证任意一条记录都会被人员
+    汇总、主体月份票数和每日明细同时看到，不会出现部分合并。
+    """
     name = str(row["name"])
     date = str(row["date"])
     hours = float(row["hours"])
@@ -230,12 +254,26 @@ def _merge_attendance_row(
 def _aggregate_attendance(
     files: list[str], log=None, progress=None,
 ) -> tuple[dict[str, dict[str, object]], list[tuple[str, str, float, float, str]], str]:
-    """读取全部考勤文件并返回人员汇总、明细行和主体月份。"""
+    """读取全部考勤文件并返回人员汇总、明细行和主体月份。
+
+    参数：
+        files: 待读取的考勤表路径列表，调用方应先完成存在性与扩展名校验。
+        log: 可选日志回调，逐份报告已读取的文件名。
+        progress: 可选进度回调，读取阶段映射到 10%～80% 区间。
+
+    返回：
+        三元组：按姓名聚合的人员统计、全部有效明细行、按记录数确定的主体月份。
+
+    异常：
+        ValueError: 全部文件都没有有效记录时抛出。
+    """
     per_person: dict[str, dict[str, object]] = defaultdict(
         lambda: {"days": set(), "hours": 0.0, "ot": 0.0, "abnormal": 0},
     )
     detail_rows: list[tuple[str, str, float, float, str]] = []
     months: dict[str, int] = defaultdict(int)
+    # 先完整读取并聚合全部输入，再进入写报告阶段；任一文件解析失败会直接抛出，
+    # 不会在输出目录留下半成品报告。
     for index, path in enumerate(files, start=1):
         for row in _read_attendance(path, log=log):
             _merge_attendance_row(row, per_person, detail_rows, months)
@@ -250,7 +288,11 @@ def _aggregate_attendance(
 
 
 def _archive_output_dir(files: list[str], out_dir) -> str:
-    """按显式目录或全局输出策略解析归档目标目录。"""
+    """按显式目录或全局输出策略解析归档目标目录。
+
+    显式目录会立即创建并返回绝对路径；未指定时交给 ``paths.resolve_output_dir``
+    按全局输出策略处理，源旁输出以首份输入文件定位。
+    """
     if out_dir is None:
         current = settings.get_settings()
         # 源旁输出以首份输入定位；固定目录等策略仍由 paths 单一事实源处理。
@@ -263,7 +305,11 @@ def _archive_output_dir(files: list[str], out_dir) -> str:
 
 
 def _report_styles() -> tuple[Border, PatternFill, Font, Font]:
-    """创建两张报表页共同复用的边框、表头和正文字体。"""
+    """创建两张报表页共同复用的边框、表头和正文字体。
+
+    返回：
+        四元组：普通边框、表头底色、表头字体、正文字体，保证两页视觉一致。
+    """
     thin = Side(style="thin", color="9AA5B1")
     return (
         Border(left=thin, right=thin, top=thin, bottom=thin),
@@ -277,7 +323,11 @@ def _prepare_report_sheet(
     sheet, headers: list[str], widths: dict[str, int],
     border: Border, head_fill: PatternFill, head_font: Font,
 ) -> None:
-    """设置报表页列宽和统一表头格式。"""
+    """设置报表页列宽和统一表头格式。
+
+    表头固定写在该页第一行，统一应用居中、底色、字体和边框；列宽按宽度字典逐列
+    设置，用于两页报表保持一致的列样式。
+    """
     for column, width in widths.items():
         sheet.column_dimensions[column].width = width
     for column, name in enumerate(headers, start=1):
@@ -289,7 +339,7 @@ def _prepare_report_sheet(
 
 
 def _write_report_row(sheet, row_index: int, values: list[object], font: Font, border: Border) -> None:
-    """写入一行普通报表值并应用共享正文样式。"""
+    """在指定行写入一行普通报表值，并统一应用正文字体与边框。"""
     for column, value in enumerate(values, start=1):
         cell = sheet.cell(row_index, column, value)
         cell.font = font
@@ -300,7 +350,11 @@ def _write_summary_sheet(
     sheet, per_person: dict[str, dict[str, object]],
     border: Border, head_fill: PatternFill, head_font: Font, cell_font: Font,
 ) -> None:
-    """写入按人员汇总的出勤天数、工时和异常指标。"""
+    """写入按人员汇总的出勤天数、工时和异常指标。
+
+    人员按姓名 UTF-8 字节序排序，保证中文姓名在不同系统上顺序稳定；日均工时以
+    去重后的出勤天数为分母，同日多条明细不会压低平均值。
+    """
     sheet.title = "月度汇总"
     _prepare_report_sheet(
         sheet, _SUMMARY_HEADERS, _SUMMARY_WIDTHS, border, head_fill, head_font,
@@ -322,7 +376,11 @@ def _write_detail_sheet(
     sheet, detail_rows: list[tuple[str, str, float, float, str]],
     border: Border, head_fill: PatternFill, head_font: Font, cell_font: Font,
 ) -> None:
-    """写入排序稳定、保留全部源记录的每日明细页。"""
+    """写入排序稳定、保留全部源记录的每日明细页。
+
+    明细先按姓名 UTF-8 字节序、再按日期升序排序，保证同一输入重复运行输出顺序
+    一致；所有有效记录原样保留，不按人员合并。
+    """
     sheet.title = "每日明细"
     _prepare_report_sheet(
         sheet, _DETAIL_HEADERS, _DETAIL_WIDTHS, border, head_fill, head_font,
@@ -340,7 +398,11 @@ def _save_archive_report(
     out_dir: str, month_label: str, per_person: dict[str, dict[str, object]],
     detail_rows: list[tuple[str, str, float, float, str]],
 ) -> str:
-    """组装两页考勤工作簿并保存到唯一输出路径。"""
+    """组装两页考勤工作簿并保存到唯一输出路径。
+
+    输出文件名带主体月份，通过唯一路径落盘避免覆盖同月旧报告；工作簿在
+    ``finally`` 中关闭，写盘失败也会释放临时资源。
+    """
     border, head_fill, head_font, cell_font = _report_styles()
     workbook = openpyxl.Workbook()
     try:
@@ -350,6 +412,7 @@ def _save_archive_report(
         _write_detail_sheet(
             workbook.create_sheet(), detail_rows, border, head_fill, head_font, cell_font,
         )
+        # 用唯一路径写盘而不是覆盖旧报告，重复归档同月数据时保留历史结果。
         target = common_core.unique_path(os.path.join(
             out_dir, "考勤月度汇总_%s.xlsx" % month_label,
         ))

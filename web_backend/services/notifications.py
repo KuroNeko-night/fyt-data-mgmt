@@ -77,6 +77,7 @@ def mark_notification_read(handler: Any, path: str, deps: NotificationDependenci
             if exists is None:
                 raise ApiError(HTTPStatus.NOT_FOUND, "公告不存在")
             connection.execute("INSERT INTO announcement_reads(announcement_id, user_id, read_at) VALUES (?, ?, ?) ON CONFLICT(announcement_id, user_id) DO UPDATE SET read_at = excluded.read_at", (item_id, user["id"], read_at))
+            # 公告已读使用 upsert，存在性与写入已同时确认，这里固定为已处理。
             changed = 1
         else:
             raise ApiError(HTTPStatus.BAD_REQUEST, "消息类型无效")

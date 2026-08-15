@@ -3,6 +3,7 @@ import { confirm, open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { isTauriRuntime } from "./bridge";
 
+/** 原生文件选择器的扩展名筛选器，`name` 为客户可读分类名。 */
 export interface FileFilter {
   name: string;
   extensions: string[];
@@ -30,6 +31,7 @@ export async function chooseFiles(options: {
     filters: options.filters,
   });
   if (!selected) return [];
+  // 单选返回字符串、多选返回数组，这里统一成数组，调用方只需处理一种形状。
   return Array.isArray(selected) ? selected : [selected];
 }
 

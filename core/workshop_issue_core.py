@@ -1,9 +1,17 @@
 # -*- coding: utf-8 -*-
 """车间现场问题的模板协议、图片规范化与标准报表导出。
 
-五类现场问题拥有不同的录入字段、必填项、图片要求和 Excel 列布局。本模块集中维护
-这些规则，供服务端校验、看板归一化和报表导出共同使用，避免前端隐藏字段后仍可写入
-不属于该类型的数据，也避免导出格式与录入规范脱节。
+本模块是现场问题业务规则在 core 层的唯一事实源：主料、辅料、包装、海外和防错
+五类模板的字段白名单、必填项、图片要求、Excel 列布局以及旧分类归一化规则均在此
+集中维护。服务端 API 校验、看板负责人/严重程度归一化和标准报表导出共用同一套
+规则，避免前端隐藏字段后仍可写入不属于该类型的数据，也避免导出格式与录入规范
+脱节。
+
+关键流程：``normalize_workshop_category`` 先把历史分类归一化到正式五类；
+``workshop_issue_primary_owner`` 与 ``workshop_issue_severity`` 负责看板投影；
+``normalize_image`` 负责图片校验与规范化；``run`` 按五类模板生成标准 Excel，
+并始终保留规范要求的空白“问题一览表”。本模块不访问数据库和 UI，只通过
+core 层的 paths/settings 确定输出目录。
 """
 
 from __future__ import annotations
@@ -246,6 +254,17 @@ def normalize_image(source_path, target_stem):
 
     图片先用 ``verify`` 检查文件结构，再重新打开进行 EXIF 方向纠正、像素上限检查和
     缩放。透明 PNG 保留透明通道，其他格式统一为压缩 JPEG；元数据只在成功写入后返回。
+
+    参数：
+        source_path: 待校验的原始图片路径。
+        target_stem: 输出文件主名（不含扩展名）；必须由调用方生成自受控输出目录，
+            本函数只负责绝对化和创建父目录，不校验路径是否越界。
+    返回：
+        dict，包含 ``path``、``content_type``、``size``、``width`` 和 ``height``。
+    异常：
+        ValueError: 图片格式不支持、像素过大、文件损坏或无法读取时抛出。
+    副作用：
+        在 ``target_stem`` 对应目录写入规范化后的图片文件，并可能创建父目录。
     """
     try:
         with Image.open(source_path) as source:
@@ -277,6 +296,8 @@ def normalize_image(source_path, target_stem):
                 else:
                     normalized = source.convert("RGB")
                 save_options = {"quality": 88, "optimize": True, "progressive": True}
+            # target_stem 必须由调用方从受控输出目录生成；abspath 只负责把相对路径
+            # 绝对化，本函数不校验目录穿越，外部未校验的路径不能传入这里。
             target = os.path.abspath(str(target_stem) + extension)
             os.makedirs(os.path.dirname(target), exist_ok=True)
             normalized.save(target, **save_options)
@@ -588,6 +609,7 @@ def _report_range(issues, issue_date=None, start_date=None, end_date=None) -> tu
         # 新参数优先，只有未提供 start_date 时才使用旧版 issue_date。
         start_date = issue_date
     if not start_date:
+        # 发现日期均为 YYYY-MM-DD 时，字典序与日期序一致，可先取最小/最大值再严格解析。
         available = sorted(
             str(issue.get("issue_date") or "").strip()
             for issue in issues
@@ -610,6 +632,21 @@ def run(issues, issue_date=None, start_date=None, end_date=None, out_dir=None, l
 
     调用方应已按日期和权限筛选问题，本函数负责分类、版式和图片嵌入。五个正式分类
     工作表始终生成，即使某类没有记录也保留模板；最后追加规范要求的空白问题一览表。
+
+    参数：
+        issues: 现场问题记录的可迭代对象；非 Mapping 元素会被跳过，不会中断导出。
+        issue_date: 旧版单日导出接口的兼容参数，仅当未传 start_date 时生效。
+        start_date、end_date: 报告日期范围；未传时按问题记录的最早/最晚发现日期
+            推导，无记录时默认当天。
+        out_dir: 输出目录；未传时按 settings 和 paths 解析到 workshop_issue 输出目录。
+        log: 可选的日志回调函数，导出完成后报告条数与输出路径。
+    返回：
+        dict，包含输出目录、输出文件路径、导出条数、实际日期范围和每个分类的条数。
+    异常：
+        ValueError: 日期格式错误或开始日期晚于结束日期时抛出；工作簿写入失败时
+            让底层异常继续向上抛出，不在此吞掉。
+    副作用：
+        在输出目录生成或覆盖 ``异常问题报告-<日期范围>.xlsx``，并嵌入图片缩略图。
     """
     if out_dir is None:
         st = settings.get_settings()
@@ -637,6 +674,7 @@ def run(issues, issue_date=None, start_date=None, end_date=None, out_dir=None, l
         _write_template_sheet(workbook, category, grouped[category])
     _write_overview_sheet(workbook)
 
+    # 全部页签先在内存中组装完毕，再统一落盘；避免边写盘边改工作表导致文件结构不一致。
     workbook.save(output)
     if log:
         log(f"已按标准异常问题模板导出 {sum(len(rows) for rows in grouped.values())} 条现场问题：{output}")

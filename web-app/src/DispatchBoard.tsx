@@ -1,9 +1,16 @@
+/**
+ * 工作台任务调度板。
+ *
+ * 组合状态卡片、最近任务、待办事项、快速入口和近七日趋势；所有数量均来自
+ * 服务端 `dashboard` 聚合结果，页面只负责按角色裁剪展示和跳转任务筛选。
+ */
 import { useEffect, useMemo, useState } from "react";
 import { downloadJobFile, type DashboardData, type Feature, type JobFile, type User } from "./api";
 import type { TaskFilter } from "./TaskCenterPage";
 import { Icon } from "./icons";
 import ArtAsset from "./ui/ArtAsset";
 
+/** 调度板入参：服务端聚合数据、当前用户、可用业务功能以及页面跳转回调。 */
 type Props = {
   data: DashboardData;
   user: User;
@@ -14,6 +21,7 @@ type Props = {
   onOpenTaskFilter: (filter: TaskFilter) => void;
 };
 
+// 任务状态到界面文案、色调的本地映射；`review` 是复核阶段在前端合成的展示状态。
 const STATUS_LABEL: Record<string, string> = {
   queued: "排队",
   running: "处理中",

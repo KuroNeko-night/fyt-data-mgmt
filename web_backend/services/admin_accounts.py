@@ -1,4 +1,10 @@
-"""管理员账号审核、授权和安全维护服务。"""
+"""管理员账号审核、授权和安全维护服务。
+
+覆盖注册审核、账号资料修改、角色授权、启用/停用、会话撤销、密码重置与账号删除。
+全部写接口都要求管理员身份；角色矩阵只有业务成员、班组长和管理员三类，角色键由
+配置白名单提供，普通成员只能通过 auth 模块维护自己的密码与会话。状态变更统一写入
+audit_log，暂停、拒绝或重置密码时在同一事务中撤销目标账号会话，保证权限变化即时生效。
+"""
 
 from __future__ import annotations
 
@@ -16,15 +22,21 @@ from web_backend.http.path_params import path_id, user_action_id
 class AdminAccountDependencies:
     """账号管理服务依赖。"""
 
+    # 数据库、时间和展示依赖统一由组合根注入，服务不直接连接数据库。
     db_lock: Any
     db: Callable[[], Any]
     now_iso: Callable[[], str]
+    # 角色白名单来自配置模块，服务端拒绝未定义权限值。
     role_choices: tuple[str, ...]
+    # 公开投影只输出客户字段，绝不序列化盐值、摘要或内部路径。
     user_public: Callable[[Any], dict[str, object]]
+    # 密码策略与摘要由配置/安全模块提供，服务只组合结果而不自行实现哈希。
     password_policy_error: Callable[[str], str | None]
     hash_password: Callable[[str], tuple[str, str]]
+    # 删除账号前先创建可恢复备份；任务进程表由 job_lock 单独保护。
     create_web_backup: Callable[[int | None], dict[str, object]]
     job_lock: Any
+    # 内存进程句柄与账号隔离目录只在此处受控访问。
     job_processes: dict[str, Any]
     data_root: Path
 
@@ -51,7 +63,7 @@ def review_user(handler: Any, path: str, status: str, deps: AdminAccountDependen
     """
     actor = handler.require_user(admin=True)
     try:
-        user_id = int(path.split("/")[4])
+        user_id = int(path.split("/")[4])  # 路由固定为 /api/admin/users/<id>/review，取第 5 段作为用户编号。
     except (IndexError, ValueError) as exc:
         raise ApiError(HTTPStatus.BAD_REQUEST, "用户编号无效") from exc
     with deps.db_lock, deps.db() as connection:
@@ -81,7 +93,7 @@ def update_user(handler: Any, path: str, body: dict[str, object], deps: AdminAcc
     status = str(body.get("status") or "").strip()
     if not display_name or len(display_name) > 40:
         raise ApiError(HTTPStatus.BAD_REQUEST, "姓名需为 1-40 个字符")
-    if status not in {"pending", "approved", "rejected", "disabled"}:
+    if status not in {"pending", "approved", "rejected", "disabled"}:  # 状态白名单与审核/启停协议一致，客户端不能提交任意状态。
         raise ApiError(HTTPStatus.BAD_REQUEST, "账号状态无效")
     with deps.db_lock, deps.db() as connection:
         target = connection.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
@@ -220,9 +232,13 @@ def reset_user_password(handler: Any, path: str, body: dict[str, object], deps: 
         raise ApiError(HTTPStatus.BAD_REQUEST, policy_error)
     salt, digest = deps.hash_password(password)
     with deps.db_lock, deps.db() as connection:
-        target = connection.execute("SELECT id FROM users WHERE id = ?", (user_id,)).fetchone()
+        target = connection.execute("SELECT id, role FROM users WHERE id = ?", (user_id,)).fetchone()
         if target is None:
             raise ApiError(HTTPStatus.NOT_FOUND, "用户不存在")
+        if target["role"] == "admin":
+            # 与其他账号管理接口一致：管理员（含内置 admin 恢复入口）的密码只能通过
+            # 需要旧密码的自助修改或 out-of-band 重置脚本处理，避免管理员之间横向接管。
+            raise ApiError(HTTPStatus.BAD_REQUEST, "不能通过此接口重置管理员账号密码")
         connection.execute(
             "UPDATE users SET salt = ?, password_hash = ? WHERE id = ?", (salt, digest, user_id)
         )

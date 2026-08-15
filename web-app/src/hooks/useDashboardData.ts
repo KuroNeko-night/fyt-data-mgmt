@@ -5,10 +5,18 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { dashboard, notifications, overview, type DashboardData, type NotificationResponse, type Overview, type User } from "../api";
 
+/** 可独立刷新与重试的三个数据分区。 */
 export type DashboardSection = "overview" | "dashboard" | "notifications";
 
+/** 分区错误映射：只记录失败分区，未失败分区保持未定义。 */
 type SectionErrors = Partial<Record<DashboardSection, string>>;
 
+/**
+ * 并行维护 Web 壳层需要的概览、调度板和通知数据。
+ * 单项失败不会丢弃其他已成功分区，页面可继续使用并针对失败区域显示重试入口。
+ * @param initialUser 认证阶段获得的用户，作为首次加载期间的用户兜底。
+ * @returns 三个分区数据、错误、加载状态、在线状态、合并后的用户/未读数以及刷新/重试方法。
+ */
 export function useDashboardData(initialUser: User) {
   const [overviewData, setOverviewData] = useState<Overview | null>(null);
   const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
@@ -47,8 +55,10 @@ export function useDashboardData(initialUser: User) {
 
   // 服务端最新响应中的用户信息优先，可及时反映显示名或角色调整；首次加载期间使用认证结果兜底。
   const user = useMemo(() => overviewData?.user ?? dashboardData?.user ?? initialUser, [dashboardData?.user, initialUser, overviewData?.user]);
+  // 未读数优先用消息中心响应；老调度板无该字段时，按未读通知列表长度兜底。
   const unreadCount = notificationData?.unread_count ?? dashboardData?.notifications.filter((item) => !item.read_at).length ?? 0;
   const refresh = useCallback(() => load(true), [load]);
+  // 重试仍走全量刷新，成功后把分区名交回调用方，便于聚焦刚恢复的区域。
   const retry = useCallback((section: DashboardSection) => load(true).then(() => section), [load]);
   return { overviewData, dashboardData, notificationData, errors, loading, refreshing, online, user, unreadCount, refresh, retry };
 }

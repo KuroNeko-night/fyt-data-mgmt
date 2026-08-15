@@ -102,7 +102,15 @@ SECRET_MARKERS = (
 
 
 def _repository_files() -> list[str]:
-    """读取已跟踪和未忽略的新文件，完整支持中文、空格和引号文件名。"""
+    """读取已跟踪和未忽略的新文件，完整支持中文、空格和引号文件名。
+
+    返回值：
+        相对仓库根的路径字符串列表。
+    副作用：
+        启动 ``git ls-files`` 子进程，只读不修改工作区。
+    异常：
+        非零退出码时抛出 ``subprocess.CalledProcessError``；Git 缺失也表现为该异常。
+    """
 
     result = subprocess.run(
         ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
@@ -110,11 +118,18 @@ def _repository_files() -> list[str]:
         check=True,
         stdout=subprocess.PIPE,
     )
+    # ``-z`` 用 NUL 分隔输出，文件名中的换行、引号和中文都能被完整还原。
     return [item.decode("utf-8") for item in result.stdout.split(b"\0") if item]
 
 
 def _is_text(path: Path) -> bool:
-    """按文件名和后缀判断是否需要执行 UTF-8 内容检查。"""
+    """按文件名和后缀判断是否需要执行 UTF-8 内容检查。
+
+    参数：
+        path: 仓库内的相对路径。
+    返回值：
+        需要做文本内容扫描时为 ``True``；二进制资源返回 ``False``，避免误报乱码。
+    """
 
     if path.name.lower() in {"dockerfile", "license"}:
         return True
@@ -122,8 +137,17 @@ def _is_text(path: Path) -> bool:
 
 
 def _path_problem(relative: str) -> str | None:
-    """返回已跟踪路径违反仓库边界的原因，没有问题时返回 ``None``。"""
+    """返回已跟踪路径违反仓库边界的原因，没有问题时返回 ``None``。
 
+    参数：
+        relative: 相对仓库根的 POSIX 风格路径。
+    返回值：
+        问题描述字符串；路径合规时返回 ``None``。
+    不变量：
+        只做纯路径判断，不访问文件系统，因此可安全用于 CI 全量扫描。
+    """
+
+    # 使用 POSIX 路径语义并折叠大小写，保证 Windows 上 git 输出的斜杠与大小写差异不影响判定。
     path = PurePosixPath(relative)
     lowered_parts = {part.lower() for part in path.parts}
     forbidden = sorted(lowered_parts & FORBIDDEN_PARTS)
@@ -135,7 +159,15 @@ def _path_problem(relative: str) -> str | None:
 
 
 def _content_problems(relative: str) -> list[str]:
-    """检查文本编码、凭据标记和历史乱码特征，不读取未跟踪文件。"""
+    """检查文本编码、凭据标记和历史乱码特征，不读取未跟踪文件。
+
+    参数：
+        relative: 相对仓库根的路径；调用方只传入仓库文件列表中的条目。
+    返回值：
+        问题描述列表；文件无可检内容或全部通过时返回空列表。
+    副作用：
+        只读文件内容，不修改任何文件；凭据命中只记录问题类型，不回显内容。
+    """
 
     path = ROOT / relative
     if not path.is_file() or not _is_text(path):
@@ -146,8 +178,10 @@ def _content_problems(relative: str) -> list[str]:
         return ["文本文件不是有效 UTF-8"]
 
     problems: list[str] = []
+    # U+FFFD 通常表示 GBK/UTF-8 转换失败；一旦出现在源码中，说明某次转换已不可逆地丢失原文。
     if "\ufffd" in text:
         problems.append("包含 Unicode 替换字符 U+FFFD")
+    # 连续问号不一定是错误，但三个以上常由中文被错误当作 ASCII 替换而来，属于卫生线索。
     if "?" * 3 in text:
         problems.append("包含连续三个问号，疑似中文编码转换残留")
     if any(marker in text for marker in SECRET_MARKERS):
@@ -156,7 +190,15 @@ def _content_problems(relative: str) -> list[str]:
 
 
 def check_repository() -> list[tuple[str, str]]:
-    """返回全部仓库卫生问题，结果顺序稳定，便于本地与 CI 对照。"""
+    """返回全部仓库卫生问题，结果顺序稳定，便于本地与 CI 对照。
+
+    返回值：
+        ``(相对路径, 问题描述)`` 列表；按路径排序，路径问题优先于内容问题。
+    副作用：
+        读取 Git 索引并逐文件扫描文本内容；不修改仓库。
+    异常：
+        由 ``_repository_files`` 透传子进程异常，由调用方决定是否按基础设施失败处理。
+    """
 
     problems: list[tuple[str, str]] = []
     for relative in sorted(_repository_files()):
@@ -170,7 +212,13 @@ def check_repository() -> list[tuple[str, str]]:
 
 
 def main() -> int:
-    """运行检查并返回适合 CI 使用的退出码。"""
+    """运行检查并返回适合 CI 使用的退出码。
+
+    返回值：
+        0 表示通过；1 表示发现卫生问题；2 表示无法完成检查（如 Git 不可用）。
+    副作用：
+        仅打印结论与问题清单，不打印疑似凭据内容。
+    """
 
     try:
         problems = check_repository()

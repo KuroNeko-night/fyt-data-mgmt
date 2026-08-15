@@ -1,4 +1,9 @@
-"""SQLite 连接、外键和服务端数据库锁。"""
+"""SQLite 连接、外键和服务端数据库锁。
+
+本模块是数据库访问的唯一入口：``DB_LOCK`` 用可重入锁串行化读改写复合操作，``db``
+返回启用外键与行对象的短连接，``ManagedConnection`` 保证 ``with`` 块结束后立即释放
+SQLite 文件句柄，供 Windows 备份与恢复安全执行。
+"""
 
 from __future__ import annotations
 

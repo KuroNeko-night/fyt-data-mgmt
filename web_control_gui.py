@@ -27,6 +27,10 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import messagebox, simpledialog, ttk
 
+# 密码策略与 Web 服务端共用 web_backend/passwords.py（纯标准库，不引入业务算法），
+# 控制台只做预检提示；此处保留 ``_password_policy_error`` 旧名以兼容测试导入。
+from web_backend.passwords import password_policy_error as _password_policy_error
+
 
 ROOT = Path(__file__).resolve().parent
 # 打包兼容：frozen 下 ROOT 指向部署包根目录（web-data、web-app/dist 与其同级），
@@ -48,9 +52,12 @@ TUNNEL_ERROR_LOG_PATH = LOG_DIR / "cloudflare-tunnel-error.log"
 TUNNEL_TOKEN_PATH = DATA_ROOT / "private" / "cloudflare-tunnel-token.bin"
 PUBLIC_URL_PATTERN = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com")  # Quick Tunnel 地址只接受 Cloudflare 官方随机域名。
 TUNNEL_TOKEN_PATTERN = re.compile(r"[A-Za-z0-9._~+/=-]{80,4096}")  # 只校验令牌字符与合理长度，不尝试解析其内部格式。
+# 隧道模式标签同时作为用户可读文案和状态机内部值，修改时必须同步更新控件文本比较。
 TUNNEL_MODE_QUICK = "临时公网地址（每次启动可能变化）"
 TUNNEL_MODE_NAMED = "固定命名隧道（需令牌）"
+# 令牌文件头用于快速识别密文格式；旧明文或损坏文件会被视为未配置，而不是尝试解密。
 _TOKEN_FILE_HEADER = b"FYT-DPAPI-TUNNEL\x00"
+# 允许的 Web 服务映像名：冻结包用 web_server.exe，源码环境用 pythonw/python；避免 PID 被其他程序复用后误接管。
 WEB_PROCESS_NAMES = ("web_server.exe", "pythonw.exe", "pythonw3.13.exe", "python.exe")
 
 
@@ -133,7 +140,11 @@ def _tunnel_arguments(port: int, named: bool = False) -> list[str]:
 
 
 def _extract_tunnel_token(value: str) -> str:
-    """从裸令牌或 Cloudflare 安装命令中提取令牌，不记录原始内容。"""
+    """从裸令牌或 Cloudflare 安装命令中提取令牌，不记录原始内容。
+
+    支持 ``--token`` 等号/空格两种写法和 ``service install`` 命令末尾令牌；只有匹配
+    预期字符集和长度范围的值才会被接受，其余按未配置处理。
+    """
     text = value.strip()
     if not text:
         return ""
@@ -148,13 +159,20 @@ def _extract_tunnel_token(value: str) -> str:
 
 
 class _DataBlob(ctypes.Structure):
-    """Windows DPAPI 使用的 ``DATA_BLOB`` 内存布局。"""
+    """Windows DPAPI 使用的 ``DATA_BLOB`` 内存布局。
+
+    结构体字段顺序必须与 Windows 头文件一致，供 CryptProtectData/CryptUnprotectData 读写。
+    """
 
     _fields_ = [("size", ctypes.c_ulong), ("data", ctypes.POINTER(ctypes.c_ubyte))]
 
 
 def _bytes_blob(value: bytes) -> tuple[_DataBlob, ctypes.Array]:
-    """把 Python 字节复制到稳定的 C 缓冲区，并返回阻止其提前回收的持有对象。"""
+    """把 Python 字节复制到稳定的 C 缓冲区，并返回阻止其提前回收的持有对象。
+
+    返回的数组对象必须由调用方保存到 WinAPI 调用结束；若只保留指针，Python 可能提前
+    回收缓冲内存导致访问已释放地址。
+    """
     buffer = (ctypes.c_ubyte * len(value)).from_buffer_copy(value)
     return _DataBlob(len(value), ctypes.cast(buffer, ctypes.POINTER(ctypes.c_ubyte))), buffer  # 调用者必须保留 ``buffer`` 到 WinAPI 返回。
 
@@ -278,25 +296,18 @@ def _admin_account_exists(path: Path = DB_PATH) -> bool:
     """
     if not path.is_file():
         return False
+    connection = None
     try:
-        with sqlite3.connect(path) as connection:
-            row = connection.execute(
-                "SELECT 1 FROM users WHERE username = 'admin' AND role = 'admin' LIMIT 1"
-            ).fetchone()
+        connection = sqlite3.connect(path)
+        row = connection.execute(
+            "SELECT 1 FROM users WHERE username = 'admin' AND role = 'admin' LIMIT 1"
+        ).fetchone()
         return row is not None
     except sqlite3.Error:
         return False
-
-
-def _password_policy_error(password: str) -> str:
-    """与服务端保持一致的首次管理员密码规则。"""
-    if len(password) < 10:
-        return "密码至少 10 位"
-    if len(password) > 128:
-        return "密码不能超过 128 位"
-    if not any(char.isalpha() for char in password) or not any(char.isdigit() for char in password):
-        return "密码需同时包含字母和数字"
-    return ""
+    finally:
+        if connection is not None:
+            connection.close()  # 只读查询也显式关闭，避免 Windows 上短暂占用数据库文件句柄。
 
 
 def _windows_process_image(pid: int) -> str:
@@ -341,7 +352,11 @@ def _process_exists(pid: int) -> bool:
 
 
 def _read_live_pid(path: Path, expected_names: tuple[str, ...]) -> int | None:
-    """读取 PID 文件并校验进程名称，过期或已被重用的记录会被清理。"""
+    """读取 PID 文件并校验进程名称，过期或已被重用的记录会被清理。
+
+    必须先验证映像名才能返回 PID：系统会重用 PID，文件里记录的旧号可能已指向无关进程，
+    直接交给调用方终止会误杀其他程序。
+    """
     try:
         value = path.read_text(encoding="ascii", errors="ignore").strip().splitlines()[0]
         pid = int(value)
@@ -379,7 +394,10 @@ def _terminate_pid(pid: int) -> None:
 
 
 def _write_pid(path: Path, pid: int) -> None:
-    """把控制台拥有的进程号写入 ASCII PID 文件，供重启后的控制台重新发现。"""
+    """把控制台拥有的进程号写入 ASCII PID 文件，供重启后的控制台重新发现。
+
+    PID 文件只写 ASCII，避免 Windows 默认代码页把内容写成 GBK；读取方也按 ASCII 容错。
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(f"{pid}\n", encoding="ascii")
 
@@ -444,7 +462,7 @@ class _EntryValue:
 
 
 class _ChoiceValue:
-    """只读选项控件。"""
+    """只读选项控件，确保隧道模式只能从既定枚举中选择。"""
 
     def __init__(self, master, values: tuple[str, ...], value: str) -> None:
         """创建只允许从既定枚举中选择的组合框。
@@ -478,7 +496,10 @@ class _SpinValue(_EntryValue):
         self.widget = ttk.Spinbox(master, from_=1024, to=65535, textvariable=self.variable, width=width)
 
     def value(self) -> int:
-        """读取并钳制合法 TCP 端口，格式错误时回退默认端口。"""
+        """读取并钳制合法 TCP 端口，格式错误时回退默认端口。
+
+        返回结果始终落在非特权端口范围内，调用方无需再防御负数或 65535 以上的值。
+        """
         try:
             return max(1024, min(65535, int(self.variable.get())))
         except ValueError:
@@ -641,7 +662,10 @@ class WebControlWindow(tk.Tk):
         return str(self.title())
 
     def _configure_style(self) -> None:
-        """配置控制台的 ttk 颜色与字体；主题不可用时保留 Tk 默认主题。"""
+        """配置控制台的 ttk 颜色与字体；主题不可用时保留 Tk 默认主题。
+
+        主题选择失败不能阻止控制台打开，因此只捕获 ``TclError`` 并继续使用默认外观。
+        """
         style = ttk.Style(self)
         try:
             style.theme_use("vista" if sys.platform.startswith("win") else "clam")
@@ -668,7 +692,11 @@ class WebControlWindow(tk.Tk):
         style.configure("TSpinbox", padding=7, font=("Microsoft YaHei UI", 10))
 
     def _build_ui(self) -> None:
-        """构建设置、地址、操作和日志区域，并绑定地址与隧道模式联动。"""
+        """构建设置、地址、操作和日志区域，并绑定地址与隧道模式联动。
+
+        控件创建后不自动启动服务或隧道；监听地址与端口变化只刷新展示地址，实际监听
+        参数以用户点击启动时的值为准。
+        """
         root = ttk.Frame(self, style="Root.TFrame", padding=(28, 24))
         root.pack(fill="both", expand=True)
         root.columnconfigure(0, weight=1)
@@ -768,7 +796,11 @@ class WebControlWindow(tk.Tk):
         self._on_tunnel_mode_changed()
 
     def _discover_existing_processes(self) -> None:
-        """从 PID 文件发现已有服务，使控制台重开后仍可显示和关闭它们。"""
+        """从 PID 文件发现已有服务，使控制台重开后仍可显示和关闭它们。
+
+        只有通过 PID 文件校验的进程才会被接管；发现外部隧道时只加载待确认地址，真正的
+        连接状态要等扫描日志确认。
+        """
         if not self._manage_existing:
             return
         self._external_web_pid = _read_live_pid(WEB_PID_PATH, WEB_PROCESS_NAMES)
@@ -780,7 +812,10 @@ class WebControlWindow(tk.Tk):
             self._load_saved_public_url()
 
     def _address_text(self) -> str:
-        """生成局域网访问地址；监听所有网卡时尽力替换为本机可访问 IPv4。"""
+        """生成局域网访问地址；监听所有网卡时尽力替换为本机可访问 IPv4。
+
+        实际监听地址不因展示值改变；解析失败回退为“本机 IP”，避免控制台直接报错。
+        """
         host = self._host.text().strip() if hasattr(self, "_host") else "0.0.0.0"
         port = self._port.value() if hasattr(self, "_port") else 8787
         if host in ("", "0.0.0.0", "::"):
@@ -796,7 +831,10 @@ class WebControlWindow(tk.Tk):
             self._address.setText(self._address_text())
 
     def _append_log(self, text: str) -> None:
-        """把一条已脱敏状态写入界面日志。"""
+        """把一条已脱敏状态写入界面日志。
+
+        调用方必须保证传入文本已移除密码、令牌和服务端绝对路径；本方法不执行二次过滤。
+        """
         self._log.appendPlainText(text)
 
     def _using_named_tunnel(self) -> bool:
@@ -812,13 +850,20 @@ class WebControlWindow(tk.Tk):
         return "启动公网访问后显示"
 
     def _on_tunnel_mode_changed(self) -> None:
-        """切换模式后刷新令牌控件、空闲提示和按钮状态。"""
+        """切换模式后刷新令牌控件、空闲提示和按钮状态。
+
+        未连接时同时更新空闲提示，避免界面停留在上一个模式的旧地址。
+        """
         if not self._tunnel_running() and not self._public_url:
             self._public_address.setText(self._idle_public_text())
         self._refresh_ui()
 
     def _save_token(self) -> None:
-        """校验、DPAPI 加密并保存固定隧道令牌，随后清空输入框和局部变量。"""
+        """校验、DPAPI 加密并保存固定隧道令牌，随后清空输入框和局部变量。
+
+        保存失败也不回显令牌；finally 中清空输入框，避免令牌在 Tk 控件或本方法局部变量中
+        继续存活。
+        """
         token = _extract_tunnel_token(self._tunnel_token.text())
         if not token:
             messagebox.showwarning(
@@ -843,7 +888,10 @@ class WebControlWindow(tk.Tk):
         self._refresh_ui()
 
     def _clear_token(self) -> None:
-        """经用户确认后删除加密令牌，并切回无需令牌的临时隧道模式。"""
+        """经用户确认后删除加密令牌，并切回无需令牌的临时隧道模式。
+
+        删除操作不要求提供旧令牌；DPAPI 加密文件已绑定当前 Windows 用户，其他人无法使用。
+        """
         if not self._tunnel_token_configured:
             return
         if not messagebox.askyesno(
@@ -862,12 +910,18 @@ class WebControlWindow(tk.Tk):
         self._refresh_ui()
 
     def _web_running(self) -> bool:
-        """综合自有子进程和外部 PID 判断 Web 服务是否运行。"""
+        """综合自有子进程和外部 PID 判断 Web 服务是否运行。
+
+        自有进程以 ``poll()`` 为准，外部进程每次重新探测，避免把已回收 PID 当作存活。
+        """
         owned = self._process is not None and self._process.poll() is None
         return owned or bool(self._external_web_pid and _process_exists(self._external_web_pid))
 
     def _tunnel_running(self) -> bool:
-        """综合自有子进程和外部 PID 判断隧道是否运行。"""
+        """综合自有子进程和外部 PID 判断隧道是否运行。
+
+        cloudflared 进程存在不代表公网已连接；连接状态由日志扫描单独判定。
+        """
         owned = self._tunnel_process is not None and self._tunnel_process.poll() is None
         external = bool(self._external_tunnel_pid and _process_exists(self._external_tunnel_pid))
         return owned or external
@@ -907,7 +961,10 @@ class WebControlWindow(tk.Tk):
         self._last_running_state = (web_running, tunnel_running)
 
     def _drain_web_output(self) -> None:
-        """在 Tk 主线程中清空后台日志队列，避免跨线程操作控件。"""
+        """在 Tk 主线程中清空后台日志队列，避免跨线程操作控件。
+
+        Tk 控件只能由主线程操作，后台日志线程只入队；这里每次轮询把队列全部取完。
+        """
         while True:
             try:
                 self._append_log(self._output_queue.get_nowait())
@@ -915,7 +972,10 @@ class WebControlWindow(tk.Tk):
                 return
 
     def _start_web_reader(self, process: subprocess.Popen[str]) -> None:
-        """启动守护线程持续读取 Web 标准输出并写入线程安全队列。"""
+        """启动守护线程持续读取 Web 标准输出并写入线程安全队列。
+
+        守护线程不访问 Tk 控件，主线程轮询队列后再更新运行记录。
+        """
 
         def read_output() -> None:
             """只执行阻塞管道读取，不直接访问任何 Tk 对象。"""
@@ -928,7 +988,10 @@ class WebControlWindow(tk.Tk):
         self._reader_thread.start()
 
     def _finalize_web_process(self) -> None:
-        """收尾已退出的自有 Web 子进程，清理句柄、PID 文件和界面状态。"""
+        """收尾已退出的自有 Web 子进程，清理句柄、PID 文件和界面状态。
+
+        清理前先排空输出队列，尽量把退出前的日志展示完整；PID 文件只在仍指向本进程时删除。
+        """
         if self._process is None or self._process.poll() is None:
             return
         process = self._process
@@ -1045,7 +1108,11 @@ class WebControlWindow(tk.Tk):
             return password
 
     def _ensure_web_for_tunnel(self) -> bool:
-        """确保隧道上游 Web 服务已启动，最多等待五秒确认进程仍存活。"""
+        """确保隧道上游 Web 服务已启动，最多等待五秒确认进程仍存活。
+
+        公网入口必须指向本机回环地址，因此启动前把监听地址改为 127.0.0.1；短等待期间
+        继续处理 Tk 事件，防止窗口无响应。
+        """
         if self._web_running():
             return True
         self._host.setText("127.0.0.1")
@@ -1133,7 +1200,11 @@ class WebControlWindow(tk.Tk):
         self._refresh_ui()
 
     def _load_saved_public_url(self) -> None:
-        """读取上次记录的临时地址，但必须重新扫描日志确认当前连接后才启用。"""
+        """读取上次记录的临时地址，但必须重新扫描日志确认当前连接后才启用。
+
+        文件里的旧地址可能是上次进程留下的，直接展示会误导用户复制失效链接；先置为
+        待确认状态，等日志显示注册成功后才开放复制。
+        """
         try:
             value = TUNNEL_URL_PATH.read_text(encoding="utf-8-sig").strip()
         except OSError:
@@ -1144,7 +1215,10 @@ class WebControlWindow(tk.Tk):
             self._scan_tunnel_logs()
 
     def _set_public_url(self, value: str) -> None:
-        """确认并公布当前临时公网地址，同时持久化供控制台重开后恢复。"""
+        """确认并公布当前临时公网地址，同时持久化供控制台重开后恢复。
+
+        地址只在匹配 Cloudflare 官方域名模式后才会进入这里，持久化文件同样只保存该地址。
+        """
         if not value or value == self._public_url:
             return
         self._public_url = value
@@ -1237,7 +1311,11 @@ class WebControlWindow(tk.Tk):
             pass
 
     def _close_tunnel_files(self) -> None:
-        """关闭隧道日志文件句柄，并清空引用以允许后续重新启动。"""
+        """关闭隧道日志文件句柄，并清空引用以允许后续重新启动。
+
+        父进程关闭自己的文件引用不会中断已继承句柄的子进程写入；下次启动会重新打开新的
+        日志文件。
+        """
         for stream in (self._tunnel_stdout, self._tunnel_stderr):
             if stream is not None and not stream.closed:
                 stream.close()
@@ -1302,14 +1380,20 @@ class WebControlWindow(tk.Tk):
         self._refresh_ui()
 
     def _copy_address(self) -> None:
-        """复制当前局域网地址并立即刷新剪贴板所有权。"""
+        """复制当前局域网地址并立即刷新剪贴板所有权。
+
+        立即 ``update()`` 使剪贴板在所有权仍在窗口时完成写入，避免窗口退出后剪贴板失效。
+        """
         self.clipboard_clear()
         self.clipboard_append(self._address_text())
         self.update()
         self._append_log("[完成] 局域网地址已复制。")
 
     def _copy_public_address(self) -> None:
-        """仅在地址已经确认可用时复制公网地址。"""
+        """仅在地址已经确认可用时复制公网地址。
+
+        未确认或已断开的地址不会被复制，防止管理员把失效链接发给现场人员。
+        """
         if not self._public_url:
             return
         self.clipboard_clear()
@@ -1318,7 +1402,10 @@ class WebControlWindow(tk.Tk):
         self._append_log("[完成] 公网地址已复制。")
 
     def closeEvent(self) -> None:
-        """处理窗口关闭：由用户决定保留后台服务、全部停止或取消关闭。"""
+        """处理窗口关闭：由用户决定保留后台服务、全部停止或取消关闭。
+
+        选择“否”时只销毁窗口并保留后台服务，后续仍可通过 PID 文件重新接管。
+        """
         if self._web_running() or self._tunnel_running():
             answer = messagebox.askyesnocancel("服务仍在运行", "关闭控制台时是否同时关闭 Web 服务和公网隧道？", parent=self)
             if answer is None:

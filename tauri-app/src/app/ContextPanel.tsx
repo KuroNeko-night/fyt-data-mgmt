@@ -3,6 +3,12 @@ import Icon from "../components/Icon";
 import type { NavItem } from "./navigation";
 import type { TaskResult } from "../lib/bridge";
 
+/**
+ * 快捷工作台所需的当前业务、任务摘要与开关回调。
+ *
+ * `tasks` 允许为 null，面板会把空任务列表与尚未读取到的状态都展示为空提示，
+ * 不阻塞其他区域使用。
+ */
 interface ContextPanelProps {
   activeItem: NavItem;
   tasks: TaskResult | null;
@@ -11,7 +17,12 @@ interface ContextPanelProps {
   onNavigate: (key: string) => void;
 }
 
-/** 把 Core 任务状态键转换为客户可读短文本，未知状态安全显示为等待处理。 */
+/**
+ * 把 Core 任务状态键转换为客户可读短文本。
+ *
+ * @param status Core 持久化的任务状态键（ok/running/failed/interrupted 等）。
+ * @returns 面向客户的短文本；未知状态回退为“等待处理”，避免界面出现内部键。
+ */
 function taskStatusText(status: string) {
   if (status === "ok") return "已完成";
   if (status === "running") return "处理中";

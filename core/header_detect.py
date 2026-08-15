@@ -101,7 +101,7 @@ def _report_unmatched(ws, header_row, col_map, log):
     只报非空列,避免刷屏;纯装饰/空列忽略。"""
     used_cols = set(col_map.values())
     unmatched = []
-    for c in range(1, ws.max_column + 1):
+    for c in range(1, (ws.max_column or 0) + 1):
         if c in used_cols:
             continue
         v = ws.cell(header_row, c).value

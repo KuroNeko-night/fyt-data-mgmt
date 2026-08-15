@@ -16,6 +16,7 @@ import Notice from "./ui/Notice";
 import PageHeader from "./ui/PageHeader";
 import { workshopIssueOwnerLabel } from "./workshopIssueSchema";
 
+/** 日清看板的五个栏目：总览、考勤、现场问题、资料与生产、事项与待办。 */
 type DailyTab = "overview" | "attendance" | "workshop" | "production" | "brief";
 
 /** 按业务时区生成本地日历日期，避免浏览器所在时区改变“今天”的含义。 */

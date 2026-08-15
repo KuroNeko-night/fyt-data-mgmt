@@ -50,6 +50,8 @@ def upgrade_additive_columns(
     workshop_issue_template_fields: Mapping[str, tuple[str, str]],
 ) -> None:
     """补齐历代新增列；这里只做不破坏数据的加法升级。"""
+    # SQLite 的 ADD COLUMN 只追加列定义，不重建表也不触碰已有行；迁移顺序先补列后建索引，
+    # 因此升级函数必须先于 create_current_indexes 执行，避免索引引用尚不存在的列。
     _add_missing_columns(
         connection,
         "web_jobs",
@@ -82,6 +84,7 @@ def upgrade_additive_columns(
             "user_agent": "TEXT NOT NULL DEFAULT ''",
         },
     )
+    # 现场问题模板字段来自 Core 注册表，这里只补 SQL 列定义；长度和默认值与业务规则同步。
     _add_missing_columns(
         connection,
         "workshop_issues",
@@ -331,6 +334,7 @@ def _insert_legacy_group_attendance(
 
 def _copy_group_attendance_to_shifts(connection: Any) -> None:
     """把旧按组考勤落到该组排序最前的班次，重复启动不会复制。"""
+    # UNIQUE(report_date, shift_id) 与 INSERT OR IGNORE 共同保证重复启动不会产生重复快照。
     connection.execute(
         "INSERT OR IGNORE INTO daily_production_shift_attendance"
         "(report_date, shift_id, staffing_count, attendance_count, note, updated_by, updated_at) "

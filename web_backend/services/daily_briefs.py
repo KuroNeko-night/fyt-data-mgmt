@@ -1,7 +1,8 @@
 """日清事项、指标、通报与会议待办维护服务。
 
+本模块仅处理管理员维护的事项主数据，不包含安全检查（已迁移到专用资料入口）。
 各事项类别只接受自身实际需要的字段；切换类别时会清空无关旧值，避免前端隐藏字段
-继续进入总览或导出结果。
+继续进入总览或导出结果。全部写操作要求 admin，并在同一事务中写入审计日志。
 """
 
 from __future__ import annotations
@@ -25,7 +26,9 @@ def _daily_brief_id(path: str) -> str:
     return value
 
 
+# 重大/升级事项与通报只使用“单位、责任人、事项”三个字段，其余字段提交时统一清空。
 _THREE_FIELD_BRIEF_CATEGORIES = {"escalation", "notice"}
+# 文本上限在服务端复验，前端限制只是展示约束，不能替代后端校验。
 _BRIEF_TEXT_LIMITS = {
     "unit": 80,
     "owner": 80,
@@ -133,6 +136,7 @@ def create_daily_brief_item(handler: Any, body: dict[str, object], deps: DailyMa
     values = _validate_daily_brief(body, deps)
     item_id = uuid.uuid4().hex
     created = deps.now_iso()
+    # 插入、回读与审计共用同一 SQLite 写事务，三者不会出现半提交状态。
     with deps.db_lock, deps.db() as connection:
         connection.execute(
             "INSERT INTO daily_brief_items(id, report_date, category, unit, owner, title, description, "

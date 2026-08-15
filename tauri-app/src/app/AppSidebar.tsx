@@ -3,6 +3,12 @@ import Icon from "../components/Icon";
 import { getNavigationGroups } from "./navigation";
 import type { NavItem } from "./navigation";
 
+/**
+ * 侧栏渲染所需的快照属性与回调。
+ *
+ * 侧栏不持有导航状态，也不决定选中逻辑：`activeKey` 仅用于视觉标注，
+ * 点击后通过 `onNavigate` 把稳定业务键交还工作台统一处理。
+ */
 interface AppSidebarProps {
   activeKey: string;
   collapsed: boolean;

@@ -34,7 +34,11 @@ class TrashDependencies:
 
 
 def _trash_id(path: str, restore: bool = False) -> str:
-    """解析回收站路由编号，并拒绝嵌套路径和非字母数字字符。"""
+    """解析回收站路由编号，并拒绝嵌套路径和非字母数字字符。
+
+    路由编号只允许字母数字串，因此 ``%2F`` 等 URL 编码斜杠或 ``..`` 都会因包含非法
+    字符被拒绝，不能构造子路径。
+    """
     prefix = "/api/admin/trash/"
     suffix = "/restore" if restore else ""
     if not path.startswith(prefix) or (suffix and not path.endswith(suffix)):
@@ -354,6 +358,13 @@ def restore_trash(handler: Any, path: str, deps: TrashDependencies) -> None:
             raise ApiError(HTTPStatus.BAD_REQUEST, "回收站数据类型无效")
         record, versions, images = _stored_parts(item, deps)
         target = _restore_target(item, deps)
+        # 跨部署恢复时 record_json 里的旧绝对路径已失效；用本次恢复目标重写 path，
+        # 保证恢复出的记录在后续下载时仍能通过当前数据根下的路径校验，而不是指向旧目录。
+        if "path" in record:
+            record["path"] = str(target)
+        for image in images:
+            if isinstance(image, dict) and "path" in image:
+                image["path"] = str(target / Path(str(image.get("name") or "")).name)
         payload = deps.data_root / "trash" / trash_id / "payload"
         if item["kind"] == "workshop_issue" and not payload.exists():  # 现场问题图片是报告的一部分，缺失时拒绝半恢复。
             raise ApiError(HTTPStatus.CONFLICT, "现场图片已不存在，无法恢复这条问题")

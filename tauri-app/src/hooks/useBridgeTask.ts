@@ -15,8 +15,15 @@ import { openLocalPath } from "../lib/files";
 // 通知授权属于整个应用进程而非单个组件；模块级缓存可避免每次任务完成都重复查询或弹窗申请。
 let notifyPermission: boolean | null = null;
 
+/** 业务结果投影统一使用的语气色枚举，与设计令牌状态色一一对应。 */
 export type BusinessResultTone = "neutral" | "info" | "success" | "warning" | "danger";
 
+/**
+ * Core 返回的结构化业务结果投影。
+ *
+ * 前端只负责在线展示这些已经规范化、可信度分析后的数据，不重新分析输出文件；
+ * 各页面不应绕过本结构自行解析 Excel/PDF 结果。
+ */
 export interface BusinessResultPresentation {
   kind: string;
   title: string;
@@ -55,6 +62,11 @@ async function notifyTask(title: string, body: string) {
   }
 }
 
+/**
+ * 长任务桥接响应的信封结构。
+ *
+ * 除业务结果外还携带任务编号、输出目录和日志，日志由桥接事件合并得到。
+ */
 export interface TaskEnvelope<T> {
   result: T;
   logs: string[];
@@ -63,6 +75,7 @@ export interface TaskEnvelope<T> {
   presentation?: BusinessResultPresentation | null;
 }
 
+/** `useBridgeTask` 对外暴露的长任务状态与方法。 */
 export interface BridgeTaskState<T> {
   busy: boolean;
   error: string;
@@ -76,6 +89,7 @@ export interface BridgeTaskState<T> {
   cancel: () => Promise<void>;
 }
 
+/** `useBridgeAction` 对外暴露的轻量动作状态与方法。 */
 export interface BridgeActionState<T> {
   busy: boolean;
   error: string;

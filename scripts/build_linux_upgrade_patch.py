@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import os
 import shutil
@@ -39,7 +40,15 @@ FORBIDDEN_SUFFIXES = {".sqlite3", ".db", ".log", ".pid"}  # 运行数据库、�
 
 
 def sha256(path: Path) -> str:
-    """流式计算文件 SHA-256，避免把大型压缩包一次性读入内存。"""
+    """流式计算文件 SHA-256，避免把大型压缩包一次性读入内存。
+
+    参数：
+        path: 待哈希文件的路径。
+    返回值：
+        十六进制摘要字符串。
+    异常：
+        文件不存在或读取失败时抛出 ``OSError``。
+    """
 
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -50,16 +59,32 @@ def sha256(path: Path) -> str:
 
 
 def read_version() -> str:
-    """从项目版本单一事实源读取版本号，缺失时终止打包。"""
+    """从项目版本单一事实源读取版本号，缺失时终止打包。
 
-    namespace: dict[str, object] = {}
+    仅用 AST 解析 ``VERSION`` 的字符串字面量赋值，不执行版本文件，避免版本文件被污染
+    时给构建脚本引入任意代码执行面（构建常在 CI/自动化环境以高权限运行）。
+
+    参数：
+        无。
+    返回值：
+        去除首尾空白后的非空版本字符串。
+    异常：
+        ``RuntimeError``：找不到字符串类型的 ``VERSION`` 赋值；版本文件缺失或语法损坏
+        时由 ``Path.read_text``/``ast.parse`` 抛出对应异常。
+    """
     version_file = ROOT / "core" / "version.py"
-    # 直接执行版本模块可保留其常量推导规则，同时避免为构建脚本修改 sys.path。
-    exec(compile(version_file.read_bytes(), str(version_file), "exec"), namespace)
-    version = str(namespace.get("VERSION", "")).strip()
-    if not version:
-        raise RuntimeError("无法从 core/version.py 读取版本号")
-    return version
+    tree = ast.parse(version_file.read_text(encoding="utf-8"))
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        for target in node.targets:
+            if isinstance(target, ast.Name) and target.id == "VERSION":
+                value = node.value
+                if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                    version = value.value.strip()
+                    if version:
+                        return version
+    raise RuntimeError("无法从 core/version.py 读取版本号")
 
 
 def copy_runtime_payload(payload: Path) -> None:
@@ -67,6 +92,16 @@ def copy_runtime_payload(payload: Path) -> None:
 
     这里有意逐类复制而不是复制整个仓库：这样 ``web-data``、开发虚拟环境、测试样本、
     构建缓存和桌面端产物不会因为新增目录而被意外纳入升级包。
+
+    参数：
+        payload: 补丁包内的载荷目录，函数只向该目录写入运行白名单文件。
+    返回值：
+        无。
+    副作用：
+        向 ``payload`` 写入 ``web_server.py``、``web_backend``、``core``、前端 ``dist``
+        与 ``requirements.txt``；不读取、不覆盖、不删除 ``/var/lib/fyt-web``。
+    异常：
+        前端未构建时抛出 ``RuntimeError``；源目录缺失或复制失败时由文件操作抛出 ``OSError``。
     """
 
     shutil.copy2(ROOT / "web_server.py", payload / "web_server.py")
@@ -98,6 +133,15 @@ def validate_tree(package_root: Path) -> list[Path]:
 
     检查覆盖任意层级的禁止目录名、运行数据后缀和符号链接。符号链接即使当前指向安全
     文件，也可能在解压主机上越出补丁目录，因此这里直接拒绝，而不是尝试解析其目标。
+
+    参数：
+        package_root: 待验证的补丁暂存根目录。
+    返回值：
+        通过检查的普通文件路径列表，按遍历顺序排序，供生成 ``SHA256SUMS`` 使用。
+    异常：
+        ``RuntimeError``：出现禁止目录/文件名、禁止后缀或符号链接。
+    不变量：
+        只读检查，不修改任何文件；清单生成前后使用同一规则，确保最终树与首次检查边界一致。
     """
 
     files: list[Path] = []
@@ -117,7 +161,18 @@ def validate_tree(package_root: Path) -> list[Path]:
 
 
 def write_readme(path: Path, archive_name: str) -> None:
-    """写入面向运维人员的升级说明，并明确运行数据保护边界。"""
+    """写入面向运维人员的升级说明，并明确运行数据保护边界。
+
+    参数：
+        path: 说明文件写入位置。
+        archive_name: 最终压缩包文件名，用于生成对运维人员可直接执行的解包命令。
+    返回值：
+        无。
+    副作用：
+        覆盖 ``path`` 并写入 UTF-8/LF 文本；内容声明补丁不接触 ``/var/lib/fyt-web``。
+    异常：
+        写入失败时抛出 ``OSError``。
+    """
 
     path.write_text(
         "峰运通数据管理系统 Linux 增量升级补丁\n"
@@ -144,6 +199,17 @@ def add_to_tar(archive: tarfile.TarFile, source: Path, arcname: str) -> None:
 
     压缩包内记录 root 属主只是为了得到可预测的元数据；安装脚本仍会在部署时根据正式
     服务账户重新设置属主。Shell 脚本保留执行位，普通源码和静态资源保持只读文件权限。
+
+    参数：
+        archive: 已打开的 tar 文件。
+        source: 要归档的源路径。
+        arcname: 包内相对路径名。
+    返回值：
+        无。
+    副作用：
+        向 ``archive`` 写入归一化条目；不会改动源文件权限或属主。
+    异常：
+        归档失败时由 ``tarfile`` 抛出 ``OSError``。
     """
 
     def normalize(info: tarfile.TarInfo) -> tarfile.TarInfo:
@@ -169,6 +235,17 @@ def build(output_dir: Path, build_date: str, revision: str = "") -> tuple[Path, 
 
     包内 ``SHA256SUMS`` 用于升级前逐文件验真；同名 ``.sha256`` 文件用于上传后验证整个
     压缩包。只有全部内容验证完成后才把最终归档写入输出目录。
+
+    参数：
+        output_dir: 最终压缩包与校验文件的输出目录。
+        build_date: YYYYMMDD 日期，写入包名以便按日追踪。
+        revision: 可选的同日修订标记；默认空串表示当日首次发布。
+    返回值：
+        ``(压缩包路径, 外部校验文件路径)`` 元组。
+    副作用：
+        在系统临时目录组装并在退出后自动清理；在 ``output_dir`` 写入最终交付物。
+    异常：
+        版本读取失败、内容验证失败或归档失败时向上抛出，不留下半成品压缩包。
     """
 
     version = read_version()
@@ -215,7 +292,13 @@ def build(output_dir: Path, build_date: str, revision: str = "") -> tuple[Path, 
 
 
 def main() -> int:
-    """解析命令行参数、校验日期格式并输出可人工核对的构建摘要。"""
+    """解析命令行参数、校验日期格式并输出可人工核对的构建摘要。
+
+    返回值：
+        0 表示成功；参数非法时 ``argparse`` 以非零码退出；构建失败异常向上传播。
+    副作用：
+        调用 ``build`` 生成补丁；仅在标准输出打印构建摘要。
+    """
 
     parser = argparse.ArgumentParser(description="生成 Linux 增量升级补丁")
     parser.add_argument(
@@ -237,6 +320,7 @@ def main() -> int:
     args = parser.parse_args()
     if len(args.date) != 8 or not args.date.isdigit():
         parser.error("--date 必须是 YYYYMMDD 格式")
+    # revision 只用于文件名后缀拼接；限制字符集可防止路径分隔符或特殊字符混入包名。
     if args.revision and not args.revision.replace("-", "").replace("_", "").isalnum():
         parser.error("--revision 只能包含字母、数字、短横线和下划线")
 

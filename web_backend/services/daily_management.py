@@ -40,6 +40,7 @@ from web_backend.services.daily_files import (
 )
 
 
+# 兼容门面白名单：路由、测试和部署脚本只从这里导入稳定名称，不直接依赖拆分模块。
 __all__ = [
     "DailyManagementDependencies",
     "attendance_rows",

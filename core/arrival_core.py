@@ -121,7 +121,11 @@ def _pick_data_ws(wb, log=None):
     return active
 
 def _norm(v):
-    """移除中英文空格、换行和制表符，生成表头匹配文本。"""
+    """移除中英文空格、换行和制表符，生成表头匹配文本。
+
+    参数 ``v`` 为任意单元格原始值；``None`` 一律归一为空字符串，调用方无需
+    单独判空。返回去除首尾空白后的标准化字符串。
+    """
     if v is None:
         return ""
     s = str(v)
@@ -130,7 +134,11 @@ def _norm(v):
     return s.strip()
 
 def _match(text, aliases):
-    """判断标准化表头是否包含任一受支持别名。"""
+    """判断标准化表头是否包含任一受支持别名。
+
+    参数 ``text`` 是已经过 :func:`_norm` 处理的表头文本，``aliases`` 为别名元组。
+    匹配采用子串包含，可兼容合并单元格里夹带的额外文字。
+    """
     return any(a in text for a in aliases)
 
 
@@ -177,7 +185,11 @@ def _classify_header_cells(cells):
 
 
 def _has_required_arrival_columns(columns):
-    """判断编码、需求数和剩余未收数三项必需列是否齐全。"""
+    """判断编码、需求数和剩余未收数三项必需列是否齐全。
+
+    参数 ``columns`` 是列定位字典；任一项为 0（未定位到）即返回 ``False``。名称和
+    供应商不参与校验，缺失时后续可由主数据库补空。
+    """
     return all(columns.get(name) for name in ("code", "demand", "remain"))
 
 
@@ -255,7 +267,11 @@ def detect_report_date(path):
 
 
 def find_plan_files(folder):
-    """返回目录内非临时送货计划表，并按修改时间从新到旧排列。"""
+    """返回目录内非临时送货计划表，并按修改时间从新到旧排列。
+
+    参数 ``folder`` 为计划表所在目录。过滤 ``~$`` 前缀文件，因为它们是 Excel 打开
+    文件时生成的锁文件，内容不完整，不能参与批次扫描。返回路径列表，最新文件在前。
+    """
     files = [f for f in glob.glob(os.path.join(folder, "*送货计划*.xlsx"))
              if not os.path.basename(f).startswith("~$")]
     return sorted(files, key=os.path.getmtime, reverse=True)
@@ -347,26 +363,37 @@ def inspect_plan(path, log=None):
 
 
 def extract_unreceived(path, log=None):
-    """兼容旧调用方，仅返回完整扫描结果中的非零未收物料列表。"""
+    """兼容旧调用方，仅返回完整扫描结果中的非零未收物料列表。
+
+    这是早期入口的简化别名；新代码应优先使用 :func:`inspect_plan`，以同时获得
+    总类数、待核对行和隐藏行提示。``path`` 与 ``log`` 参数语义同
+    :func:`inspect_plan`，返回其 ``materials`` 字段。
+    """
     return inspect_plan(path, log=log)["materials"]
 
 
 def _style(cell, bold=False, fill=False, align=CENTER):
-    """为标准到料报表单元格应用统一边框、字体、对齐和可选蓝底。"""
+    """为标准到料报表单元格应用统一边框、字体、对齐和可选蓝底。
+
+    参数 ``cell`` 为目标单元格；``bold`` 控制字体加粗，``fill`` 控制标签蓝底。
+    ``align`` 默认使用水平垂直居中的自动换行对齐，备注行会显式传入左对齐。
+    """
     cell.border = BORDER
     cell.alignment = align
     cell.font = FONT_B if bold else FONT
     if fill:
         cell.fill = BLUE_FILL
 
-def _write_batch(ws, c0, batch_no, materials, total, remark, top_label):
+def _write_batch(ws, c0, batch_no, materials, total, remark, top_label, pending=0):
     """从起始列写入一个横向批次区块，并返回缺料与已到类别数。
 
     每个区块固定占七个业务列，外加两个空列形成九列步长。``materials`` 一行代表一个
-    未收物料类别，因此差异是明细行数，已到类别数按总类别数减差异计算。
+    未收物料类别，因此差异是明细行数；``pending`` 是“剩余未收数”读不到值（公式未刷新）
+    的行数，不能当作已到货。已到类别数按总类别数减差异再减待核对数计算，异常负值仍由
+    上层结果质量提示处理。
     """
     diff = len(materials)
-    arrived = total - diff  # 保留源业务口径；异常负值由上层结果质量提示处理。
+    arrived = total - diff - pending  # 公式未刷新的待核对行不得计入已到货，避免误报“全部已到货”。
     # 第一、二行是截止标签与批次号，横跨区块前三列并保持白底。
     for row, val in [(1, top_label), (2, batch_no)]:
         ws.cell(row=row, column=c0, value=val)
@@ -412,7 +439,8 @@ def build_workbook(batches, top_label, out_path):
     col = FIRST_COL
     for b in batches:
         diff, arrived = _write_batch(ws, col, b["batch_no"], b["materials"],
-                                     b["total"], b.get("remark", ""), top_label)
+                                     b["total"], b.get("remark", ""), top_label,
+                                     b.get("pending", 0))
         results.append((b["batch_no"], diff, arrived, b["total"]))
         col += BATCH_STRIDE  # 七个业务列后留两列间隔，避免相邻批次视觉粘连。
     # 与 purchase/delivery 一致: 目标被 Excel 占用时给出友好提示
@@ -440,6 +468,7 @@ def build_batches(rows_data, top_label, log=None, resolver=None, fill_counts=Non
         inspection = inspect_plan(row["path"], log=log)
         materials = inspection["materials"]
         if resolver is not None:
+            # 主数据补全只填空值，源表已有名称/供应商必须保留原样。
             for material in materials:
                 additions = resolver.complete_material(
                     material[0], {"name": material[1], "supplier": material[2]},
@@ -460,7 +489,8 @@ def build_batches(rows_data, top_label, log=None, resolver=None, fill_counts=Non
             total = auto_total or DEFAULT_TOTAL
         remark = row.get("remark", "")
         batches.append({"batch_no": bn, "materials": materials,
-                        "total": total, "auto_total": auto_total, "remark": remark})
+                        "total": total, "auto_total": auto_total, "remark": remark,
+                        "pending": inspection.get("pending", 0)})
         if bn:
             mem[bn] = {"total": total, "remark": remark}
     return batches, mem
@@ -633,11 +663,13 @@ def _finished_batch_from_anchor(ws, total_row, block_column):
     columns = _finished_columns(ws, total_row, block_column)
     if total is None or columns is None:
         return None
+    # 标准模板中批次号固定在“主料总类数”标签上一行，纵向布局与源表输出一致。
     batch_no = _norm(ws.cell(row=max(1, total_row - 1), column=block_column).value)
     if not batch_no:
         raise ValueError(f"《{ws.title}》第 {block_column} 列的到料区块缺少批次号")
     materials = _finished_materials(ws, columns)
     arrived, missing = _finished_metrics(ws, total_row, block_column)
+    # 表内未填差异或到货时按明细行数回推，维持“到货 + 差异 = 总类数”的闭合关系。
     missing = len(materials) if missing is None else missing
     arrived = total - missing if arrived is None else arrived
     return {
@@ -651,6 +683,7 @@ def _finished_batch_from_anchor(ws, total_row, block_column):
 
 def _finished_batches_from_sheet(ws):
     """按工作表顺序产出前二十行内可识别的全部成品到料批次。"""
+    # 成品表批次指标区只出现在工作表上部，限制行数可避免误扫底部说明文字。
     for row in range(1, min(ws.max_row, 20) + 1):
         for column in range(1, ws.max_column + 1):
             if _norm(ws.cell(row=row, column=column).value) not in FINISHED_TOTAL_LABELS:
@@ -668,6 +701,7 @@ def analyze_finished_report(path, log=None):
     显示值为准；缺失的到货或差异可由总类数与明细行数推导，并通过数量闭合提示人工。
     """
     log = log or (lambda *a, **k: None)
+    # 成品表指标与明细同样可能来自公式，仍走 data_only 路径读取缓存结果。
     wb = _common.load_data_only(path)
     batches = []
     try:
@@ -717,6 +751,7 @@ def analyze(rows_data, top_label=None, log=None):
     material_catalog.log_fill_summary(log, "到料明细", fill_counts)
     if not batches:
         raise ValueError("没有可处理的到料文件")
+    # 预览不生成工作簿，但汇总元组与正式输出保持同一结构，避免双端出现两套口径。
     results = []
     for batch in batches:
         missing = len(batch.get("materials", []))

@@ -5,15 +5,20 @@ import Brand from "./Brand";
 import ArtAsset from "../ui/ArtAsset";
 import "./auth.css";
 
+/** 身份页面的两种模式：登录已有账号或提交注册申请。 */
 type AuthMode = "login" | "register";
 
-/** 登录与注册申请共用的身份入口；默认管理员凭据不会在此页面或提示文案中出现。 */
+/**
+ * 登录与注册申请共用的身份入口；默认管理员凭据不会在此页面或提示文案中出现。
+ * @param onAuthed 登录成功并写入令牌后回调，父组件据此切换到已登录应用壳。
+ */
 export function AuthScreen({ onAuthed }: { onAuthed: (user: User) => void }) {
   const [mode, setMode] = useState<AuthMode>("login");
   const [username, setUsername] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
+  // 提示只承载错误或注册成功反馈；密码规则由服务端最终校验，前端只做基本必填。
   const [notice, setNotice] = useState<{ type: "error" | "success"; text: string } | null>(null);
 
   /** 根据当前模式调用登录或注册接口，并只在登录成功后保存会话令牌。 */
@@ -41,6 +46,7 @@ export function AuthScreen({ onAuthed }: { onAuthed: (user: User) => void }) {
     }
   }
 
+  // 左侧为品牌叙事区，右侧为表单卡片；移动端隐藏叙事区并由顶部紧凑品牌替代。
   return <main className="fyt-auth-shell">
     <section className="fyt-auth-story">
       <div className="fyt-auth-story-grid" />

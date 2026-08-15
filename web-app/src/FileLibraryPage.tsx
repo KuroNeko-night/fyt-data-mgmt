@@ -1,3 +1,9 @@
+/**
+ * 团队文件数据库页面。
+ *
+ * 面向数据库功能的客户入口：上传文件副本、按可见范围与业务分类检索、
+ * 下载/编辑元数据、替换内容，并把删除动作交给服务端回收站策略。
+ */
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import {
   deleteLibraryFile,
@@ -13,6 +19,7 @@ import {
 import { Icon } from "./icons";
 import EmptyState from "./ui/EmptyState";
 
+/** 列表显示范围：全部可见、团队共享、私有或仅自己。 */
 type LibraryFilter = "all" | "team" | "private" | "mine";
 
 /** 把文件字节数转换成数据库列表和配额卡片使用的紧凑标签。 */

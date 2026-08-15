@@ -12,8 +12,10 @@ from typing import Any, Callable
 from urllib.parse import parse_qs, quote, urlparse
 
 from web_backend.errors import ApiError
+from web_backend.config import BUSINESS_TZ
 
 
+# 报表时间范围参数与中文标题的映射；"week" 是 "7d" 的历史别名，统一显示为“近7天”。
 REPORT_RANGE_LABELS = {
     "7d": "近7天",
     "30d": "近30天",
@@ -169,7 +171,7 @@ def _auto_report_if_due(
 
 def auto_weekly_report_if_due(deps: ReportDependencies) -> str:
     """每周一自动生成全量周报，同一周只执行一次。"""
-    today = datetime.now()
+    today = datetime.now(BUSINESS_TZ)  # 按业务时区判“今天”，避免服务器本地时区与业务时区不一致时错日触发。
     return _auto_report_if_due(
         deps,
         due=today.weekday() == 0,
@@ -185,7 +187,7 @@ def auto_weekly_report_if_due(deps: ReportDependencies) -> str:
 
 def auto_monthly_report_if_due(deps: ReportDependencies) -> str:
     """每月一号自动生成全量月报，同一月份只执行一次。"""
-    today = datetime.now()
+    today = datetime.now(BUSINESS_TZ)  # 按业务时区判“今天”，避免服务器本地时区与业务时区不一致时错日触发。
     return _auto_report_if_due(
         deps,
         due=today.day == 1,

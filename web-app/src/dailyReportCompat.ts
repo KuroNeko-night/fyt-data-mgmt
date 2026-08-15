@@ -5,7 +5,11 @@
  */
 import type { DailyReportData } from "./api";
 
-/** 将缺失或非数组字段安全归一为空数组，并保留有效数组引用。 */
+/**
+ * 将缺失或非数组字段安全归一为空数组，并保留有效数组引用。
+ * @param value 旧接口可能返回的数组字段，可能为 null/undefined。
+ * @returns 原数组引用；缺失或类型异常时返回空数组，保证调用方可直接遍历。
+ */
 function list<T>(value: T[] | null | undefined): T[] {
   return Array.isArray(value) ? value : [];
 }
@@ -15,6 +19,9 @@ function list<T>(value: T[] | null | undefined): T[] {
  *
  * Web 服务和浏览器可能在升级期间短暂处于不同版本，前端必须把旧响应
  * 转换成当前结构，避免新增看板区块因为字段缺失而使整个日清页面崩溃。
+ * @param raw 服务端返回的原始日清数据；可能为 null/undefined 或缺少新字段。
+ * @param requestedDate 页面请求的业务日期，旧响应未返回日期时兜底。
+ * @returns 字段完整的日清数据结构，计数类字段为 0，数组类字段为空数组。
  */
 export function normalizeDailyReportData(
   raw: Partial<DailyReportData> | null | undefined,
@@ -32,14 +39,16 @@ export function normalizeDailyReportData(
   return {
     date: reportDate,
     generated_at: data.generated_at || "",
-    timezone: data.timezone || "Asia/Shanghai",
-    scope: "all",
+    timezone: data.timezone || "Asia/Shanghai", // 时区缺失时沿用与核心层一致的业务时区。
+    scope: "all", // 兼容层固定输出全量口径，旧接口没有范围参数可读。
+    // 旧响应没有各区块口径说明时，用与看板标题一致的默认描述占位。
     definitions: {
       arrival: data.definitions?.arrival || "当天到料批次与缺料明细",
       workshop: data.definitions?.workshop || "当天已发布的现场问题",
       safety: data.definitions?.safety || "当天安全检查与整改记录",
       production: data.definitions?.production || "当天生产计划与月度订单台账",
     },
+    // 到料统计：计数类字段用 0 兜底，数组类字段保持可遍历。
     arrival: {
       job_count: arrival.job_count || 0,
       upload_count: arrival.upload_count || 0,
@@ -54,6 +63,7 @@ export function normalizeDailyReportData(
       supplier_distribution: list(arrival.supplier_distribution),
       batches: list(arrival.batches),
     },
+    // 安全检查与整改：同样按“计数 + 数组”两类字段补齐。
     safety_checks: {
       upload_count: safety.upload_count || 0,
       latest_upload: safety.latest_upload || null,
@@ -77,6 +87,7 @@ export function normalizeDailyReportData(
       category_distribution: list(workshop.category_distribution),
       issues: list(workshop.issues),
     },
+    // 出勤统计：人员、班组与单位汇总都可能缺失，统一补齐为空。
     attendance: {
       people: list(attendance.people),
       production_groups: list(attendance.production_groups),
@@ -96,6 +107,7 @@ export function normalizeDailyReportData(
     },
     brief_items: list(data.brief_items),
     production_plans: list(data.production_plans),
+    // 生产台账与订单：按正式、零星两类补齐统计与明细，月份缺省时用业务日期所在月。
     production_ledger: {
       month: ledger.month || reportDate.slice(0, 7), // 旧台账未返回月份时，以请求业务日期所在月兜底。
       source_file_count: ledger.source_file_count || 0,
@@ -119,6 +131,6 @@ export function normalizeDailyReportData(
       missing_parts: list(ledger.missing_parts),
       hazardous_packages: list(ledger.hazardous_packages),
     },
-    source_uploads: list(data.source_uploads),
+    source_uploads: list(data.source_uploads), // 源资料上传明细，旧接口可能完全没有该字段。
   };
 }

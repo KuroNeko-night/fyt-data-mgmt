@@ -1,3 +1,10 @@
+/**
+ * 现场问题页面。
+ *
+ * 按业务日期维护标准问题模板的草稿与已发布记录：草稿先创建、图片逐张上传、
+ * 最后确认发布；班组长与管理员可编辑、闭环和删除，普通成员只能维护自己的草稿。
+ * 图片张数、类型、大小和字段白名单以 `workshopIssueSchema` 及服务端校验为准。
+ */
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   createWorkshopIssue,
@@ -28,6 +35,7 @@ import {
   type WorkshopTemplateFields,
 } from "./workshopIssueSchema";
 
+// 图片张数、单张体积和允许格式与 AGENTS.md 中的现场问题模板规则保持一致。
 const MAX_IMAGES = 8;
 const MAX_IMAGE_BYTES = 15 * 1024 * 1024;
 const IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);

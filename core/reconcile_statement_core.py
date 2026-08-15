@@ -104,7 +104,12 @@ def _safe_filename_component(value: object, fallback: str) -> str:
 
 
 def _output_path(out_dir: str, supplier: str, month: str) -> str:
-    """构造不越出输出目录且不覆盖现有文件的对账单绝对路径。"""
+    """构造不越出输出目录且不覆盖现有文件的对账单绝对路径。
+
+    供应商和月份先经 Windows 文件名清洗，再用 ``abspath`` 拼出目标路径；
+    ``commonpath`` 是目录穿越的最终防线，``unique_path`` 保证重复生成或并发
+    输出时不会覆盖已有报告。路径无法约束在输出目录内时抛出 ``ValueError``。
+    """
     filename = "%s%s月对单明细.xlsx" % (
         _safe_filename_component(supplier, "未命名供应商"),
         _safe_filename_component(month, "未填写月份"),
@@ -256,6 +261,8 @@ def _validated_source_paths(files) -> list[str]:
 
 def _scan_source_file(path, file_index, resolver, fill_counts):
     """扫描单个采购清单，返回批次摘要和可用于供应商推断的非空名称。"""
+    # 只读模式逐行扫描，避免把整份工作簿载入内存；data_only 取公式缓存值，
+    # 调用方需先通过 warn_if_uncached 确认缓存存在。
     workbook = openpyxl.load_workbook(path, read_only=True, data_only=True)
     batches: list[dict[str, object]] = []
     suppliers: list[str] = []
@@ -300,6 +307,7 @@ def scan(files, log=None, progress=None) -> dict[str, object]:
     fill_counts: dict[str, int] = {}
     result_files: list[dict[str, object]] = []
     for index, path in enumerate(source_paths, start=1):
+        # 采购数量可能来自公式，data_only 模式下先检查公式缓存，避免数量读到空值。
         common_core.warn_if_uncached(path, log, what="采购数量")
         batches, data_suppliers = _scan_source_file(
             path, index, resolver, fill_counts,
@@ -401,6 +409,7 @@ def _collect_supplier_groups(file_list, selected_keys, overrides, resolver, fill
     wanted_indexes = _selected_file_indexes(selected_keys)
     selected_set = set(selected_keys)
     for index, path in enumerate(file_list, start=1):
+        # 只读取选择键中出现过的文件，未勾选文件不参与归并，保持生成范围与人工确认一致。
         if wanted_indexes and index not in wanted_indexes:
             continue
         rows = _group_rows(
@@ -423,6 +432,7 @@ def _reconcile_output_dir(file_list, out_dir):
             **current.output_kwargs(),
         )
     resolved = os.path.abspath(str(out_dir))
+    # 显式目录由调用方指定，可能尚不存在；默认目录则由 resolve_output_dir 统一创建。
     os.makedirs(resolved, exist_ok=True)
     return resolved
 

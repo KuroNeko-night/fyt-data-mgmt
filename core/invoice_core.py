@@ -28,13 +28,15 @@ except Exception:
 
 BUYER = "重庆峰运通供应链管理有限公司"
 
+# 公司后缀枚举刻意不含“厂”“店”等非销售方字样，降低把商品行误判为销售方的概率。
 _COMPANY = re.compile(
     r"[一-龥A-Za-z0-9（）()]{2,45}"
     r"(?:有限责任公司|有限公司|股份公司|分公司|公司|银行|事务所|合作社|个体工商户|中心)")
 _DATE = re.compile(r"(\d{4})年(\d{1,2})月(\d{1,2})日")  # 月日允许一位，提取后统一补零。
 _NUM = re.compile(r"发票号码[:：]?(\d{20}|\d{8})")  # 锚定全电 20 位或旧版 8 位票号。
 _NUM_LOOSE = re.compile(r"\d{20}|\d{8}")  # 无锚点时的宽松兜底。
-_MONEY = re.compile(r"¥\s*([\d\s]+\.\s*\d\s*\d)")
+# 金额支持千分位逗号、整数金额与 PDF 拆散的空白；小数点后允许空白，转换前统一清理。
+_MONEY = re.compile(r"¥\s*([\d,\s]+(?:\.\s*[\d,\s]*\d)?)")
 _RATE = re.compile(r"(\d+)%")
 _SKIP_LINE = ("开户", "账号", "地址", "电话")
 
@@ -58,7 +60,11 @@ class Invoice(object):
 
 
 def _norm(t):
-    """移除普通空格和制表符，生成适合跨 PDF 断词匹配的紧凑文本。"""
+    """压平普通空格和制表符，生成适合跨 PDF 断词匹配的紧凑文本。
+
+    参数 ``t`` 为页面原始文本，可能为 None；返回清理后的字符串。保留换行符，使后续
+    逐行判断（销售方、项目行）仍能按行处理，金额和票号正则也无需担心 PDF 拆散的空白。
+    """
     return re.sub(r"[ \t]+", "", t or "")
 
 
@@ -87,7 +93,7 @@ def _money3(raw):
     PDF 文本层常把金额数字拆入空格，正则允许并在转换前移除。发票明细区可能有多笔单价
     和金额，合计区通常位于末尾，因此采用最后三个。少于三个时返回空值并交给存疑流程。
     """
-    vals = [float(re.sub(r"\s+", "", m.group(1))) for m in _MONEY.finditer(raw)]
+    vals = [float(re.sub(r"[,\s]+", "", m.group(1))) for m in _MONEY.finditer(raw)]  # 同时移除千分位逗号和 PDF 拆散的空白。
     if len(vals) >= 3:
         return vals[-3], vals[-2], vals[-1]
     return None, None, None
@@ -99,7 +105,11 @@ _RATE1 = ("9", "6", "5", "3", "1", "0")
 
 
 def _one_rate(numstr):
-    """从可能粘连型号数字的百分数字符串末尾恢复合法增值税税率。"""
+    """从可能粘连型号数字的百分数字符串末尾恢复合法增值税税率。
+
+    参数 ``numstr`` 是百分号前的数字串；返回两位税率字符串，未命中时返回 None。
+    先尝试两位税率再尝试一位，避免“13”等两位后缀被一位档位抢先截走。
+    """
     for v in _RATE2:
         if numstr.endswith(v):
             return v
@@ -128,17 +138,26 @@ def _rate(nn):
     return "+".join(v + "%" for v in sorted(found, key=lambda x: -int(x)))
 
 
+# 反推吸附档位不含 0%，防止把缺失税额或金额解析错误吸附为零税率。
 _STD_RATES = (0.17, 0.16, 0.13, 0.11, 0.10, 0.09, 0.06, 0.05, 0.03, 0.01)
 
 
 def _deduction(nn):
-    """提取差额征税备注中的扣除额；未找到时返回空值。"""
+    """提取差额征税备注中的扣除额；未找到时返回 None。
+
+    参数 ``nn`` 为压缩空白后的整页文本；找到时返回 float，否则返回 None。
+    扣除额仅出现在差额征税发票备注中，是反推税率时还原含税计税基础的关键。
+    """
     m = re.search(r"扣除额[:：]([\d.]+)元", nn)
     return float(m.group(1)) if m else None
 
 
 def _snap(r):
-    """把反推税率吸附到最接近的标准档位，偏差超过 0.006 时拒绝猜测。"""
+    """把反推税率吸附到最接近的标准档位，偏差超过 0.006 时拒绝猜测。
+
+    参数 ``r`` 为反推税率；命中返回该档位小数，否则返回 None。0.006 容差足以容纳
+    PDF 金额舍入误差，又能避免把异常金额关系误判为标准税率。
+    """
     if r is None or r <= 0:
         return None
     best = min(_STD_RATES, key=lambda s: abs(s - r))
@@ -303,7 +322,11 @@ _LOOSE_HINT = ("电子发票", "增值税", "发票号码", "价税合计", "税
 
 
 def _looks_like_invoice(raw):
-    """正文命中至少两个发票特征时判为疑似发票，供防漏复核使用。"""
+    """正文命中至少两个发票特征时判为疑似发票，供防漏复核使用。
+
+    参数 ``raw`` 为页面文本，返回布尔值。要求两个特征是为兼容字段残缺或版式变体，
+    正式类型判定仍以 ``_extract_one`` 的“专用/普通发票”锚词为准。
+    """
     nn = _norm(raw)
     return sum(1 for k in _LOOSE_HINT if k in nn) >= 2
 
@@ -351,6 +374,7 @@ def scan(root, log=None, progress=None):
                     and inv.total is not None
                     and abs(inv.amount + inv.tax - inv.total) > 0.01):
                 suspects.append((p, "金额+税额与价税合计不符,请核对是否取错金额"))
+            # 去重不变量：同一发票号码只保留先扫描到的一份，后到文件仅提示不覆盖。
             if inv.num in by_num:
                 n_dup += 1
                 _lg("  重复发票号 %s，已忽略：%s" % (inv.num, os.path.basename(p)))
@@ -367,7 +391,11 @@ def scan(root, log=None, progress=None):
 
 
 def filter_month(items, ym):
-    """按 ``YYYY-MM`` 日期前缀筛选发票；月份为空时返回输入的浅列表副本。"""
+    """按 ``YYYY-MM`` 日期前缀筛选发票；月份为空时返回输入列表的浅副本。
+
+    参数 ``items`` 为 scan 返回的 Invoice 列表，``ym`` 为目标月份或空串。日期为空
+    的发票不匹配任何具体月份，只会在月份为空时保留给全量复核。
+    """
     if not ym:
         return list(items)
     return [i for i in items if (i.date or "").startswith(ym)]
@@ -520,10 +548,16 @@ def write_xlsx(rows, out_path, ym=""):
 
 
 def _as_date(s, datetime):
-    """把规范 ``YYYY-MM-DD`` 文本转换为 Excel 可识别的 datetime，其他值原样返回。"""
+    """把规范 ``YYYY-MM-DD`` 文本转换为 Excel 可识别的 datetime，其他值原样返回。
+
+    非法日历日期（如 2 月 30 日）会抛 ValueError，这里回退原始文本而非中断整表生成。
+    """
     m = re.match(r"(\d{4})-(\d{2})-(\d{2})", str(s or ""))
     if m:
-        return datetime.datetime(*[int(x) for x in m.groups()])
+        try:
+            return datetime.datetime(*[int(x) for x in m.groups()])
+        except ValueError:
+            return s or ""
     return s or ""
 
 

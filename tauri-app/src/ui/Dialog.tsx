@@ -1,20 +1,32 @@
 /** 无第三方依赖的可访问弹窗与覆盖层焦点管理。 */
 import { useEffect, useId, useRef, type ReactNode } from "react";
 
+/** 居中弹窗属性。 */
 export interface DialogProps {
+  /** 是否打开；false 时不渲染任何节点。 */
   open: boolean;
+  /** 弹窗标题，作为无障碍名称关联到 role=dialog。 */
   title: string;
+  /** 可选描述，存在时作为 aria-describedby 关联内容。 */
   description?: string;
+  /** 弹窗主体内容。 */
   children: ReactNode;
+  /** 可选底部操作区，通常放确认/取消按钮。 */
   footer?: ReactNode;
+  /** 请求关闭的回调；Escape 和点击遮罩时也会触发。 */
   onClose: () => void;
 }
 
 /**
- * 弹层打开时保存原焦点、聚焦首个控件、限制 Tab 循环并支持 Escape 关闭。
+ * 弹层焦点管理 Hook：打开时保存原焦点、聚焦首个控件、限制 Tab 循环并支持 Escape 关闭。
  *
  * 监听器只在打开期间存在，关闭或卸载时解除并把焦点还给触发元素。焦点项每次按键重新
  * 查询，可适应弹层内容动态增加、禁用或删除控件。
+ *
+ * @param open 弹层是否打开；false 时不安装任何监听器。
+ * @param onClose Escape 关闭时的回调，由调用方保证引用稳定或可接受重绑定。
+ * @param dialogRef 弹层容器引用，焦点项从该容器内查询。
+ * @returns 无返回值；副作用是全局 keydown 监听与焦点恢复。
  */
 export function useOverlayFocus(open: boolean, onClose: () => void, dialogRef: React.RefObject<HTMLDivElement | null>) {
   const returnFocus = useRef<HTMLElement | null>(null);
@@ -37,7 +49,13 @@ export function useOverlayFocus(open: boolean, onClose: () => void, dialogRef: R
   }, [dialogRef, onClose, open]);
 }
 
-/** 渲染具备标题关联、模态语义、背景关闭和焦点圈定的居中弹窗。 */
+/**
+ * 渲染具备标题关联、模态语义、背景关闭和焦点圈定的居中弹窗。
+ *
+ * @param props.open 是否打开；为 false 时直接返回 null。
+ * @param props.onClose 关闭回调；点击遮罩、Escape 或关闭按钮时触发。
+ * @returns 带 role=dialog 和 aria-modal 的弹层，空态不渲染。
+ */
 export function Dialog({ open, title, description, children, footer, onClose }: DialogProps) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const titleId = useId(); const descriptionId = useId();

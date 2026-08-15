@@ -1,4 +1,9 @@
-"""Web 服务端运行配置、路径和接口能力目录。"""
+"""Web 服务端运行配置、路径和接口能力目录。
+
+本模块是 Web 能力的事实源：角色矩阵、动作白名单、复核协议、功能目录、上传限额与
+路径定义都在此处集中维护。``web_server.py`` 只做兼容导出，其他模块不得自行复制角色
+或动作清单。
+"""
 
 from __future__ import annotations
 
@@ -60,12 +65,14 @@ TRASH_ROOT = DATA_ROOT / "trash"
 AUTO_BACKUP_KEEP = max(1, int(os.environ.get("FYT_AUTO_BACKUP_KEEP", "7")))
 NOTIFY_WEBHOOK_URL = os.environ.get("FYT_NOTIFY_WEBHOOK_URL", "").strip()
 
+# 角色矩阵唯一事实源：鉴权使用稳定英文键，中文名称只用于界面提示，不得反向解析权限。
 ROLE_LABELS = {
     "admin": "系统管理员",
     "team_leader": "班组长",
     "user": "业务成员",
 }
 ROLE_CHOICES = frozenset(ROLE_LABELS)
+# 文件库“数据库”入口只对班组长和管理员开放；普通成员仍可查看共享文件，但不能进入维护视图。
 LIBRARY_ROLES = frozenset({"admin", "team_leader"})
 
 DAILY_PERSON_TYPES = {"participant"}
@@ -78,12 +85,14 @@ WORKSHOP_ISSUE_TEMPLATE_FIELDS = {
     for field, (limit, label) in workshop_issue_core.WORKSHOP_ISSUE_TEMPLATE_FIELDS.items()
 }  # Core 只维护业务字段；Web 在此补充 SQLite 列定义，避免两处重复维护名称和长度。
 
+# 创建任务白名单：不在集合内的动作即使被前端构造也不会进入桥接层。
 WEB_ACTIONS = {
     "attendance.run", "reconcile.run", "pivot.run", "purchase.run", "shipping_review.run",
     "delivery.run", "supplier_batch.run", "purchase_plan.run", "purchase_plan.diff", "rename.apply", "pdf.run",
     "excel.run", "currency.convert", "text.transform", "invoice_match.run", "attendance_archive.run",
     "reconcile_statement.scan", "reconcile_statement.build", "web.arrival", "web.invoice", "web.compare",
 }
+# 两阶段复核协议：分析动作先运行并停在 completed，用户确认后才执行对应的生成动作。
 REVIEW_ACTIONS = {
     "web.reconcile.review": "reconcile.run",
     "web.pivot.review": "pivot.run",
@@ -93,6 +102,7 @@ REVIEW_ACTIONS = {
 }
 WEB_ACTIONS.update(REVIEW_ACTIONS)  # 两阶段复核动作本身也必须通过任务创建白名单。
 
+# 工作台能力目录；前端导航与服务端白名单共同使用，隐藏导航不能替代后端鉴权。
 FEATURES = [
     {"key": "attendance", "title": "考勤填报", "group": "人事", "description": "上传打卡记录，自动生成考勤填报表"},
     {"key": "attendance_archive", "title": "考勤月度归档", "group": "人事", "description": "上传考勤填报表，汇总月度出勤统计"},

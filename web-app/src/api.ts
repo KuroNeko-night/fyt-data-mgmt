@@ -11,6 +11,7 @@ import { normalizeDailyReportData } from "./dailyReportCompat";
 // 三种角色与服务端权限矩阵保持一致，前端可见性不能替代接口鉴权。
 export type UserRole = "admin" | "team_leader" | "user";
 
+/** 登录用户及账号审核状态；角色只用于界面可见性，服务端鉴权以会话为准。 */
 export type User = {
   id: number;
   username: string;
@@ -21,8 +22,11 @@ export type User = {
   approved_at: string | null;
 };
 
+/** 业务模块入口描述，来自服务端功能白名单。 */
 export type Feature = { key: string; title: string; group: string; description: string };
+/** 工作台概览：当前用户、可用业务模块和管理员关注的待审/产出指标。 */
 export type Overview = { user: User; features: Feature[]; metrics: { pending_users: number; approved_users: number; output_jobs: number } };
+/** 任务调度板聚合数据：状态分布、趋势、功能用量、最近任务和消息。 */
 export type DashboardData = {
   user: User;
   generated_at: string;
@@ -41,9 +45,11 @@ export type DashboardData = {
   recent_files: Array<{ name: string; size: number; url: string; job_id: string; title: string; created_at: string }>;
   notifications: NotificationItem[];
 };
+/** 消息中心条目；公告与定向消息使用同一列表协议，`kind` 用于区分来源。 */
 export type NotificationItem = { id: number; kind: "announcement" | "message"; title: string; content: string; created_at: string; expires_at: string | null; read_at: string | null };
 export type NotificationResponse = { notifications: NotificationItem[]; unread_count: number };
 export type PreviewData = { name: string; sheet: string; sheets: string[]; rows: string[][]; truncated: boolean };
+/** 管理员中心一次性返回的账号、任务与上传汇总快照。 */
 export type AdminData = {
   summary: { users: number; approved_users: number; admins: number; team_leaders: number; pending_users: number; disabled_users: number; jobs: number; uploads: number; job_files: number; job_bytes: number; upload_bytes: number };
   users: Array<User & { job_count: number; session_count: number; is_primary_admin: boolean }>;
@@ -93,6 +99,7 @@ export type MasterDataCandidate = {
   selected_value: string;
   decision: null | { type: "keep_current" | "use_candidate" | "manual" | "ignore"; value: string; actor_name: string; decided_at: string };
 };
+/** 主数据学习批次详情：识别工作表、警告、候选关系与人工决定。 */
 export type MasterDataImportDetail = MasterDataImportSummary & {
   recognized_sheets: Array<{ sheet: string; header_row: number; fields: string[]; recognized_rows: number }>;
   unrecognized_sheets: Array<{ sheet: string; reason: string }>;
@@ -106,8 +113,10 @@ export type MasterDataImportList = {
   items: MasterDataImportSummary[];
   summary: { total: number; needs_review: number; ready_to_confirm: number; ready: number; merged: number };
 };
+/** 任务输入文件上传后返回的隔离句柄，后续只通过句柄引用文件。 */
 export type UploadedFile = { handle: string; group: string; name: string; size: number };
 export type LibraryScope = "team" | "private";
+/** 数据库文件及其分类、权限和服务端推导的可编辑边界。 */
 export type LibraryFile = {
   id: string;
   name: string;
@@ -128,6 +137,7 @@ export type LibraryFile = {
   updated_by: { id: number; username: string; display_name: string } | null;
   permissions: { can_download: boolean; can_edit: boolean; can_replace: boolean; can_delete: boolean };
 };
+/** 数据库文件分页查询结果，同时携带配额、分类计数和可用业务分类。 */
 export type LibraryResponse = {
   files: LibraryFile[];
   pagination: { page: number; page_size: number; total: number; pages: number };
@@ -143,6 +153,7 @@ export type WorkshopIssueImage = {
   height: number;
   url: string;
 };
+/** 现场问题完整记录，包含模板字段、状态、图片、上传者与服务端权限。 */
 export type WorkshopIssue = {
   id: string;
   issue_date: string;
@@ -211,6 +222,7 @@ export type BusinessResultSection = {
   total: number;
   truncated: boolean;
 };
+/** 核心层注册的结构化业务结果投影，用于在线展示而非让前端重新分析输出文件。 */
 export type BusinessResultPresentation = {
   kind: string;
   title: string;
@@ -426,10 +438,13 @@ export type DailyFormalOrder = { month: string; order_no: string; country: strin
 export type DailyOrderPart = { order_no?: string; material_code: string; material_name: string; quantity: number; shipment_order_no: string; shipment_date: string; completed: boolean };
 export type DailySporadicOrder = { month: string; order_no: string; transport_mode: string; country: string; order_type: string; pallet_count: number; volume_cbm: number; shipment_date: string; shipment_dates: string[]; driver_plate: string; driver_name: string; driver_phone: string; status: string; completed: boolean; note: string; pallets: Array<{ pallet_count: number; length_mm: number; width_mm: number; height_mm: number; volume_cbm: number }> };
 export type DailyOrderLedgerSource = { formal_orders: DailyFormalOrder[]; sporadic_orders: DailySporadicOrder[]; missing_parts: DailyOrderPart[]; hazardous_packages: DailyOrderPart[]; monthly_summary: Array<Record<string, string | number>> };
+/** 月度生产订单台账：正式/零星订单、缺件、危包与今日发运的服务端聚合结果。 */
 export type DailyProductionLedger = { month: string; source_file_count: number; source_files: Array<{ id: string; original_name: string; updated_at: string; uploaded_by_name: string }>; formal_total: number; formal_completed: number; formal_pending: number; formal_quantity: number; sporadic_total: number; sporadic_completed: number; sporadic_pending: number; sporadic_pallets: number; sporadic_volume_cbm: number; missing_part_count: number; outstanding_missing_part_count: number; hazardous_package_count: number; outstanding_hazardous_package_count: number; today_shipments: Array<Record<string, unknown>>; formal_orders: DailyFormalOrder[]; sporadic_orders: DailySporadicOrder[]; missing_parts: DailyOrderPart[]; hazardous_packages: DailyOrderPart[] };
 export type DailySafetyImage = { id: string; file_name: string; row: number; category: string; check_item: string; width: number; height: number; url: string };
 export type DailySafetyRecord = { row: number; category: string; sequence: string; check_item: string; standard: string; result: string; problem_description: string; corrective_action: string; owner: string; images: DailySafetyImage[] };
+/** 管理员上传的到料或安全检查资料，服务端解析后直接进入日清看板。 */
 export type DailySourceUpload = { id: string; kind: "arrival" | "safety"; report_date: string; data_month: string; original_name: string; size: number; content_type: string; summary: Record<string, unknown>; uploaded_by: number | null; uploaded_by_name: string; created_at: string; updated_at: string; download_url: string };
+/** 指定业务日期的日清聚合数据，按到料、安全、现场、考勤、事项和生产分块。 */
 export type DailyReportData = {
   date: string;
   generated_at: string;
@@ -484,6 +499,7 @@ export type DailyReportData = {
   source_uploads: DailySourceUpload[];
 };
 export type JobFile = { name: string; size: number; url: string };
+/** 持久化业务任务的完整快照，包含进度、日志、结构化展示、文件和版本。 */
 export type WebJob = {
   id: string;
   action: string;
@@ -501,11 +517,12 @@ export type WebJob = {
   retry_of?: string | null;
   versions?: Array<{ version: number; status: string; created_at: string; files: JobFile[] }>;
 };
+/** 用户保存的参数模板，仅绑定正式动作不参与分析动作。 */
 export type JobTemplate = { id: string; name: string; action: string; payload: Record<string, unknown>; created_at: string; updated_at: string };
+/** 任务中心的跨任务、文件与消息搜索结果。 */
 export type SearchResponse = { jobs: Array<{ id: string; title: string; action: string; status: string; created_at: string; updated_at: string }>; files: Array<{ name: string; size: number; url: string; job_id: string; title: string }>; messages: Array<{ id: number; title: string; content: string; created_at: string; read_at: string | null }> };
 
 const API_BASE = import.meta.env.VITE_API_BASE || "";
-const tokenKey = "fyt_web_session";
 type ApiRequestOptions = RequestInit & {
   timeoutMs?: number;
   timeoutMessage?: string;
@@ -515,12 +532,12 @@ type ApiRequestOptions = RequestInit & {
 
 class ApiResponseError extends Error {}
 
-/** 读取当前浏览器会话令牌；空字符串表示尚未登录。 */
-export function getToken() { return localStorage.getItem(tokenKey) || ""; }
-/** 在登录成功后保存服务端签发的会话令牌，后续请求会自动附带。 */
-export function setToken(token: string) { localStorage.setItem(tokenKey, token); }
-/** 清除本机令牌；服务端会话撤销仍应通过 `logout` 或设备管理接口完成。 */
-export function clearToken() { localStorage.removeItem(tokenKey); }
+// 会话鉴权统一由服务端 HttpOnly + SameSite=Strict Cookie 承载；前端不再把令牌写入
+// localStorage 或通过 X-Session-Token 头回传，避免 XSS 通过读取 localStorage 窃取会话。
+// 以下三个函数保留为兼容旧调用方的空实现，登录/登出实际由 Set-Cookie 生效。
+export function getToken() { return ""; }
+export function setToken(_token: string) {}
+export function clearToken() {}
 
 /**
  * 发送 JSON API 请求并统一处理会话、超时、网络重试和错误消息。
@@ -640,6 +657,7 @@ export function deleteAdminBackup(id: string) { return request<{ message: string
 export function adminTrash() { return request<{ trash: TrashItem[] }>("/api/admin/trash"); }
 export function restoreAdminTrash(id: string) { return request<{ message: string }>(`/api/admin/trash/${id}/restore`, { method: "POST", body: "{}" }); }
 export function deleteAdminTrash(id: string) { return request<{ message: string }>(`/api/admin/trash/${id}`, { method: "DELETE" }); }
+/** 正式主数据库快照：供应商名称到编码、材料编号到基本属性的映射。 */
 export type CatalogData = { suppliers: Record<string, string>; materials: Record<string, { name?: string; spec?: string; unit?: string; supplier?: string }>; updated_at: string };
 
 // 正式主数据维护与表格学习批次接口；冲突决定按候选项单独保存。
@@ -1124,12 +1142,16 @@ export function uploadFile(file: File, group: string, onProgress?: (progress: nu
     const token = getToken();
     if (token) xhr.setRequestHeader("X-Session-Token", token);
     xhr.withCredentials = true;
+    xhr.timeout = 180_000; // 大文件上传同样需要超时兜底，避免网络挂起时 Promise 永不落定。
     xhr.upload.onprogress = (event) => { if (event.lengthComputable) onProgress?.(Math.round(event.loaded / event.total * 100)); };
     xhr.onerror = () => reject(new Error(`上传 ${file.name} 失败，请检查网络连接`));
+    xhr.ontimeout = () => reject(new Error(`上传 ${file.name} 超时，请检查网络后重试`));
     xhr.onabort = () => reject(new Error(`上传 ${file.name} 已取消`));
     xhr.onload = () => {
-      const data = JSON.parse(xhr.responseText || "{}");
-      if (xhr.status < 200 || xhr.status >= 300) { reject(new Error(data.error || `上传 ${file.name} 失败`)); return; }
+      let data: Record<string, unknown> = {};
+      try { data = JSON.parse(xhr.responseText || "{}"); }
+      catch { reject(new Error(`上传 ${file.name} 失败`)); return; } // 服务端返回非 JSON（如反向代理错误页）时也保证 Promise 落定。
+      if (xhr.status < 200 || xhr.status >= 300) { reject(new Error(String(data.error || `上传 ${file.name} 失败`))); return; }
       onProgress?.(100); resolve(data as UploadedFile);
     };
     xhr.send(file);

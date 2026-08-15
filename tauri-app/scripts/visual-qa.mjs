@@ -65,6 +65,12 @@ function ensure(condition, message) {
 /**
  * 在指定视口创建隔离页面，执行公共健康检查和调用方提供的页面场景。
  *
+ * @param {import("playwright").Browser} browser 已经启动的无头 Chrome 浏览器实例。
+ * @param {{ width: number, height: number }} viewport 本用例的视口尺寸。
+ * @param {string} name 页面场景名，同时用于错误消息和截图文件名。
+ * @param {(page: import("playwright").Page) => Promise<void>} exercise 该视口特有的操作。
+ * @returns {Promise<string>} 当前页面截图的完整路径。
+ *
  * exercise 只描述该视口特有的操作；地址、标题、占位文本、横向溢出、控制台错误
  * 和截图清理由此函数统一处理，保证所有视觉用例采用相同验收口径。
  */
@@ -100,8 +106,10 @@ async function openPage(browser, viewport, name, exercise) {
   return screenshot;
 }
 
+// 所有视觉场景共用同一个浏览器实例，结束时由 finally 统一回收。
 const browser = await chromium.launch({ executablePath: chromePath, headless: true });
 try {
+  // 汇总全部截图路径，既供最后输出，也便于后续人工按需查看。
   const screenshots = [];
   // 首页先做轻量独立检查，确保常用业务入口在导航全量遍历前已经渲染。
   screenshots.push(await openPage(browser, { width: 1440, height: 900 }, "home-light-1440", async (page) => {

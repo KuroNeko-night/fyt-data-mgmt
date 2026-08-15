@@ -2,7 +2,11 @@ import type { BusinessResultPresentation } from "./api";
 import DataTable from "./ui/DataTable";
 import Notice from "./ui/Notice";
 
-/** 把业务投影层的 danger 色调适配为通用 Notice 使用的 error 名称。 */
+/**
+ * 把业务投影层的 danger 色调适配为通用 Notice 使用的 error 名称。
+ * @param tone 服务端投影返回的指标或提示色调。
+ * @returns Notice 组件可识别的色调；未知值一律按 info 降级，避免渲染分支缺失。
+ */
 function noticeTone(tone: string): "info" | "success" | "warning" | "error" {
   return tone === "danger" ? "error" : tone === "success" ? "success" : tone === "warning" ? "warning" : "info";
 }
@@ -10,10 +14,12 @@ function noticeTone(tone: string): "info" | "success" | "warning" | "error" {
 /**
  * 渲染 core/business_result_core.py 生成的统一业务结果投影。
  * 指标、可信度、参数和明细均由服务端计算，前端不重新解释输出工作簿。
+ * @param props.presentation 服务端生成的结构化业务结果；前端只负责展示与降级。
  */
 export function BusinessResultView({ presentation }: { presentation: BusinessResultPresentation }) {
   const quality = presentation.quality;
   const parameters = presentation.parameters || []; // 兼容尚未提供可调参数投影的旧任务结果。
+  // 各分区均按“有数据才渲染”处理，旧任务缺字段时只少显示一个区块，不会产生空壳节点。
   return <section className="fyt-business-result" aria-label={presentation.title}>
     <header className="fyt-business-result-head">
       <div><span>业务结果</span><h3>{presentation.title}</h3></div>

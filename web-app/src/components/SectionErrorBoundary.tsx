@@ -1,11 +1,14 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
 
+/** 错误边界输入：分区标题用于降级提示，onRetry 可选重试回调。 */
 type Props = { children: ReactNode; title: string; onRetry?: () => void };
+/** 错误边界状态：保存当前分区捕获到的渲染错误。 */
 type State = { error: Error | null };
 
 /**
  * 将单个页面分区的渲染错误隔离为友好空态，避免一个非关键组件让整个应用白屏。
  * 这是 React 错误边界，必须使用类组件才能实现 getDerivedStateFromError。
+ * 只捕获子组件渲染期错误，不捕获事件处理、异步回调或边界自身的错误。
  */
 export class SectionErrorBoundary extends Component<Props, State> {
   state: State = { error: null };

@@ -1,7 +1,8 @@
 """日清参会人员、生产班组、班次与考勤维护服务。
 
 本模块只处理人员和出勤主数据。生产人员按“班组 + 班次”维护编制与当日人数，
-参会人员按名册逐人维护状态；历史快照不会因主数据后续调整被回写。
+参会人员按名册逐人维护状态；历史快照不会因主数据后续调整被回写。全部写操作要求
+admin，考勤保存为同一事务内的批量 upsert，主数据有历史记录时只停用不物理删除。
 """
 
 from __future__ import annotations
@@ -529,6 +530,7 @@ def _normalize_production_attendance(
     for item in records:
         if not isinstance(item, dict):
             raise ApiError(HTTPStatus.BAD_REQUEST, "生产班组出勤格式无效")
+        # shift_id 优先；旧客户端只提交 group_id 时由后续解析选择排序最前的班次。
         try:
             shift_id = int(item["shift_id"]) if item.get("shift_id") is not None else None
             group_id = int(item["group_id"]) if item.get("group_id") is not None else None
@@ -639,7 +641,7 @@ def save_daily_attendance(handler: Any, body: dict[str, object], deps: DailyMana
     updated = deps.now_iso()
     with deps.db_lock, deps.db() as connection:
         _validate_participant_ids(connection, attendance)
-        resolved_production = _resolve_production_attendance(connection, production)
+        resolved_production = _resolve_production_attendance(connection, production)  # 班次解析在写入前完成，任一条非法输入都整体回滚。
         connection.executemany(
             "INSERT INTO daily_attendance"
             "(report_date, person_id, present, status, reason, updated_by, updated_at) "

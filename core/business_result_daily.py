@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""到料、参会人员与生产班组考勤的结果投影。"""
+"""到料、参会人员与生产班组考勤的结果投影。
+
+本模块只负责把已完成任务的输出结果转换为双端结构化的展示数据，不重新解析源文件。
+到料投影兼容新旧结果结构并把完成率钳制在 0～100；考勤投影展示匹配覆盖、异常提示、
+可信度评估和人工参数。所有明细按列白名单裁剪，绝对路径只保留文件名。"""
 
 from __future__ import annotations
 
@@ -7,6 +11,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from .business_result_common import (
+    MAX_DETAIL_ROWS,
     _basename,
     _integer,
     _mapping,
@@ -192,7 +197,7 @@ def _present_arrival(value: object, limit: int) -> dict[str, object] | None:
              ("shortage_quantity", "缺口数")],
             missing_material_rows,
             description="逐项列出尚未到齐的物料及数量缺口。",
-            limit=max(1, len(missing_material_rows)),
+            limit=MAX_DETAIL_ROWS,
         ))
     return {
         "kind": "arrival",

@@ -609,6 +609,27 @@ def _sporadic_orders(rows: list[list[str]], report_date: str | None) -> list[dic
     return orders
 
 
+def _monthly_order_summary(
+    formal: list[dict[str, object]], sporadic: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    """按月份汇总正式订单与零星订单的数量、完成数和体积指标。"""
+    months = sorted({str(item.get("month") or "") for item in formal + sporadic if item.get("month")})
+    summary = []
+    for month in months:
+        formal_rows = [item for item in formal if item.get("month") == month]
+        sporadic_rows = [item for item in sporadic if item.get("month") == month]
+        summary.append({
+            "month": month, "formal_total": len(formal_rows),
+            "formal_completed": sum(bool(item.get("completed")) for item in formal_rows),
+            "formal_quantity": _number_label(sum(float(item.get("quantity") or 0) for item in formal_rows)),
+            "sporadic_total": len(sporadic_rows),
+            "sporadic_completed": sum(bool(item.get("completed")) for item in sporadic_rows),
+            "sporadic_pallets": _number_label(sum(float(item.get("pallet_count") or 0) for item in sporadic_rows)),
+            "sporadic_volume_cbm": _number_label(sum(float(item.get("volume_cbm") or 0) for item in sporadic_rows)),
+        })
+    return summary
+
+
 def _order_ledger_insights(sheets: list[dict[str, object]], report_date: str | None) -> dict[str, object]:
     """汇总工作簿内所有正式订单与零星订单页签，并生成月度指标。"""
     formal: list[dict[str, object]] = []
@@ -620,22 +641,9 @@ def _order_ledger_insights(sheets: list[dict[str, object]], report_date: str | N
             formal.extend(_formal_orders(rows, report_date))
         elif kind == "零星订单":
             sporadic.extend(_sporadic_orders(rows, report_date))
-    months = sorted({str(item.get("month") or "") for item in formal + sporadic if item.get("month")})
-    monthly_summary = []
-    for month in months:
-        formal_rows = [item for item in formal if item.get("month") == month]
-        sporadic_rows = [item for item in sporadic if item.get("month") == month]
-        monthly_summary.append({
-            "month": month, "formal_total": len(formal_rows),
-            "formal_completed": sum(bool(item.get("completed")) for item in formal_rows),
-            "formal_quantity": _number_label(sum(float(item.get("quantity") or 0) for item in formal_rows)),
-            "sporadic_total": len(sporadic_rows),
-            "sporadic_completed": sum(bool(item.get("completed")) for item in sporadic_rows),
-            "sporadic_pallets": _number_label(sum(float(item.get("pallet_count") or 0) for item in sporadic_rows)),
-            "sporadic_volume_cbm": _number_label(sum(float(item.get("volume_cbm") or 0) for item in sporadic_rows)),
-        })
     return {
-        "formal_orders": formal, "sporadic_orders": sporadic, "monthly_summary": monthly_summary,
+        "formal_orders": formal, "sporadic_orders": sporadic,
+        "monthly_summary": _monthly_order_summary(formal, sporadic),
         "missing_parts": [dict(item, order_no=order["order_no"]) for order in formal for item in order["missing_parts"]],
         "hazardous_packages": [dict(item, order_no=order["order_no"]) for order in formal for item in order["hazardous_packages"]],
     }
@@ -749,6 +757,53 @@ def _build_insights(sheets: list[dict[str, object]], report_date: str | None) ->
     return insights
 
 
+def _read_plan_sheet(worksheet: Any, workbook: Any) -> tuple[dict[str, object], int]:
+    """读取单个生产计划页签的预览与结构化数据，返回页签记录和源行数。
+
+    每个页签最多保留 ``MAX_PREVIEW_ROWS`` 行首屏预览、``MAX_TABLE_ROWS`` 行结构化
+    数据；``row_count`` 仍统计源工作表真实行数，用于截断提示。
+    """
+    rows: list[list[str]] = []
+    table_rows: list[list[str]] = []
+    row_count = 0
+    for raw_row in worksheet.iter_rows():
+        row_count += 1
+        raw_values = [cell.value for cell in raw_row[:MAX_PREVIEW_COLUMNS]]
+        # 横向日期模板的单元格可能没有日期格式，看到日期语义行时强制尝试序列号转换。
+        force_excel_date = any(value in {"日期", "班组/CASE"} for value in raw_values)
+        values = [_cell_text(cell.value, number_format=cell.number_format, epoch=workbook.epoch, force_excel_date=force_excel_date) for cell in raw_row[:MAX_PREVIEW_COLUMNS]]
+        if len(rows) < MAX_PREVIEW_ROWS:
+            rows.append(values)
+        if len(table_rows) < MAX_TABLE_ROWS and any(values):
+            # 分析区忽略全空行，但 row_count 保留源工作表真实行数用于截断提示。
+            table_rows.append(values)
+    header_index = _find_header_index(table_rows)
+    if header_index is not None:
+        headers = table_rows[header_index]
+        data_rows = table_rows[header_index + 1:]
+    else:
+        # 横向日期矩阵没有传统表头，保留所有非空行，避免前端只剩下首屏 12 行。
+        headers, data_rows = [], table_rows
+    sheet_kind = _table_kind(worksheet.title, headers)
+    # 没有传统表头时，用前二十四行整体语义补判横向生产计划或到料成品表。
+    flattened = "".join(cell.replace(" ", "") for row in table_rows[:24] for cell in row if cell)
+    if sheet_kind == "通用数据" and all(token in flattened for token in ("计划", "实际", "差异", "班次")):
+        sheet_kind = "生产计划"
+    if sheet_kind == "通用数据" and all(token in flattened for token in ("主料总共类", "到货数量", "剩余未收数")):
+        sheet_kind = "到料明细"
+    sheet = {
+        "sheet": worksheet.title,
+        "rows": row_count,
+        "columns": worksheet.max_column,
+        "preview": rows,
+        "kind": sheet_kind,
+        "table_headers": headers,
+        "table_rows": data_rows,
+        "table_truncated": row_count > MAX_TABLE_ROWS,
+    }
+    return sheet, row_count
+
+
 def analyze(path: str | os.PathLike[str], report_date: str | None = None) -> dict[str, object]:
     """读取生产计划工作簿的可展示摘要，不修改原文件。
 
@@ -770,47 +825,9 @@ def analyze(path: str | os.PathLike[str], report_date: str | None = None) -> dic
     total_rows = 0
     try:
         for worksheet in workbook.worksheets:
-            rows: list[list[str]] = []
-            table_rows: list[list[str]] = []
-            row_count = 0
-            for raw_row in worksheet.iter_rows():
-                row_count += 1
-                raw_values = [cell.value for cell in raw_row[:MAX_PREVIEW_COLUMNS]]
-                # 横向日期模板的单元格可能没有日期格式，看到日期语义行时强制尝试序列号转换。
-                force_excel_date = any(value in {"日期", "班组/CASE"} for value in raw_values)
-                values = [_cell_text(cell.value, number_format=cell.number_format, epoch=workbook.epoch, force_excel_date=force_excel_date) for cell in raw_row[:MAX_PREVIEW_COLUMNS]]
-                if len(rows) < MAX_PREVIEW_ROWS:
-                    rows.append(values)
-                if len(table_rows) < MAX_TABLE_ROWS and any(values):
-                    # 分析区忽略全空行，但 row_count 保留源工作表真实行数用于截断提示。
-                    table_rows.append(values)
+            sheet, row_count = _read_plan_sheet(worksheet, workbook)
+            sheets.append(sheet)
             total_rows += row_count
-            header_index = _find_header_index(table_rows)
-            headers: list[str] = []
-            data_rows: list[list[str]] = []
-            if header_index is not None:
-                headers = table_rows[header_index]
-                data_rows = table_rows[header_index + 1:]
-            else:
-                # 横向日期矩阵没有传统表头，保留所有非空行，避免前端只剩下首屏 12 行。
-                data_rows = table_rows
-            sheet_kind = _table_kind(worksheet.title, headers)
-            # 没有传统表头时，用前二十四行整体语义补判横向生产计划或到料成品表。
-            flattened = "".join(cell.replace(" ", "") for row in table_rows[:24] for cell in row if cell)
-            if sheet_kind == "通用数据" and all(token in flattened for token in ("计划", "实际", "差异", "班次")):
-                sheet_kind = "生产计划"
-            if sheet_kind == "通用数据" and all(token in flattened for token in ("主料总共类", "到货数量", "剩余未收数")):
-                sheet_kind = "到料明细"
-            sheets.append({
-                "sheet": worksheet.title,
-                "rows": row_count,
-                "columns": worksheet.max_column,
-                "preview": rows,
-                "kind": sheet_kind,
-                "table_headers": headers,
-                "table_rows": data_rows,
-                "table_truncated": row_count > MAX_TABLE_ROWS,
-            })
     finally:
         workbook.close()
     return {

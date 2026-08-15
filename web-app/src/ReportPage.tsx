@@ -1,3 +1,9 @@
+/**
+ * 报表中心页面。
+ *
+ * 按时间范围和账号范围请求服务端生成任务汇总 Excel；普通成员只能统计
+ * 自己的任务，管理员可选择全量统计，最终口径由服务端接口控制。
+ */
 import { useState } from "react";
 import { buildReport } from "./api";
 import { Icon } from "./icons";

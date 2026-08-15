@@ -11,15 +11,23 @@ import { FilePickerField, FieldRow, ResultSummary, TaskPanel } from "../componen
 import { useBridgeAction, useBridgeTask } from "../hooks/useBridgeTask";
 import BusinessResultView from "../ui/BusinessResultView";
 
+/** 文件工具页面共用的 Excel/CSV 文件筛选器。 */
 const excelFilters = [{ name: "Excel 表格", extensions: ["xlsx", "xlsm", "xls", "csv"] }];
+/** PDF 工具页面使用的文件筛选器。 */
 const pdfFilters = [{ name: "PDF 文件", extensions: ["pdf"] }];
 
+/** 批量重命名规则草稿：所有字段均直接发送给核心层执行。 */
 interface RenameRule {
+  /** find 为查找内容或正则表达式；replace 为替换内容；use_regex 为是否按正则解析；prefix/suffix 为前后缀。 */
   find: string; replace: string; use_regex: boolean; prefix: string; suffix: string;
+  /** base_name 为统一基名；seq_enabled/seq_start/seq_digits 控制追加序号。 */
   base_name: string; seq_enabled: boolean; seq_start: number; seq_digits: number;
+  /** seq_sep 为序号分隔符；ext_lower 控制扩展名是否转小写。 */
   seq_sep: string; ext_lower: boolean;
 }
+/** 重命名预览结果：items 为逐文件预览，summary 为可处理、冲突、无变化统计。 */
 interface RenamePlan { items: Array<{ old_path: string; old_name: string; new_name: string; status: string; note: string }>; summary: { ok: number; blocked: number; same: number; total: number }; }
+/** 重命名执行结果：count 为成功数，failed 为失败项，undo_map 为反向撤销映射，paths 为改名后路径。 */
 interface RenameResult { count: number; failed: Array<[string, string]>; undo_map: Array<[string, string]>; paths: string[]; }
 
 /** 将重命名预览状态转换为操作含义，未知状态统一视为不可处理。 */
@@ -76,6 +84,7 @@ export function RenamePage() {
   </section></div>;
 }
 
+/** 文本工具支持的操作键与客户文案，实际转换由核心层执行。 */
 const textOperations = [
   ["dedup", "行去重"], ["sort", "排序"], ["reverse", "倒序"],
   ["remove_empty", "去空行"], ["trim", "去首尾空格"], ["collapse", "压缩空格"],
@@ -101,6 +110,7 @@ export function TextPage() {
   </div>;
 }
 
+/** PDF 与 Excel 文件工具的统一执行结果。 */
 interface FileToolResult { out_dir: string; out_files: string[]; }
 
 /**
@@ -146,7 +156,12 @@ export function ExcelToolsPage() {
     <TaskPanel busy={task.busy} error={task.error} logs={task.logs} progress={task.progress} onCancel={() => void task.cancel()} canRun={canRun} runLabel="开始处理" onRun={() => void task.run("excel.run", { paths, mode, target, has_header: hasHeader, keep_formula: keepFormula })} outDir={task.outDir}>{task.result ? <ResultSummary><strong>已生成 {task.result.out_files.length} 个文件</strong></ResultSummary> : null}</TaskPanel></section></div>;
 }
 
+/** 表格比对准备结果：common 为两表公共列，headers1/headers2 为两表各自的表头。 */
 interface ComparePrepare { common: string[]; headers1: string[]; headers2: string[]; }
+/**
+ * 表格比对执行结果：out_dir 为输出目录，report_path 为报告路径，counts 为差异统计，
+ * diffs 为明细差异（页面仅预览前一百条），only_a/only_b 为单侧独有行。
+ */
 interface CompareResult { out_dir: string; report_path: string; counts: { diffs: number; only_a: number; only_b: number; same: number }; diffs: Array<{ key: string; column: string; a: unknown; b: unknown }>; only_a: Array<{ key: string; row: Record<string, unknown> }>; only_b: Array<{ key: string; row: Record<string, unknown> }>; }
 
 /** 为表格比对页读取工作表列表，路径变化后忽略仍在返回途中的旧请求。 */

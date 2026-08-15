@@ -1,3 +1,9 @@
+/**
+ * 主数据管理面板。
+ *
+ * 同时维护正式供应商/材料值和“上传、复核、确认、合并”的表格学习流程；
+ * 候选批次在合并前始终与正式主数据库隔离，冲突决策只写入批次审查记录。
+ */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   catalogList,

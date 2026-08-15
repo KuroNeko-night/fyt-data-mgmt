@@ -198,7 +198,12 @@ def detect_layout_or_shape(ws, scan_rows=12, log=None):
 
 
 def _select_purchase_sheet(workbook, requested_sheet, log):
-    """选择采购业务页签，并返回工作表、表头行和角色列映射。"""
+    """选择采购业务页签，并返回 ``(工作表, 表头行, 角色列映射)``。
+
+    显式指定页签时直接识别；未指定时先识别首张表，识别失败且工作簿含多个页签时再顺序
+    寻找后续有效页签，以兼容封面/说明页位于首位的工作簿。单表识别失败也原样返回，
+    由 ``load_rows`` 抛出统一的可读错误。
+    """
 
     if requested_sheet:
         worksheet = workbook[requested_sheet]
@@ -229,7 +234,11 @@ def _purchase_cell(worksheet, row, columns, role):
 
 
 def _purchase_item(worksheet, row, columns, resolver, fill_counts):
-    """把工作表一行转换为采购匹配记录；空行、汇总行和无名称行返回 ``None``。"""
+    """把工作表一行转换为采购匹配记录，空行、汇总行和无名称行返回 ``None``。
+
+    ``resolver`` 用于按材料编号只补空字段，补全统计累加进 ``fill_counts``；名称与编号
+    同时为空视为空行，名称含“合计/小计/总计”视为汇总行，均不参与后续逐行配对。
+    """
 
     name = _purchase_cell(worksheet, row, columns, "name")
     material_no = _purchase_cell(worksheet, row, columns, "no")
@@ -237,6 +246,7 @@ def _purchase_item(worksheet, row, columns, resolver, fill_counts):
     number_empty = material_no is None or not str(material_no).strip()
     if name_empty and number_empty:
         return None
+    # 汇总行（合计/小计/总计）不是逐行明细，必须排除，否则汇总数量会被当作可配对明细。
     if isinstance(name, str) and any(word in name for word in ("合计", "小计", "总计")):
         return None
 
@@ -382,6 +392,7 @@ class _ResidualNetwork:
     """容量均为一的残量网络，用于同名同规格桶内的一对一最优匹配。"""
 
     def __init__(self, node_count):
+        """构建包含 ``node_count`` 个节点的空残量网络，所有边由后续 ``add_edge`` 注入。"""
         self.graph = [[] for _ in range(node_count)]
 
     def add_edge(self, start, end, capacity, cost, meta=None):
@@ -439,7 +450,11 @@ class _ResidualNetwork:
 
 
 def _build_bucket_network(rows1, rows2, left, right):
-    """构造同名同规格桶的二分图残量网络及节点位置。"""
+    """构造同名同规格桶的二分图残量网络及节点位置。
+
+    节点布局为“源点 -> 左侧行 -> 右侧行 -> 汇点”，仅 ``_can_match`` 通过的候选建立
+    左右边，边上保存评分和原始索引作为业务元数据。返回网络、源点、汇点及左侧节点范围。
+    """
 
     left_count = len(left)
     right_count = len(right)
@@ -689,6 +704,7 @@ def apply_colors(path, sheet, matched, rows, qty_col, out_path, col_map=None):
     ``load_rows``，因此颜色准确落到原业务行。名称、规格、单位只在原单元格为空时补入，
     严格遵守主数据不覆盖源文件已有值的规则。
     """
+    # 上色必须保留原表样式、公式和图片，因此用普通模式完整重开，不能使用只读流式加载。
     wb = openpyxl.load_workbook(path)
     try:
         ws = wb[sheet] if sheet else wb[wb.sheetnames[0]]
@@ -837,8 +853,14 @@ def _out_name(path):
 
 
 def _read_purchase_inputs(files, sheets, names, log):
-    """使用同一主数据快照读取双方采购表，并记录布局与补全统计。"""
+    """使用同一主数据快照读取双方采购表，并记录布局与补全统计。
 
+    双方共用一个 ``CatalogResolver``，保证补全口径一致且统计不重复；``files``、
+    ``sheets``、``names`` 三个序列必须等长。返回 ``(rows, layouts)``，分别保存双方
+    明细行列表与各自工作表布局。
+    """
+
+    # 两侧共用同一个 CatalogResolver，使主数据补全快照一致、补全统计不重复。
     resolver = material_catalog.CatalogResolver()
     fill_counts = {}
     rows = []

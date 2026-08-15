@@ -1,5 +1,12 @@
 # -*- coding: utf-8 -*-
-"""跨业务模块共用的 Excel 安全读取与公式缓存检查。"""
+"""跨业务模块共用的 Excel 安全读取与公式缓存检查。
+
+职责边界：本模块只读取工作簿、页签和单元格计算值，不写入任何工作簿。现代
+xlsx/xlsm 统一经 :func:`load_workbook_safe` 打开，把损坏或伪装格式转换成中文业务
+错误；旧 xls 通过可选的 xlrd 路径按值读取。公式缓存检测是只读预警工具，失败返回
+空集或仅记录日志，绝不阻断业务主流程。``skip_pivot_cache_parse`` 临时替换 openpyxl
+的进程级透视缓存解析属性，使用线程锁与 ``finally`` 恢复，保证并发读取安全。
+"""
 
 from __future__ import annotations
 
@@ -13,6 +20,8 @@ from typing import Iterator
 import openpyxl
 
 
+# openpyxl 的 WorkbookParser.pivot_caches 是进程级类属性，替换与恢复必须串行；
+# 同一进程内的并发读取也需要此 RLock，避免两个任务互相覆盖缓存解析器。
 _PIVOT_CACHE_LOCK = threading.RLock()
 
 
@@ -76,15 +85,19 @@ def detect_uncached_formula(
 
 
 def warn_if_uncached(path: str, log, sheet: str | None = None, what: str = "数据") -> bool:
-    """发现公式缓存风险时记录客户可执行的修复步骤。"""
+    """发现公式缓存风险时记录客户可执行的修复步骤。
 
+    ``log`` 允许为 ``None``（各业务入口默认不传回调）；此时只返回是否命中，不再写日志，
+    避免把“公式未刷新”的预警升级成 ``TypeError`` 中断整个业务任务。
+    """
     if not detect_uncached_formula(path, sheet):
         return False
-    log(
-        "⚠ 警告：《%s》中%s所在列含未刷新的公式（读取值为空），可能导致漏算或算错。"
-        % (os.path.basename(path), what)
-    )
-    log("  请先用 Excel 打开该表、按 Ctrl+S 保存一次以刷新公式后重试。")
+    if log is not None:
+        log(
+            "⚠ 警告：《%s》中%s所在列含未刷新的公式（读取值为空），可能导致漏算或算错。"
+            % (os.path.basename(path), what)
+        )
+        log("  请先用 Excel 打开该表、按 Ctrl+S 保存一次以刷新公式后重试。")
     return True
 
 
@@ -108,6 +121,7 @@ def skip_pivot_cache_parse() -> Iterator[None]:
             """满足读取器索引协议，但不触发任何真实缓存解析。"""
 
             def __missing__(self, key):
+                """对任意缓存 ID 返回 ``None``，满足读取器索引协议但不触发真实解析。"""
                 return None
 
         WorkbookParser.pivot_caches = property(lambda self: _NullCaches())
