@@ -102,8 +102,18 @@ class TestCompare(_Tmp):
         self.assertEqual([o["key"] for o in r["only_b"]], ["M03"])
 
     def test_duplicate_key_reported(self):
-        r = self._cmp([["M01", "x", 1], ["M01", "x", 9]], [["M01", "x", 1]])
+        logs = []
+        headers = list(HDR)
+        r = C.compare(
+            headers,
+            [dict(zip(headers, row)) for row in [["M01", "x", 1], ["M01", "x", 9]]],
+            headers,
+            [dict(zip(headers, ["M01", "x", 1]))],
+            "物料编码",
+            log=logs.append,
+        )
         self.assertIn("M01", r["dup_a"])
+        self.assertTrue(any("按内容相似度逐条配对" in message for message in logs))
 
     def test_header_autodetect_with_preamble(self):
         # 表头前有空行,仍应识别到真正表头

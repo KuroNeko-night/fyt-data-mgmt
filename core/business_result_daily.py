@@ -225,33 +225,45 @@ def _attendance_stats(value: object) -> Mapping[str, Any]:
     return {}
 
 
-def _present_attendance(value: object, limit: int) -> dict[str, object] | None:
-    """生成考勤填报投影，展示匹配覆盖、异常行、可信度和人工参数。"""
-    result = unwrap_result(value)
-    source_stat = _mapping(result.get("source_stat"))
-    result_items = _sequence(result.get("results"))
-    if not result_items and not _sequence(result.get("out_files")):
-        return None
-    rows = []
+def _attendance_row(item: object, index: int) -> tuple[dict[str, object], Mapping[str, object]]:
+    """把单份考勤结果投影为前端行，并返回该行统计映射。"""
+
+    values = _sequence(item)
+    stats = _attendance_stats(item)
+    return {
+        "file": _basename(values[0] if values else f"考勤表{index}"),
+        "matched": stats.get("matched"),
+        "computed_work": stats.get("computed_work"),
+        "unmatched": stats.get("unmatched"),
+        "anomalies": stats.get("anomalies"),
+    }, stats
+
+
+def _attendance_totals(result_items: list[object]) -> tuple[list[dict[str, object]], dict[str, int]]:
+    """汇总逐表考勤指标，同时保留前端明细行。"""
+
     totals = {"matched": 0, "unmatched": 0, "computed_work": 0, "anomalies": 0}
+    rows: list[dict[str, object]] = []
     for index, item in enumerate(result_items, start=1):
-        values = _sequence(item)
-        stats = _attendance_stats(item)
+        row, stats = _attendance_row(item, index)
         for key in totals:
             totals[key] += _integer(stats.get(key))
-        rows.append({
-            "file": _basename(values[0] if values else f"考勤表{index}"),
-            "matched": stats.get("matched"),
-            "computed_work": stats.get("computed_work"),
-            "unmatched": stats.get("unmatched"),
-            "anomalies": stats.get("anomalies"),
-        })
+        rows.append(row)
+    return rows, totals
+
+
+def _attendance_quality(
+    totals: Mapping[str, int],
+    source_stat: Mapping[str, object],
+) -> tuple[int, list[dict[str, object]]]:
+    """根据匹配覆盖、异常行和重复记录生成质量评分与核查项。"""
+
     observed = totals["matched"] + totals["unmatched"]
     match_rate = _ratio(totals["matched"], observed)
     anomaly_base = max(totals["computed_work"] + totals["unmatched"], 1)
     anomaly_rate = _ratio(totals["anomalies"], anomaly_base)
     conflicts = _integer(source_stat.get("conflicts"))
-    score = round(100 - (100 - match_rate) * 0.5 - anomaly_rate * 0.35 - min(10, conflicts * 2))  # 评分只描述识别质量，不评价实际出勤。
+    score = round(100 - (100 - match_rate) * 0.5 - anomaly_rate * 0.35 - min(10, conflicts * 2))
     checks = [
         _quality_check(
             "success" if match_rate >= 95 else "warning" if match_rate >= 80 else "danger",
@@ -269,17 +281,37 @@ def _present_attendance(value: object, limit: int) -> dict[str, object] | None:
             "warning", "重复打卡记录",
             f"发现 {conflicts} 组姓名与日期重复记录，已按本次选择的冲突策略处理。",
         ))
+    return score, checks
+
+
+def _attendance_parameters(result: Mapping[str, object]) -> list[dict[str, object]]:
+    """将考勤可调参数翻译成客户可读标签。"""
+
     parameters = _mapping(result.get("parameters"))
+    if not parameters:
+        return []
     conflict_labels = {"last": "后者覆盖", "first": "先者优先", "warn": "不覆盖，仅提示"}
-    display_parameters = []
-    if parameters:
-        display_parameters = [
-            _parameter("workday_hours", "白班标准工时", f"{_text(parameters.get('workday_hours'))} 小时"),
-            _parameter("conflict", "重复记录", conflict_labels.get(_text(parameters.get("conflict")), _text(parameters.get("conflict")))),
-            _parameter("auto_actual", "实际时间", "自动进退位" if parameters.get("auto_actual") else "保留人工值"),
-            _parameter("day_max_hours", "白班上限", f"{_text(parameters.get('day_max_hours'))} 小时"),
-            _parameter("night_shift", "夜班识别", "启用" if parameters.get("night_shift") else "关闭"),
-        ]
+    return [
+        _parameter("workday_hours", "白班标准工时", f"{_text(parameters.get('workday_hours'))} 小时"),
+        _parameter("conflict", "重复记录", conflict_labels.get(_text(parameters.get("conflict")), _text(parameters.get("conflict")))),
+        _parameter("auto_actual", "实际时间", "自动进退位" if parameters.get("auto_actual") else "保留人工值"),
+        _parameter("day_max_hours", "白班上限", f"{_text(parameters.get('day_max_hours'))} 小时"),
+        _parameter("night_shift", "夜班识别", "启用" if parameters.get("night_shift") else "关闭"),
+    ]
+
+
+def _present_attendance(value: object, limit: int) -> dict[str, object] | None:
+    """生成考勤填报投影，展示匹配覆盖、异常行、可信度和人工参数。"""
+    result = unwrap_result(value)
+    source_stat = _mapping(result.get("source_stat"))
+    result_items = _sequence(result.get("results"))
+    if not result_items and not _sequence(result.get("out_files")):
+        return None
+    rows, totals = _attendance_totals(result_items)
+    observed = totals["matched"] + totals["unmatched"]
+    match_rate = _ratio(totals["matched"], observed)
+    score, checks = _attendance_quality(totals, source_stat)
+    display_parameters = _attendance_parameters(result)
     return {
         "kind": "attendance",
         "title": "考勤填报结果",

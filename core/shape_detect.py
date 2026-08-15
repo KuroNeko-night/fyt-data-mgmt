@@ -122,44 +122,52 @@ def _guess_data_region(ws, scan_rows, max_cols):
     return best_r
 
 
-def _assign_shape_columns(profile, profs, max_cols):
-    """按 profile 顺序贪心指派列，返回列映射和置信度分子。
+def _profile_data_columns(ws, data_start, data_end, max_cols):
+    """一次性建立所有候选列的形态画像，后续角色评分不再重复读取单元格。"""
+    return {
+        column: profile_column(ws, column, data_start, data_end)
+        for column in range(1, max_cols + 1)
+    }
 
-    每个角色选择未用列中契合度最高者；ANY 角色不参与置信度计算。多列同分时，先到
-    先得的顺序由 ``profile`` 决定，贴合真实表的典型列序。
-    """
-    col_map = {}
+
+def _best_unused_column(role_type, profiles, used):
+    """从尚未占用的列中选择最符合角色形态的列，平分时保持最左列优先。"""
+    best_column, best_score = None, 0.0
+    for column, column_profile in profiles.items():
+        if column in used:
+            continue
+        score = _score_role(role_type, column_profile)
+        # 严格大于可稳定保留字典插入顺序中的最左候选列，结果不受运行环境影响。
+        if score > best_score:
+            best_score, best_column = score, column
+    return best_column, best_score
+
+
+def _assign_profile_columns(profile, profiles):
+    """按业务角色声明顺序贪心指派列，并计算非 ANY 角色的平均契合度。"""
+    column_map = {}
     used = set()
-    conf_sum = 0.0
-    for role, rtype, _req in profile:
-        best_c, best_s = None, 0.0
-        for c in range(1, max_cols + 1):
-            if c in used:
-                continue
-            s = _score_role(rtype, profs[c])
-            if s > best_s:
-                best_s, best_c = s, c
-        if best_c is not None and best_s > 0.0:
-            col_map[role] = best_c
-            used.add(best_c)
-            if rtype != ANY:
-                conf_sum += best_s
-    return col_map, conf_sum
+    confidence_sum = 0.0
+    scored_roles = [item for item in profile if item[1] != ANY]
+    for role, role_type, _required in profile:
+        column, score = _best_unused_column(role_type, profiles, used)
+        if column is None or score <= 0.0:
+            continue
+        column_map[role] = column
+        used.add(column)  # 每个源列只能承担一个业务角色，避免同列被重复解释。
+        if role_type != ANY:
+            confidence_sum += score
+    confidence = confidence_sum / len(scored_roles) if scored_roles else 0.0
+    return column_map, confidence
 
 
-def _log_shape_outcome(log, conf, required_ok):
-    """按统一口径记录形态兜底采用或未采用的原因。"""
-    if log is None:
+def _safe_log(log, message):
+    """调用可选日志回调；日志组件异常不得改变只读识别结果。"""
+    if not log:
         return
     try:
-        if required_ok:
-            log("· 形态兜底:按数据形态推断列映射(置信度 %.2f),请在预览面板核对后再生成"
-                % conf)
-        else:
-            log("· 形态兜底:置信度 %.2f%s,未采用"
-                % (conf, "" if required_ok else "(缺必需列)"))
+        log(message)
     except Exception:
-        # 日志回调不应影响识别主流程；失败时静默跳过。
         pass
 
 
@@ -179,16 +187,17 @@ def detect_by_shape(ws, profile, scan_rows=12, min_conf=0.5, log=None):
     data_start = header_row + 1
     if data_start > max_row:
         return None, {}, 0.0
-    profs = {c: profile_column(ws, c, data_start, max_row) for c in range(1, max_cols + 1)}
-
-    col_map, conf_sum = _assign_shape_columns(profile, profs, max_cols)
-    weighted = [p for p in profile if p[1] != ANY]     # ANY 不计入置信度
-    conf = conf_sum / len(weighted) if weighted else 0.0
-
-    required = [r for r, _t, req in profile if req]
-    required_ok = all(r in col_map for r in required)
-    if not required_ok or conf < min_conf:
-        _log_shape_outcome(log, conf, required_ok)
-        return None, {}, conf
-    _log_shape_outcome(log, conf, required_ok)
-    return header_row, col_map, conf
+    profiles = _profile_data_columns(ws, data_start, max_row, max_cols)
+    column_map, confidence = _assign_profile_columns(profile, profiles)
+    required_roles = [role for role, _type, required in profile if required]
+    missing_required = [role for role in required_roles if role not in column_map]
+    if missing_required or confidence < min_conf:
+        _safe_log(log, "· 形态兜底:置信度 %.2f%s,未采用" % (
+            confidence, "(缺必需列)" if missing_required else ""))
+        return None, {}, confidence
+    _safe_log(
+        log,
+        "· 形态兜底:按数据形态推断列映射(置信度 %.2f),请在预览面板核对后再生成"
+        % confidence,
+    )
+    return header_row, column_map, confidence

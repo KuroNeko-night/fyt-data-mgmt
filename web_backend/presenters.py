@@ -201,6 +201,45 @@ def production_plan_public(row: sqlite3.Row) -> dict[str, object]:
     }
 
 
+def _daily_source_image_url(upload_id: str, file_name: object) -> str:
+    """为安全检查图片生成经过日清资料权限校验的下载地址。"""
+    return (
+        f"/api/admin/daily-source-uploads/{quote(upload_id)}/images/"
+        f"{quote(str(file_name))}"
+    )
+
+
+def _attach_safety_image_urls(summary: dict[str, object], upload_id: str) -> None:
+    """原地补全安全检查摘要中的图片 URL，不泄露服务器绝对路径。
+
+    顶层图片是文件事实源，记录内图片只保存图片编号。先建立编号到受控 URL 的映射，
+    再回填各检查记录，可确保两种展示结构始终指向同一个鉴权接口。
+    """
+    images = summary.get("images") if isinstance(summary.get("images"), list) else []
+    image_urls: dict[str, object] = {}
+    for image in images:
+        if not isinstance(image, dict):
+            continue
+        file_name = str(image.get("file_name") or "")
+        if file_name:
+            image["url"] = _daily_source_image_url(upload_id, file_name)
+        image_id = image.get("id")
+        if image_id is not None:
+            image_urls[str(image_id)] = image.get("url")
+
+    records = summary.get("records") if isinstance(summary.get("records"), list) else []
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        record_images = record.get("images") if isinstance(record.get("images"), list) else []
+        for image in record_images:
+            if not isinstance(image, dict):
+                continue
+            image_id = str(image.get("id"))
+            if image_id in image_urls:
+                image["url"] = image_urls[image_id]
+
+
 def daily_source_upload_public(row: sqlite3.Row) -> dict[str, object]:
     """输出日清人工资料，并把安全检查图片转换为受控下载地址。
 
@@ -208,36 +247,10 @@ def daily_source_upload_public(row: sqlite3.Row) -> dict[str, object]:
     接口，绝对路径不会下发。顶层图片和记录内图片通过编号建立同一 URL 映射，避免前端
     依赖两种不同图片结构。
     """
-    try:
-        summary = json.loads(row["summary"] or "{}")
-    except (TypeError, json.JSONDecodeError):
-        summary = {}
-    if not isinstance(summary, dict):
-        summary = {}
+    summary = json_object(row["summary"])
     upload_id = str(row["id"])  # URL 始终使用字符串编号，避免不同数据库驱动的数值类型差异。
     if str(row["kind"]) == "safety":
-        images = summary.get("images") if isinstance(summary.get("images"), list) else []  # 安全检查解析器把图片元数据集中放在顶层列表。
-        for image in images:
-            if not isinstance(image, dict):
-                continue
-            file_name = str(image.get("file_name") or "")
-            if file_name:
-                image["url"] = (  # 原始服务器路径不下发，浏览器只使用受权限控制的下载地址。
-                    f"/api/admin/daily-source-uploads/{quote(upload_id)}/images/{quote(file_name)}"
-                )
-        records = summary.get("records") if isinstance(summary.get("records"), list) else []
-        image_urls = {  # 记录中的图片只保存编号，通过映射补回相同的受控 URL。
-            str(image.get("id")): image.get("url")
-            for image in images
-            if isinstance(image, dict)
-        }
-        for record in records:
-            if not isinstance(record, dict):
-                continue
-            record_images = record.get("images") if isinstance(record.get("images"), list) else []
-            for image in record_images:
-                if isinstance(image, dict) and image.get("id") in image_urls:
-                    image["url"] = image_urls[str(image["id"])]
+        _attach_safety_image_urls(summary, upload_id)
     return {
         "id": upload_id,
         "kind": row["kind"],
@@ -289,6 +302,58 @@ def announcement_public(row: sqlite3.Row) -> dict[str, object]:
     }
 
 
+def _library_categories(row: sqlite3.Row, keys: set[str]) -> tuple[str, list[str]]:
+    """清洗共享文件的主分类与多分类列表，并过滤已经淘汰的历史分类。"""
+    valid = set(core_library.CATEGORIES) | {core_library.UNKNOWN}
+    category = (
+        str(row["category"] or core_library.UNKNOWN)
+        if "category" in keys else core_library.UNKNOWN
+    )
+    if category not in valid:
+        category = core_library.UNKNOWN  # 历史脏值不得重新进入当前筛选器和权限流程。
+    categories = [
+        str(value)
+        for value in json_list(row["categories"] if "categories" in keys else "[]")
+        if str(value) in valid
+    ]
+    if category not in categories:
+        categories.insert(0, category)  # 主分类必须始终是多分类集合的一部分。
+    return category, list(dict.fromkeys(categories))
+
+
+def _library_actor(
+    row: sqlite3.Row,
+    keys: set[str],
+    *,
+    editor: bool,
+) -> dict[str, object] | None:
+    """构造上传者或最后编辑者的公开身份字段，不下发账号敏感信息。"""
+    if editor:
+        actor_id = row["updated_by"]
+        if actor_id is None:
+            return None
+        username_key, display_key = "editor_username", "editor_display_name"
+    else:
+        actor_id = row["owner_id"]
+        username_key, display_key = "owner_username", "owner_display_name"
+    return {
+        "id": actor_id,
+        "username": row[username_key] if username_key in keys else "",
+        "display_name": row[display_key] if display_key in keys else "",
+    }
+
+
+def _library_permissions(row: sqlite3.Row, user: sqlite3.Row) -> dict[str, bool]:
+    """计算当前账号对共享文件的操作权限；可见不等于可修改。"""
+    can_manage = int(row["owner_id"]) == int(user["id"]) or user["role"] == "admin"
+    return {
+        "can_download": True,
+        "can_edit": can_manage,
+        "can_replace": can_manage,
+        "can_delete": can_manage,
+    }
+
+
 def library_file_public(row: sqlite3.Row, user: sqlite3.Row) -> dict[str, object]:
     """输出共享文件、分类证据、上传者信息和当前账号操作权限。
 
@@ -296,20 +361,8 @@ def library_file_public(row: sqlite3.Row, user: sqlite3.Row) -> dict[str, object
     JSON 损坏时由兼容解析器降级。班组长可读取团队文件，但编辑、替换和删除只授予
     所有者或管理员，权限结果随每条记录显式下发供界面渲染。
     """
-    can_manage = int(row["owner_id"]) == int(user["id"]) or user["role"] == "admin"  # 班组长可查看团队文件，但只有所有者和管理员可修改。
     keys = set(row.keys())
-    valid_categories = set(core_library.CATEGORIES) | {core_library.UNKNOWN}  # 过滤数据库中的淘汰分类，前端只看到当前注册表内容。
-    category = str(row["category"] or core_library.UNKNOWN) if "category" in keys else core_library.UNKNOWN
-    if category not in valid_categories:
-        category = core_library.UNKNOWN  # 未知历史值安全回退，不让前端筛选器出现无法维护的类别。
-    categories = [
-        str(value)
-        for value in json_list(row["categories"] if "categories" in keys else "[]")
-        if str(value) in valid_categories
-    ]
-    if category not in categories:
-        categories.insert(0, category)
-    categories = list(dict.fromkeys(categories))  # 保留自动识别优先顺序并去除重复分类。
+    category, categories = _library_categories(row, keys)
     return {
         "id": row["id"],
         "name": row["name"],
@@ -331,22 +384,9 @@ def library_file_public(row: sqlite3.Row, user: sqlite3.Row) -> dict[str, object
         ),
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
-        "uploader": {
-            "id": row["owner_id"],
-            "username": row["owner_username"] if "owner_username" in keys else "",
-            "display_name": row["owner_display_name"] if "owner_display_name" in keys else "",
-        },
-        "updated_by": {
-            "id": row["updated_by"],
-            "username": row["editor_username"] if "editor_username" in keys else "",
-            "display_name": row["editor_display_name"] if "editor_display_name" in keys else "",
-        } if row["updated_by"] is not None else None,
-        "permissions": {
-            "can_download": True,
-            "can_edit": can_manage,
-            "can_replace": can_manage,
-            "can_delete": can_manage,
-        },
+        "uploader": _library_actor(row, keys, editor=False),
+        "updated_by": _library_actor(row, keys, editor=True),
+        "permissions": _library_permissions(row, user),
     }
 
 

@@ -133,6 +133,37 @@ def _detect_layout(worksheet) -> tuple[int, dict[str, int]] | None:
     return best[0], best[2]
 
 
+def _attendance_cell(values, columns: dict[str, int], role: str):
+    """按考勤角色读取单行值；短行或可选列缺失时统一返回空值。"""
+
+    column = columns.get(role)
+    return values[column - 1] if column and column <= len(values) else None
+
+
+def _parse_attendance_row(values, columns: dict[str, int]) -> dict[str, object] | None:
+    """把一行表格值转换成标准考勤记录，无法确认人员或日期时返回 ``None``。"""
+
+    # 空行、汇总行不能进入逐人统计；汇总行即使带日期也不代表实际出勤。
+    if all(value is None or _text(value) == "" for value in values):
+        return None
+    name = _text(_attendance_cell(values, columns, "name"))
+    if not name or name in ("合计", "总计", "小计"):
+        return None
+    date = _normalize_date(_attendance_cell(values, columns, "date"))
+    if not date:
+        # 日期是出勤天数和主体月份的依据，非法日期不能用“今天”兜底，否则会污染月度归档。
+        return None
+    hours = _number(_attendance_cell(values, columns, "hours"))
+    overtime = _number(_attendance_cell(values, columns, "ot"))
+    return {
+        "name": name,
+        "date": date,
+        "hours": hours or 0.0,
+        "ot": overtime or 0.0,
+        "abnormal": _text(_attendance_cell(values, columns, "abnormal")),
+    }
+
+
 def _read_attendance(path: str, log=None) -> list[dict[str, object]]:
     """读取一本考勤表内所有可识别页签的有效每日记录。
 
@@ -162,28 +193,12 @@ def _read_attendance(path: str, log=None) -> list[dict[str, object]]:
                 continue
             header_row, columns = layout
             max_column = max(columns.values())
+            # 只读取到最后一个必要/可选角色列，避免异常使用范围带来的空列开销。
             for values in worksheet.iter_rows(
                 min_row=header_row + 1, max_col=max_column, values_only=True):
-                # 只读取到最后一个必要/可选角色列，避免异常使用范围带来的空列开销。
-                if all(value is None or _text(value) == "" for value in values):
-                    continue
-                name = _text(values[columns["name"] - 1] if columns["name"] <= len(values) else None)
-                if not name or name in ("合计", "总计", "小计"):
-                    continue
-                date = _normalize_date(
-                    values[columns["date"] - 1] if columns["date"] <= len(values) else None)
-                if not date:
-                    # 日期是出勤天数和月份推断的基础，无法确认时不能纳入归档。
-                    continue
-                hours = _number(values[columns["hours"] - 1] if columns["hours"] <= len(values) else None)
-                ot = _number(values[columns["ot"] - 1] if columns.get("ot") and columns["ot"] <= len(values) else None)
-                abnormal = _text(values[columns["abnormal"] - 1] if columns.get("abnormal") and columns["abnormal"] <= len(values) else None)
-                rows.append({
-                    "name": name, "date": date,
-                    # 使用“or 0.0”将 None 兜底为零；合法的 0.0 仍保持零值。
-                    "hours": hours or 0.0, "ot": ot or 0.0,
-                    "abnormal": abnormal,
-                })
+                record = _parse_attendance_row(values, columns)
+                if record is not None:
+                    rows.append(record)
         if not rows:
             raise ValueError("未在 %s 中识别到 姓名/日期/工时 列" % os.path.basename(path))
         return rows

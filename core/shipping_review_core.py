@@ -119,12 +119,7 @@ def _json_number(value: Decimal) -> int | float:
 
 
 def _match_headers(values: Iterable[object], required: Mapping[str, Iterable[str]]) -> dict[str, int] | None:
-    """在一行中匹配全部必需表头并返回零基列号。
-
-    参数 ``required`` 把角色名映射到别名列表，便于同一字段兼容不同文件写法。
-    返回 ``{角色: 列号}``；只要有一个必需角色缺失就整体返回 ``None``，防止用残缺
-    列布局继续读数据。
-    """
+    """在一行中匹配全部必需表头，返回零基列号；缺少任意角色即判定失败。"""
 
     normalized = {_header_key(value): index for index, value in enumerate(values) if _header_key(value)}
     columns: dict[str, int] = {}
@@ -137,11 +132,7 @@ def _match_headers(values: Iterable[object], required: Mapping[str, Iterable[str
 
 
 def _optional_headers(values: Iterable[object], aliases: Mapping[str, Iterable[str]]) -> dict[str, int]:
-    """识别审计需要但不影响业务执行的可选列。
-
-    可选列缺一不会让页签判定失败；找不到的列不写入结果字典，调用方需先做存在性
-    判断，避免读取越界或把空值写入审计明细。
-    """
+    """识别审计需要但不影响业务执行的可选列。"""
 
     normalized = {_header_key(value): index for index, value in enumerate(values) if _header_key(value)}
     result: dict[str, int] = {}
@@ -153,11 +144,7 @@ def _optional_headers(values: Iterable[object], aliases: Mapping[str, Iterable[s
 
 
 def _sheet_layout(worksheet, required: Mapping[str, Iterable[str]], *, max_rows: int = 60):
-    """在页签前若干行中定位表头，避免把说明行或合并标题误当作数据。
-
-    返回 ``(表头行号, {角色: 列号}, 表头单元格值)`` 三元组；找不到时返回
-    ``None``。只在表头行之前的有限行内扫描，跳过工作簿开头的标题、说明和合并区域。
-    """
+    """在页签前若干行中定位表头，避免把说明行或合并标题误当作数据。"""
 
     # 流式读取器为修复错误 dimension 声明会把 max_row 重置为 None，因此不能依赖它做 min。
     for row_number, row in enumerate(
@@ -244,22 +231,94 @@ def _fill_empty_names(items: Mapping[str, dict[str, object]], resolver, counts: 
             item["names"].add(addition["name"])
 
 
-def _read_package(path: str, requested_sheet: str | None, resolver, fill_counts, log, progress):
-    """读取包装计划，返回按物料号汇总的数据、描述透视和过滤审计信息。
+def _cell_value(values: tuple[object, ...] | list[object], column: int | None) -> object:
+    """安全读取行内单元格；短行视为缺失而不是让列索引异常泄漏到界面。"""
 
-    副作用：推进 ``progress``、通过 ``log`` 报告公式缓存警告，并向 ``fill_counts``
-    追加主数据名称补全计数。已作废记录只进入审计明细，不参与数量汇总；数量必须
-    可解析，空数量或非法数量直接抛出 ``ValueError``，避免按零吞掉导致对比失真。
+    return values[column] if isinstance(column, int) and column < len(values) else None
+
+
+def _parse_package_row(
+    values: tuple[object, ...] | list[object],
+    *,
+    columns: Mapping[str, int],
+    optional: Mapping[str, int],
+    file_name: str,
+    sheet: str,
+    row_number: int,
+) -> tuple[str, dict[str, object] | None]:
+    """把包装表的一行归类为跳过、已作废或有效记录。
+
+    先校验物料号与数量，再按 BOX 状态分流，确保“有数量但无物料号”的行不会被当作
+    普通说明行吞掉；已作废记录只返回审计所需字段，不进入数量聚合。
     """
+
+    code = _material_code(_cell_value(values, columns.get("code")))
+    if not code:
+        # 空白、合计和说明行可以跳过；但带数量的无编码行会破坏按物料汇总，必须报错。
+        quantity_value = _cell_value(values, columns.get("quantity"))
+        if any(_text(value) for value in values) and _text(quantity_value):
+            raise ValueError(f"《{file_name}》工作表“{sheet}”第 {row_number} 行有数量但物料号为空。")
+        return "skip", None
+
+    name = _text(_cell_value(values, columns.get("name")))
+    status = _text(_cell_value(values, columns.get("status")))
+    quantity = _decimal(
+        _cell_value(values, columns.get("quantity")),
+        file_name=file_name,
+        sheet=sheet,
+        row=row_number,
+        label="实际包装数量",
+    )
+    record = {
+        "code": code,
+        "name": name,
+        "status": status,
+        "quantity": quantity,
+    }
+    if status == "已作废":
+        record.update({
+            "row": row_number,
+            "box_no": _text(_cell_value(values, optional.get("box_no"))),
+            "quantity": _json_number(quantity),
+        })
+        return "obsolete", record
+    return "keep", record
+
+
+def _add_package_record(
+    record: Mapping[str, object],
+    *,
+    by_code: dict[str, dict[str, object]],
+    pivot: dict[tuple[str, str], dict[str, object]],
+) -> None:
+    """将一条有效包装记录同时累加到物料总表和描述透视表。"""
+
+    code = str(record["code"])
+    name = str(record["name"])
+    quantity = record["quantity"]
+    key = _code_key(code)
+    item = by_code.setdefault(key, _new_item(code))
+    item["quantity"] += quantity
+    item["rows"] += 1
+    _add_name(item, name)
+    pivot_key = (key, name)
+    pivot_item = pivot.setdefault(
+        pivot_key,
+        {"code": code, "name": name, "quantity": Decimal("0"), "rows": 0},
+    )
+    pivot_item["quantity"] += quantity
+    pivot_item["rows"] += 1
+
+
+def _read_package(path: str, requested_sheet: str | None, resolver, fill_counts, log, progress):
+    """读取包装计划，记录状态审计，并建立描述维度透视和物料号汇总。"""
 
     workbook = common_core.load_data_only_stream(path)
     try:
         worksheet, (header_row, columns, header_values) = _select_package_sheet(workbook, requested_sheet)
         optional = _optional_headers(header_values, OPTIONAL_PACKAGE_HEADERS)
         common_core.warn_if_uncached(path, log, sheet=worksheet.title, what="实际包装数量")
-        # 同一物料号可能因 BOX 或供应商拆成多行，必须先聚合到 by_code 再比较，保证不重不漏。
         by_code: dict[str, dict[str, object]] = {}
-        # 透视按“物料号+描述”保留描述维度；描述为空的行在聚合后从 by_code 回填主数据名称。
         pivot: dict[tuple[str, str], dict[str, object]] = {}
         status_counts: Counter[str] = Counter()
         excluded: list[dict[str, object]] = []
@@ -267,49 +326,27 @@ def _read_package(path: str, requested_sheet: str | None, resolver, fill_counts,
         file_name = os.path.basename(path)
         # dimension 不可信时无法预知总行数，进度仍由阶段切换保证单调，逐行 tick 退化为提示性进度。
         data_total = max(1, (worksheet.max_row or header_row + 1) - header_row)
-        for offset, values in enumerate(
-            worksheet.iter_rows(min_row=header_row + 1, values_only=True), start=1,
-        ):
-            code = _material_code(values[columns["code"]] if columns["code"] < len(values) else None)
-            if not code:
-                # 完全空白、汇总和说明行不属于物料数据；含数量但无物料号则不能安全聚合。
-                if any(_text(value) for value in values):
-                    quantity_value = values[columns["quantity"]] if columns["quantity"] < len(values) else None
-                    if _text(quantity_value):
-                        raise ValueError(f"《{file_name}》工作表“{worksheet.title}”第 {header_row + offset} 行有数量但物料号为空。")
+        for offset, values in enumerate(worksheet.iter_rows(min_row=header_row + 1, values_only=True), start=1):
+            row_number = header_row + offset
+            kind, record = _parse_package_row(
+                values,
+                columns=columns,
+                optional=optional,
+                file_name=file_name,
+                sheet=worksheet.title,
+                row_number=row_number,
+            )
+            if kind == "skip":
                 progress.tick(offset, data_total)
                 continue
             source_rows += 1
-            row_number = header_row + offset
-            name = _text(values[columns["name"]] if columns["name"] < len(values) else None)
-            status = _text(values[columns["status"]] if columns["status"] < len(values) else None)
+            status = str(record["status"])
             status_counts[status or "（空白）"] += 1
-            quantity = _decimal(
-                values[columns["quantity"]] if columns["quantity"] < len(values) else None,
-                file_name=file_name, sheet=worksheet.title, row=row_number, label="实际包装数量",
-            )
-            # 已作废记录只在内存中过滤并进入审计明细，不写入 by_code/pivot，避免污染数量对比。
-            if status == "已作废":
-                excluded.append({
-                    "row": row_number,
-                    "box_no": _text(values[optional["box_no"]]) if "box_no" in optional and optional["box_no"] < len(values) else "",
-                    "code": code,
-                    "name": name,
-                    "quantity": _json_number(quantity),
-                    "status": status,
-                })
-                progress.tick(offset, data_total)
-                continue
-            kept_rows += 1
-            key = _code_key(code)
-            item = by_code.setdefault(key, _new_item(code))
-            item["quantity"] += quantity
-            item["rows"] += 1
-            _add_name(item, name)
-            pivot_key = (key, name)
-            pivot_item = pivot.setdefault(pivot_key, {"code": code, "name": name, "quantity": Decimal("0"), "rows": 0})
-            pivot_item["quantity"] += quantity
-            pivot_item["rows"] += 1
+            if kind == "obsolete":
+                excluded.append(record)
+            else:
+                kept_rows += 1
+                _add_package_record(record, by_code=by_code, pivot=pivot)
             progress.tick(offset, data_total)
         _fill_empty_names(by_code, resolver, fill_counts)
         # 描述为空的透视行只在主数据库确有名称时补空，不覆盖任何源描述。
@@ -335,12 +372,7 @@ def _read_package(path: str, requested_sheet: str | None, resolver, fill_counts,
 
 
 def _read_review(path: str, requested_sheet: str | None, resolver, fill_counts, log, progress):
-    """读取评审表并按 Part No 汇总，返回聚合后的物料字典。
-
-    副作用与 ``_read_package`` 一致：推进 ``progress``、记录公式缓存警告并补全名称。
-    同一物料号因供应商或批次拆成多行时必须累加，任何“最后一行覆盖”的实现都会
-    低估评审总数。
-    """
+    """读取评审表并按 Part No 汇总；供应商拆行必须累加而不是覆盖。"""
 
     workbook = common_core.load_data_only_stream(path)
     try:
@@ -350,24 +382,23 @@ def _read_review(path: str, requested_sheet: str | None, resolver, fill_counts, 
         source_rows = 0
         file_name = os.path.basename(path)
         data_total = max(1, (worksheet.max_row or header_row + 1) - header_row)
-        for offset, values in enumerate(
-            worksheet.iter_rows(min_row=header_row + 1, values_only=True), start=1,
-        ):
-            code = _material_code(values[columns["code"]] if columns["code"] < len(values) else None)
-            if not code:
-                progress.tick(offset, data_total)
-                continue
-            source_rows += 1
+        for offset, values in enumerate(worksheet.iter_rows(min_row=header_row + 1, values_only=True), start=1):
             row_number = header_row + offset
-            quantity = _decimal(
-                values[columns["quantity"]] if columns["quantity"] < len(values) else None,
-                file_name=file_name, sheet=worksheet.title, row=row_number, label="总数",
-            )
-            key = _code_key(code)
-            item = items.setdefault(key, _new_item(code))
-            item["quantity"] += quantity
-            item["rows"] += 1
-            _add_name(item, values[columns["name"]] if columns["name"] < len(values) else None)
+            code = _material_code(_cell_value(values, columns.get("code")))
+            if code:
+                source_rows += 1
+                quantity = _decimal(
+                    _cell_value(values, columns.get("quantity")),
+                    file_name=file_name,
+                    sheet=worksheet.title,
+                    row=row_number,
+                    label="总数",
+                )
+                key = _code_key(code)
+                item = items.setdefault(key, _new_item(code))
+                item["quantity"] += quantity
+                item["rows"] += 1
+                _add_name(item, _cell_value(values, columns.get("name")))
             progress.tick(offset, data_total)
         _fill_empty_names(items, resolver, fill_counts)
         return {
@@ -413,14 +444,9 @@ def _row_status(package_item, review_item, name_state: str, difference: Decimal)
 
 
 def _compare(package_items, review_items, progress):
-    """以物料号并集生成完整对比行，任何一侧独有或两侧共有都会进入结果。
-
-    数量差以包装减评审的精确十进制计算，状态按单侧、数量和名称三个维度互斥划分；
-    返回的列表只供报告和前端展示，不修改两边的聚合字典。
-    """
+    """以物料号并集生成完整对比行和状态统计。"""
 
     rows = []
-    # 按物料号键排序生成行，保证报告行序稳定，不依赖两侧工作簿的物理行序。
     keys = sorted(set(package_items) | set(review_items))
     for index, key in enumerate(keys, start=1):
         package_item = package_items.get(key)
@@ -450,11 +476,7 @@ def _compare(package_items, review_items, progress):
 
 
 def _counts(rows: list[dict[str, object]]) -> dict[str, int]:
-    """汇总前端指标和报告顶部卡片所需计数。
-
-    ``both`` 只统计两侧都有来源行的物料，因此数量一致率、数量差异和名称问题不会
-    被单侧物料稀释；``exceptions`` 是全部非“一致”行数，作为异常表条数来源。
-    """
+    """汇总前端指标和报告顶部卡片所需计数。"""
 
     statuses = Counter(str(row["status"]) for row in rows)
     both = [row for row in rows if row["package_rows"] and row["review_rows"]]
@@ -612,7 +634,6 @@ def _write_report(report_path: str, rows, counts, package_data) -> str:
     _write_compare_sheet(workbook.create_sheet("异常明细"), rows, counts, exceptions_only=True)
     _write_pivot_sheet(workbook.create_sheet("包装透视"), package_data["pivot"])
     _write_audit_sheet(workbook.create_sheet("过滤审计"), package_data)
-    # 先写同目录临时文件再用 os.replace 原子替换：保存失败不会损坏旧报告，也不会留下正式路径的半成品。
     temp_path = report_path + ".tmp.xlsx"
     try:
         workbook.save(temp_path)
@@ -649,7 +670,6 @@ def run(
     指定，只有包装工作簿存在多个同结构页签时才要求人工选择。
     """
 
-    # 先统一转为绝对路径再做存在性和扩展名校验，避免后续读取时因相对路径基准变化读到不同文件。
     package_path = os.path.abspath(str(package_plan))
     review_path = os.path.abspath(str(review_workbook))
     for label, file_path in (("包装日计划", package_path), ("发运评审表", review_path)):
@@ -659,11 +679,6 @@ def run(
             raise ValueError(f"{label}仅支持 .xlsx 或 .xlsm 文件。")
 
     def _log(message: str) -> None:
-        """向调用方转发状态日志。
-
-        仅当 ``log`` 可调用时才发送，避免调用方未提供日志回调时中断主流程；本函数不
-        收集或缓存日志，也不向日志文本附加业务数据。
-        """
         if callable(log):
             log(message)
 

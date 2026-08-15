@@ -48,6 +48,39 @@ def _number(value) -> float | None:
         return None
 
 
+def _header_roles(cells, keyword: str) -> dict[str, int]:
+    """识别单行表头中的字段角色，并保持每个角色首列优先。
+
+    一个异常单元格可能同时包含多个关键词，因此使用互斥分支，不能让同一列同时承担
+    销售方和金额等多个角色。采购侧还排除“编码/代码”，避免把供应商编号当名称。
+    """
+    columns: dict[str, int] = {}
+    for cell in cells:
+        text = _text(cell.value)
+        if not text:
+            continue
+        if "销售方" in text and "seller" not in columns:
+            columns["seller"] = cell.column
+        elif "价税合计" in text and "total" not in columns:
+            columns["total"] = cell.column
+        elif (
+            keyword
+            and keyword in text
+            and "supplier" not in columns
+            and "编码" not in text
+            and "代码" not in text
+        ):
+            columns["supplier"] = cell.column
+    return columns
+
+
+def _header_roles_complete(columns: dict[str, int], keyword: str) -> bool:
+    """判断当前行是否具备指定文件类型所需的完整表头角色。"""
+    if keyword:
+        return "supplier" in columns
+    return "seller" in columns and "total" in columns
+
+
 def _find_header_row(worksheet, keyword: str, scan_rows: int = 6) -> tuple[int, dict[str, int]]:
     """在页签顶部定位发票表头或采购供应商表头。
 
@@ -55,22 +88,10 @@ def _find_header_row(worksheet, keyword: str, scan_rows: int = 6) -> tuple[int, 
     且不含“编码/代码”的供应商名称列，避免把供应商编码误当名称。每个角色只采用
     首个命中列，返回 1 基行列号；扫描范围内没有完整角色则返回 ``(0, {})``。
     """
-    for row_index in range(1, min(scan_rows, worksheet.max_row or scan_rows) + 1):
-        columns: dict[str, int] = {}
-        for cell in worksheet[row_index]:
-            text = _text(cell.value)
-            if not text:
-                continue
-            # if/elif 保证一个含多个关键词的异常表头不会同时占用多个角色。
-            if "销售方" in text and "seller" not in columns:
-                columns["seller"] = cell.column
-            elif "价税合计" in text and "total" not in columns:
-                columns["total"] = cell.column
-            elif keyword and keyword in text and "供应商" not in columns and "编码" not in text and "代码" not in text:
-                columns["supplier"] = cell.column
-        if keyword and "supplier" in columns:
-            return row_index, columns
-        if not keyword and "seller" in columns and "total" in columns:
+    last_row = min(scan_rows, worksheet.max_row or scan_rows)
+    for row_index in range(1, last_row + 1):
+        columns = _header_roles(worksheet[row_index], keyword)
+        if _header_roles_complete(columns, keyword):
             return row_index, columns
     return 0, {}
 

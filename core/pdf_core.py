@@ -36,6 +36,26 @@ def _ensure_lib():
         raise PdfError("未安装 PDF 组件(pypdf),无法处理 PDF。请联系管理员或重新安装程序。")
 
 
+def _page_range(part: str, total: int) -> list[int]:
+    """解析一个页码片段并返回合法的 0 基页码。"""
+
+    if "-" in part:
+        left, _, right = part.partition("-")
+        left, right = left.strip(), right.strip()
+        # 两端都不是数字时不能把任意文本解释成“全选范围”。
+        if not left.isdigit() and not right.isdigit():
+            return []
+        start = int(left) if left.isdigit() else 1
+        end = int(right) if right.isdigit() else total
+        if start > end:
+            start, end = end, start
+        return [page - 1 for page in range(start, end + 1) if 1 <= page <= total]
+    if part.isdigit():
+        page = int(part)
+        return [page - 1] if 1 <= page <= total else []
+    return []
+
+
 def parse_pages(spec, total):
     """把用户页码表达式解析为有序、去重的 0 基索引列表。
 
@@ -51,25 +71,10 @@ def parse_pages(spec, total):
         part = part.strip()
         if not part:
             continue
-        if "-" in part:
-            a, _, b = part.partition("-")
-            a = a.strip(); b = b.strip()
-            # 两端都非数字时不能把“-”误解释成全选，直接忽略该非法片段。
-            if not a.isdigit() and not b.isdigit():
-                continue
-            start = int(a) if a.isdigit() else 1
-            end = int(b) if b.isdigit() else total
-            if start > end:
-                # 允许用户写 8-5，按 5-8 处理比直接拒绝更符合办公工具预期。
-                start, end = end, start
-            for p in range(start, end + 1):
-                i = p - 1
-                if 0 <= i < total and i not in seen:
-                    seen.add(i); out.append(i)
-        elif part.isdigit():
-            i = int(part) - 1
-            if 0 <= i < total and i not in seen:
-                seen.add(i); out.append(i)
+        for index in _page_range(part, total):
+            if index not in seen:
+                seen.add(index)
+                out.append(index)
     if not out:
         raise PdfError("页码范围无效或超出文档页数(共 %d 页)" % total)
     return out

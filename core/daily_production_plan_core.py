@@ -667,6 +667,65 @@ def _shipping_summary(ledger: dict[str, object]) -> list[dict[str, object]]:
     return result
 
 
+def _empty_production_insights(report_date: str | None) -> dict[str, object]:
+    """返回字段齐全的空生产洞察，保持前端图表协议稳定。"""
+    return {
+        "focus_date": report_date or "",
+        "focus_date_source": "暂无生产计划矩阵",
+        "has_focus_date": False,
+        "plan_total": 0,
+        "actual_total": 0,
+        "difference_total": 0,
+        "reported_plan_total": 0,
+        "unreported_plan_total": 0,
+        "reported_shift_count": 0,
+        "unreported_shift_count": 0,
+        "completion_rate": 0,
+        "daily": [],
+        "shift_summary": [],
+        "team_summary": [],
+        "batch_summary": [],
+        "highlights": [],
+    }
+
+
+def _production_plan_insights(
+    headers: list[object],
+    rows: list[list[str]],
+    report_date: str | None,
+) -> dict[str, object]:
+    """按“横向矩阵优先、传统表格兜底”的规则解析一个生产计划页。"""
+    insights = _matrix_insights(rows, report_date) or _tabular_insights(headers, rows, report_date)
+    if not insights:
+        return {}
+    focus_date = str(insights.get("focus_date") or report_date or "")
+    teams, batches = _team_and_batch_insights(rows, focus_date)
+    if teams:
+        insights["team_summary"] = teams
+    if batches:
+        insights["batch_summary"] = batches
+    return insights
+
+
+def _actual_packaging_quantity(headers: list[object], rows: list[list[str]]) -> float:
+    """汇总生产实绩中的实际包装数量；缺少目标列时返回零。"""
+    quantity_index = next(
+        (
+            index
+            for index, value in enumerate(headers)
+            if "实际包装数量" in str(value).replace(" ", "")
+        ),
+        -1,
+    )
+    if quantity_index < 0:
+        return 0.0
+    return sum(
+        _as_number(row[quantity_index]) or 0
+        for row in rows
+        if quantity_index < len(row)
+    )
+
+
 def _build_insights(sheets: list[dict[str, object]], report_date: str | None) -> dict[str, object]:
     """组合生产计划、生产实绩和订单发运三类结构化洞察。
 
@@ -682,22 +741,15 @@ def _build_insights(sheets: list[dict[str, object]], report_date: str | None) ->
         headers = sheet.get("table_headers") if isinstance(sheet.get("table_headers"), list) else []
         if kind == "生产计划":
             # 同一工作簿可能存在多个计划页；成功解析的新页覆盖旧页，无法解析则保留旧结果。
-            insights = _matrix_insights(rows, report_date) or _tabular_insights(headers, rows, report_date) or insights
-            if insights:
-                teams, batches = _team_and_batch_insights(rows, str(insights.get("focus_date") or report_date or ""))
-                if teams:
-                    insights["team_summary"] = teams
-                if batches:
-                    insights["batch_summary"] = batches
+            insights = _production_plan_insights(headers, rows, report_date) or insights
         elif kind == "生产实绩" and insights:
-            quantity_index = next((index for index, value in enumerate(headers) if "实际包装数量" in str(value).replace(" ", "")), -1)
-            actual_quantity = sum((_as_number(row[quantity_index]) or 0) for row in rows if quantity_index >= 0 and quantity_index < len(row))
+            actual_quantity = _actual_packaging_quantity(headers, rows)
             if actual_quantity:
                 # 实绩表的包装数量作为辅助校验值，不覆盖计划表中的分班实际数据。
                 insights["actual_quantity_from_result"] = _number_label(actual_quantity)
 
     if not insights:
-        insights = {"focus_date": report_date or "", "focus_date_source": "暂无生产计划矩阵", "has_focus_date": False, "plan_total": 0, "actual_total": 0, "difference_total": 0, "reported_plan_total": 0, "unreported_plan_total": 0, "reported_shift_count": 0, "unreported_shift_count": 0, "completion_rate": 0, "daily": [], "shift_summary": [], "team_summary": [], "batch_summary": [], "highlights": []}
+        insights = _empty_production_insights(report_date)
     insights.setdefault("team_summary", [])
     insights.setdefault("batch_summary", [])
     insights["order_ledger"] = order_ledger
