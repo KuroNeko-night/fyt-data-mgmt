@@ -68,6 +68,7 @@ class MaintenanceHTTPServer(ThreadingHTTPServer):
             return
         if any(report.values()):
             _print_storage_report("存储维护完成", report)
+        # 备份与周期报表是非关键维护：任一失败只记日志，下一周期重试，不把健康检查拖成失败。
         _run_optional_action("自动备份", self._auto_backup_action)
         _run_optional_action("周报生成", self._weekly_report_action)
         _run_optional_action("月报生成", self._monthly_report_action)

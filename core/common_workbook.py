@@ -1,5 +1,12 @@
 # -*- coding: utf-8 -*-
-"""跨业务模块共用的 Excel 安全读取与公式缓存检查。"""
+"""跨业务模块共用的 Excel 安全读取与公式缓存检查。
+
+职责边界：本模块只读取工作簿、页签和单元格计算值，不写入任何工作簿。现代
+xlsx/xlsm 统一经 :func:`load_workbook_safe` 打开，把损坏或伪装格式转换成中文业务
+错误；旧 xls 通过可选的 xlrd 路径按值读取。公式缓存检测是只读预警工具，失败返回
+空集或仅记录日志，绝不阻断业务主流程。``skip_pivot_cache_parse`` 临时替换 openpyxl
+的进程级透视缓存解析属性，使用线程锁与 ``finally`` 恢复，保证并发读取安全。
+"""
 
 from __future__ import annotations
 
@@ -13,6 +20,8 @@ from typing import Iterator
 import openpyxl
 
 
+# openpyxl 的 WorkbookParser.pivot_caches 是进程级类属性，替换与恢复必须串行；
+# 同一进程内的并发读取也需要此 RLock，避免两个任务互相覆盖缓存解析器。
 _PIVOT_CACHE_LOCK = threading.RLock()
 
 
@@ -112,6 +121,7 @@ def skip_pivot_cache_parse() -> Iterator[None]:
             """满足读取器索引协议，但不触发任何真实缓存解析。"""
 
             def __missing__(self, key):
+                """对任意缓存 ID 返回 ``None``，满足读取器索引协议但不触发真实解析。"""
                 return None
 
         WorkbookParser.pivot_caches = property(lambda self: _NullCaches())

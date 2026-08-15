@@ -121,6 +121,7 @@ def preflight_job(handler: Any, body: dict[str, object], deps: JobDependencies) 
 def retry_job(handler: Any, path: str, deps: JobDependencies) -> None:
     """复制失败任务的原始参数创建新任务，并保留 retry_of 追踪关系。"""
     user = handler.require_user()
+    # 路由固定为 /api/jobs/{id}/retry，第三段即任务编号；更深的路径片段由上层路由拒绝。
     job_id = path.strip("/").split("/")[2]
     with deps.db_lock, deps.db() as connection:
         row = connection.execute("SELECT * FROM web_jobs WHERE id = ? AND user_id = ?", (job_id, user["id"])).fetchone()
@@ -254,6 +255,7 @@ def get_job(handler: Any, path: str, deps: JobDependencies) -> None:
 def cancel_job(handler: Any, path: str, deps: JobDependencies) -> None:
     """设置持久取消标记，并尽力终止当前任务对应的子进程。"""
     user = handler.require_user()
+    # 路由固定为 /api/jobs/{id}/cancel；长度不足时编号为空，随后的账号内查询自然按不存在处理。
     parts = path.strip("/").split("/")
     job_id = parts[2] if len(parts) >= 4 else ""
     with deps.db_lock, deps.db() as connection:
@@ -384,6 +386,8 @@ def _prepare_supplier_batch_review(
     }
 
 
+# 人工复核准备器注册表：业务规则按动作键内聚；不在表中的动作表示 Core 已约束分析结果，
+# submit_review 会原样保存用户选择对象。
 _REVIEW_PREPARERS: dict[
     str, Callable[[dict[str, object], dict[str, object], Any], None]
 ] = {
@@ -400,6 +404,7 @@ def submit_review(handler: Any, path: str, body: dict[str, object], deps: JobDep
     后台线程启动。分析动作到最终动作的映射始终来自服务端白名单，前端不能替换目标。
     """
     user = handler.require_user()
+    # 路由固定为 /api/jobs/{id}/review；先解析任务编号，再校验本次提交的复核选择对象。
     parts = path.strip("/").split("/")
     job_id = parts[2] if len(parts) >= 4 else ""
     choices = body.get("choices")
@@ -503,6 +508,45 @@ def download_job_version_file(handler: Any, path: str, deps: JobDependencies) ->
     deps.write_audit(int(user["id"]), f"download_job_version:{item.get('name')}")
     handler.send_file(target, file_name=str(item["name"]))
 
+def _parse_preview_path(path: str) -> tuple[str, int]:
+    """从预览接口路径解析任务编号和文件下标。
+
+    路由固定为 ``/api/jobs/{job_id}/files/{index}/preview``；任务编号必须可分割、
+    文件下标必须可转整数，否则抛出 ``ApiError(400)``。返回 ``(job_id, index)``。
+    """
+    parts = path.strip("/").split("/")
+    try:
+        return parts[2], int(parts[4])
+    except (IndexError, ValueError) as exc:
+        raise ApiError(HTTPStatus.BAD_REQUEST, "预览地址无效") from exc
+
+
+def _preview_json_file(target: Path) -> dict[str, object]:
+    """把 JSON 结果文件转为有限规模的二维预览数据。
+
+    参数 ``target`` 必须是已经通过归属校验的 JSON 结果文件。对象列表展开为表头加
+    数据行，普通对象展开为键值行，其余值用单行 JSON 表示；所有分支最多保留 30 行，
+    避免大型结果整体进入 HTTP 响应。文件读取、编码或 JSON 解析失败统一抛 ``ApiError``。
+    """
+    try:
+        value = json.loads(target.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ApiError(HTTPStatus.BAD_REQUEST, "JSON 文件无法读取") from exc
+    if isinstance(value, list) and all(isinstance(item, dict) for item in value[:30]):
+        # 对象列表转为表头加数据行，最多预览 30 条；键排序保证多次打开顺序稳定。
+        keys = sorted({key for item in value[:30] for key in item})
+        rows = [keys] + [[str(item.get(key, "")) for key in keys] for item in value[:30]]
+        truncated = len(value) > 30
+    elif isinstance(value, dict):
+        rows = [[str(key), json.dumps(item, ensure_ascii=False) if isinstance(item, (dict, list)) else str(item)]
+                for key, item in list(value.items())[:30]]
+        truncated = len(value) > 30
+    else:
+        rows = [[json.dumps(value, ensure_ascii=False)]]
+        truncated = False
+    return {"sheet": "", "sheets": [], "rows": rows, "truncated": truncated}
+
+
 def preview_job_file(handler: Any, path: str, deps: JobDependencies) -> None:
     """为当前账号的结果文件生成有限行列的结构化预览。
 
@@ -511,12 +555,7 @@ def preview_job_file(handler: Any, path: str, deps: JobDependencies) -> None:
     大型结果整体载入 HTTP 请求线程。
     """
     user = handler.require_user()
-    parts = path.strip("/").split("/")
-    try:
-        job_id = parts[2]
-        index = int(parts[4])
-    except (IndexError, ValueError) as exc:
-        raise ApiError(HTTPStatus.BAD_REQUEST, "预览地址无效") from exc
+    job_id, index = _parse_preview_path(path)
     with deps.db_lock, deps.db() as connection:
         row = connection.execute("SELECT files FROM web_jobs WHERE id = ? AND user_id = ?", (job_id, user["id"])).fetchone()
     if row is None:
@@ -530,21 +569,9 @@ def preview_job_file(handler: Any, path: str, deps: JobDependencies) -> None:
     if target.suffix.lower() == ".pdf":  # PDF 由浏览器原生查看，表格预览器不重复解析。
         raise ApiError(HTTPStatus.BAD_REQUEST, "PDF 文件请直接打开查看")
     if target.suffix.lower() == ".json":
-        try:
-            value = json.loads(target.read_text(encoding="utf-8-sig"))
-        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-            raise ApiError(HTTPStatus.BAD_REQUEST, "JSON 文件无法读取") from exc
-        if isinstance(value, list) and all(isinstance(item, dict) for item in value[:30]):  # 对象列表转为表头加数据行，最多预览 30 条。
-            keys = sorted({key for item in value[:30] for key in item})
-            rows = [keys] + [[str(item.get(key, "")) for key in keys] for item in value[:30]]
-            truncated = len(value) > 30
-        elif isinstance(value, dict):
-            rows = [[str(key), json.dumps(item, ensure_ascii=False) if isinstance(item, (dict, list)) else str(item)] for key, item in list(value.items())[:30]]
-            truncated = len(value) > 30
-        else:
-            rows = [[json.dumps(value, ensure_ascii=False)]]
-            truncated = False
-        handler.send_json({"name": target.name, "sheet": "", "sheets": [], "rows": rows, "truncated": truncated})
+        payload = _preview_json_file(target)
+        payload.update(name=target.name)
+        handler.send_json(payload)
         return
     from core import preview_core
     preview = preview_core.read_preview(str(target), max_rows=30, max_cols=40)  # 限制二维范围，避免大工作簿预览阻塞请求线程。

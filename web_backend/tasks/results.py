@@ -158,6 +158,7 @@ def owned_result_path(
         target = Path(str(path_value)).resolve()
     except (TypeError, OSError) as exc:
         raise ApiError(HTTPStatus.NOT_FOUND, "结果文件不存在") from exc
+    # 使用 resolve 后的路径比较，防止符号链接或 .. 绕过用户目录限制。
     if not any(target == root or root in target.parents for root in allowed_roots):
         raise ApiError(HTTPStatus.NOT_FOUND, "结果文件不存在")
     return target

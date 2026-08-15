@@ -1,6 +1,11 @@
 /** 在桌面壳内嵌同一套服务器 Web 前端，并提供刷新与返回本地模式入口。 */
 import { serverUrlOrDefault } from "./ModePicker";
 
+/**
+ * 服务器工作台壳层的属性。
+ *
+ * `url` 缺省时读取 ModePicker 持久化的最近地址；`onBack` 由根组件负责切回本地模式。
+ */
 interface RemoteWorkbenchProps {
   url?: string;
   onBack: () => void;

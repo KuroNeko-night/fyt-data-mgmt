@@ -1,14 +1,20 @@
 # -*- coding: utf-8 -*-
 """采购计划导入与实收差异提取业务核心。
 
-输入一个带供应商代码子表的模板文件和一份或多份辅料清单总表；
-每个批次按文件名中的批次号（如 26036-02、26178A）生成一个输出文件。
+本模块提供两个公开入口：
+- ``run``：输入一个带供应商代码子表的模板文件和一份或多份辅料清单总表，每个批次按
+  文件名中的批次号（如 26036-02、26178A）生成一个输出文件。
+- ``diff``：从辅料清单总表提取非零“实收差异”，汇总生成独立的差异清单工作簿。
+
 模板中的“仓库编号、采购员编号、预计到货日期”列保留模板里已填写的值，未填写则留空。
 材料名称含“原厂”的记录按业务约定排除，不进入输出。
 
 正式生成采用“临时目录全部准备成功后再提交”的事务式流程，避免多个批次处理中途失败时
 留下不完整的一半结果。业务文件中的材料属性优先，主数据库只补空值；全部输出成功后
 才学习新材料和供应商代码，使主数据不会被失败任务的中间状态污染。
+
+批次识别与供应商批次解析的通用规则复用 ``supplier_batch_core``；本模块只保留采购计划
+模板输出和实收差异汇总这两个业务特有的转换口径。
 """
 from __future__ import annotations
 
@@ -37,7 +43,15 @@ SUMMARY_IDS = {"(空白)", "总计"}
 
 
 def _validate_files(values, label: str) -> list[str]:
-    """校验采购计划输入文件存在且为受支持的 Excel 格式，并返回绝对路径。"""
+    """
+    校验输入文件存在且为受支持的 Excel 格式，并返回绝对路径。
+
+    :param values: 待校验路径列表，允许包含 ``None`` 或空白字符串，它们会被直接忽略
+    :param label: 输入项的中文名称，用于错误提示
+    :return: 去空白后的绝对路径列表
+    :raises ValueError: 没有有效输入，或存在 xlsx/xlsm 之外的扩展名
+    :raises FileNotFoundError: 路径不是已存在的普通文件
+    """
     result = [os.path.abspath(str(value)) for value in (values or []) if str(value).strip()]
     if not result:
         raise ValueError("%s不能为空" % label)
@@ -50,7 +64,12 @@ def _validate_files(values, label: str) -> list[str]:
 
 
 def _batch_name(path: str) -> str:
-    """按统一正则从文件名中提取首个业务批次号；无法识别时返回空字符串。"""
+    """
+    按统一正则从文件名中提取首个业务批次号；无法识别时返回空字符串。
+
+    :param path: 文件路径，只使用 ``Path(path).stem`` 去掉目录和扩展名后的文件名
+    :return: 匹配到的批次号字符串；没有匹配时返回空字符串，由调用方决定是否报错
+    """
     match = BATCH_PATTERN.search(Path(path).stem)
     return match.group(1) if match else ""
 
@@ -61,6 +80,10 @@ def _read_supplier_codes(template_path: str) -> dict[str, str]:
 
     该子表是采购计划模板的必要组成部分；完全缺失或没有任何有效映射时立即报错，避免
     后续生成采购系统无法导入的空供应商编码。重复名称按表格从上到下采用最后有效行。
+
+    :param template_path: 采购计划模板文件路径
+    :return: 以规范化供应商名称为键、编码为值的映射
+    :raises ValueError: 模板缺少 ``Sheet1`` 子表，或子表中没有任何有效映射
     """
     workbook = openpyxl.load_workbook(template_path, read_only=True, data_only=True)
     try:
@@ -82,7 +105,12 @@ def _read_supplier_codes(template_path: str) -> dict[str, str]:
 
 
 def _main_sheet(workbook) -> object:
-    """优先选择名称含“模板”的采购计划主表；旧模板无约定名称时兼容使用首张表。"""
+    """
+    优先选择名称含“模板”的采购计划主表；旧模板无约定名称时兼容使用首张表。
+
+    :param workbook: 已打开的 openpyxl 工作簿
+    :return: 命中的主表工作表对象
+    """
     for worksheet in workbook.worksheets:
         if MAIN_SHEET_KEYWORD in str(worksheet.title):
             return worksheet
@@ -90,7 +118,13 @@ def _main_sheet(workbook) -> object:
 
 
 def _row_value(values, column):
-    """按可选 1 基列号安全读取只读行，缺列或短行时返回 ``None``。"""
+    """
+    按可选 1 基列号安全读取只读行，缺列或短行时返回 ``None``。
+
+    :param values: ``iter_rows(values_only=True)`` 返回的元组行
+    :param column: 1 基列号，可能是 ``None``（业务表头未识别到该字段时）
+    :return: 对应单元格的值；列号为空或超出当前行长度时返回 ``None``
+    """
 
     return values[int(column) - 1] if column and int(column) <= len(values) else None
 
@@ -111,7 +145,21 @@ class _BatchRowContext:
 
 
 def _purchase_row_item(values, columns, context):
-    """把一行辅料清单转换为模板业务列；无采购意义的行返回 ``None``。"""
+    """
+    把一行辅料清单转换为模板业务列；无采购意义的行返回 ``None``。
+
+    业务过滤口径：材料编号为空或属于 ``(空白)``/``总计`` 等汇总伪编号的行不进入
+    输出；数量缺失、非正数或供应商为空的行同样视为没有采购意义；材料名称含“原厂”
+    的记录按约定排除并计数。供应商代码优先取模板子表，其次由主数据档案兜底，两者都
+    没有时立即报错，避免生成采购系统无法导入的空编码。
+
+    :param values: 业务页签当前行的单元格元组
+    :param columns: ``_best_sheet`` 识别出的字段名到 1 基列号的映射
+    :param context: 批次转换上下文，承载供应商映射、主数据解析器和累计统计
+    :return: ``[产品编号, 产品名称, 规格, 供应商编码, 供应商, 数量]`` 业务行，
+        无采购意义时返回 ``None``
+    :raises ValueError: 供应商名称在模板子表和主数据档案中都找不到编码
+    """
 
     code = _text(_row_value(values, columns.get("code")))
     if not code or code in SUMMARY_IDS:
@@ -138,6 +186,7 @@ def _purchase_row_item(values, columns, context):
 
     supplier_code = context.supplier_codes.get(supplier)
     if not supplier_code and context.resolver is not None:
+        # 模板子表没有该供应商时才用主数据档案兜底，任何路径都不能产生空编码。
         supplier_code = context.resolver.complete_supplier_code(
             supplier, counts=context.fill_counts,
         )
@@ -147,6 +196,7 @@ def _purchase_row_item(values, columns, context):
             % supplier
         )
 
+    # 只记录档案外材料/供应商作为学习候选；本行是否写入取决于前面的业务过滤。
     material_known = (
         context.resolver.has_material(code)
         if context.resolver is not None
@@ -175,7 +225,18 @@ def _purchase_row_item(values, columns, context):
 
 
 def _collect_purchase_rows(worksheet, layout, context):
-    """扫描一个批次业务页签，返回可写入采购计划模板的有效记录。"""
+    """
+    扫描一个批次业务页签，返回可写入采购计划模板的有效记录。
+
+    从识别出的表头下一行开始逐行读取，完全空白行直接跳过；单个单元格的解析和过滤
+    口径由 ``_purchase_row_item`` 统一处理。读取范围只到业务列的最大列号，避免把
+    右侧无关备注列带入解析。
+
+    :param worksheet: 辅料清单批次页签
+    :param layout: ``_best_sheet`` 返回的布局字典，含表头行号和字段列号
+    :param context: 批次转换上下文
+    :return: 按模板列顺序排列的有效业务行列表
+    """
 
     columns = layout["columns"]
     max_column = max(int(value) for value in columns.values())
@@ -194,8 +255,17 @@ def _collect_purchase_rows(worksheet, layout, context):
 
 
 def _clear_purchase_template(sheet):
-    """清除模板中的旧业务值，同时保留管理员维护的三个默认参数列。"""
+    """
+    清除模板中的旧业务值，同时保留管理员维护的三个默认参数列。
 
+    只清空第 2 行及以后、第 11 列以内的业务区域；第 1、2、10 列分别是
+    仓库编号、采购员编号和预计到货日期，属于模板里预填的管理员参数，保留原值。
+
+    :param sheet: 采购计划模板主表
+    :return: 需要保留的列号集合，供后续清除残留示例行时复用
+    """
+
+    # 第 1/2/10 列（仓库编号、采购员编号、预计到货日期）是管理员预填参数，业务行不覆盖。
     keep_columns = {1, 2, 10}
     for row in sheet.iter_rows(min_row=2, max_row=sheet.max_row, max_col=11):
         for cell in row:
@@ -205,12 +275,22 @@ def _clear_purchase_template(sheet):
 
 
 def _write_purchase_rows(sheet, rows, keep_columns):
-    """写入采购计划业务行，并清除新数据末尾残留的模板示例参数。"""
+    """
+    写入采购计划业务行，并清除新数据末尾残留的模板示例参数。
+
+    业务列从第 3 列开始写入；数据行之后若模板还留有示例行，其在保留列上的示例参数
+    会对采购系统导入造成干扰，因此对超出新数据末尾的行清空保留列内容。
+
+    :param sheet: 采购计划模板主表
+    :param rows: 已转换好的业务行列表
+    :param keep_columns: ``_clear_purchase_template`` 返回的保留列号集合
+    """
 
     for row_index, values in enumerate(rows, start=2):
         for column, value in enumerate(values, start=3):
             cell = sheet.cell(row=row_index, column=column, value=value)
             cell.font = DATA_FONT
+    # 模板常在数据区下方留示例行，新数据更短时需清掉这些残留，避免被采购系统导入。
     first_extra = 2 + len(rows)
     if first_extra > sheet.max_row:
         return
@@ -221,7 +301,16 @@ def _write_purchase_rows(sheet, rows, keep_columns):
 
 
 def _write_purchase_output(template_path, target, rows):
-    """复制并填写采购计划模板，保留原有样式、验证和隐藏子表。"""
+    """
+    复制并填写采购计划模板，保留原有样式、验证和隐藏子表。
+
+    采用“复制模板到目标路径再打开写入”的方式，而不是新建工作簿，是为了保留模板中
+    的列宽、字体、数据验证和隐藏的供应商子表；这些格式资产是采购系统导入的兼容前提。
+
+    :param template_path: 原始采购计划模板路径
+    :param target: 输出文件路径，通常是暂存目录中的副本
+    :param rows: 已转换好的业务行列表
+    """
 
     shutil.copy(template_path, target)
     output = openpyxl.load_workbook(target)
@@ -252,6 +341,19 @@ def _convert_batch(
     返回值依次为有效行数、原厂排除数、新材料集合、新供应商集合和可学习材料明细。
     函数只准备文件和学习候选，不直接更新主数据库；调用方确认所有批次均成功提交后
     才统一学习，保证输出与主数据状态的一致性。
+
+    :param template_path: 采购计划模板路径
+    :param batch_path: 当前辅料批次清单路径
+    :param target: 当前批次输出文件的暂存路径
+    :param batch_name: 从文件名识别出的批次号，用于日志和错误提示
+    :param supplier_codes: 模板子表与主数据档案合并后的供应商编码映射
+    :param known_materials: 任务开始时主数据档案已知的材料编号集合
+    :param known_suppliers: 任务开始时主数据档案已知的供应商名称集合
+    :param log: 可选的日志回调
+    :param resolver: 主数据目录解析器，仅补齐源表中缺失的属性
+    :param fill_counts: 主数据补全计数，跨批次累计
+    :return: ``(有效行数, 原厂排除数, 新材料集合, 新供应商集合, 可学习材料明细)``
+    :raises ValueError: 批次没有可制作的采购记录
     """
     # data_only 依赖 Excel 保存的公式缓存，先提示未刷新公式，避免数量被静默当成空值。
     common_core.warn_if_uncached(batch_path, log, what="最终采购数量")
@@ -288,6 +390,11 @@ def _reserve_output_path(out_dir: str, batch_name: str, reserved: set[str]) -> s
 
     ``reserved`` 使用 ``normcase`` 后的路径，覆盖 Windows 大小写不敏感行为；重复名称
     依次添加 ``(2)``、``(3)``。这里只预留名称，真正提交前仍会再次检查并发占用。
+
+    :param out_dir: 输出目录
+    :param batch_name: 批次号，同时作为输出文件主名
+    :param reserved: 本次任务已经预留的路径集合，原地追加新预留路径
+    :return: 可安全使用的最终输出路径
     """
     base = os.path.join(out_dir, "%s.xlsx" % batch_name)
     root, extension = os.path.splitext(base)
@@ -339,7 +446,16 @@ class _PurchasePlanTotals:
 
 
 def _resolve_purchase_plan_output_dir(batches, out_dir):
-    """解析采购计划输出目录，并为源文件旁模式提供首批次定位基准。"""
+    """
+    解析采购计划输出目录，并为源文件旁模式提供首批次定位基准。
+
+    未显式传入 ``out_dir`` 时委托 ``paths.resolve_output_dir``，其可能按配置把输出
+    放到源文件旁或统一输出根；显式传入时先展开为绝对路径并确保目录存在。
+
+    :param batches: 已校验的批次文件绝对路径列表
+    :param out_dir: 可选的输出目录，为 ``None`` 时按设置解析
+    :return: 已存在的输出目录绝对路径
+    """
 
     if out_dir is None:
         current = settings.get_settings()
@@ -354,7 +470,20 @@ def _resolve_purchase_plan_output_dir(batches, out_dir):
 
 
 def _prepare_purchase_plan_context(template_paths, batch_paths, out_dir, log, progress):
-    """校验输入并冻结任务开始时的供应商代码与主数据快照。"""
+    """
+    校验输入并冻结任务开始时的供应商代码与主数据快照。
+
+    主数据目录只在任务启动时加载一次，后续多个批次共享同一快照，避免批处理过程中
+    档案被其他任务改写导致前后口径不一致；供应商编码采用“主数据库打底、模板子表
+    覆盖”的合并策略，模板里的当前维护值对同名供应商有最终优先级。
+
+    :param template_paths: 采购计划模板路径列表，必须恰好包含一个文件
+    :param batch_paths: 辅料批次清单路径列表
+    :param out_dir: 可选输出目录
+    :param log: 可选的日志回调
+    :param progress: 可选的进度回调
+    :return: 冻结好的采购计划上下文
+    """
 
     templates = _validate_files(template_paths, "采购计划模板")
     if len(templates) != 1:
@@ -389,7 +518,16 @@ def _prepare_purchase_plan_context(template_paths, batch_paths, out_dir, log, pr
 
 
 def _plan_purchase_outputs(context):
-    """为全部批次预留不覆盖历史文件且任务内不冲突的最终路径。"""
+    """
+    为全部批次预留不覆盖历史文件且任务内不冲突的最终路径。
+
+    必须在转换开始前完成全部路径预留，否则同一批次号或重名批次会在转换过程中争用
+    相同目标路径，造成后写覆盖先写。
+
+    :param context: 采购计划任务上下文
+    :return: ``[(源批次路径, 批次号, 最终输出路径), ...]``
+    :raises ValueError: 某个文件名无法识别出批次号
+    """
 
     reserved = set()
     plans = []
@@ -403,9 +541,20 @@ def _plan_purchase_outputs(context):
 
 
 def _commit_purchase_outputs(prepared, committed):
-    """原子提交全部临时文件，并就地记录已提交路径供异常回滚。"""
+    """
+    原子提交全部临时文件，并就地记录已提交路径供异常回滚。
+
+    ``os.replace`` 在同一文件系统内是原子操作，阅读者不会看到写了一半的目标文件；
+    每次替换前先检查目标路径是否存在，把并发任务先抢占了同一路径的情况提前暴露为
+    明确错误。
+
+    :param prepared: ``[(暂存路径, 最终路径), ...]``
+    :param committed: 就地追加已成功提交的最终路径，供 ``_rollback_purchase_outputs`` 回滚
+    :raises FileExistsError: 最终路径已被其他任务占用
+    """
 
     for staged_target, final_target in prepared:
+        # 提交前再查一次目标路径，避免并发任务在规划阶段之后抢占了同一文件名。
         if os.path.exists(final_target):
             raise FileExistsError("输出文件已被其他任务占用：%s" % os.path.basename(final_target))
         os.replace(staged_target, final_target)
@@ -413,7 +562,14 @@ def _commit_purchase_outputs(prepared, committed):
 
 
 def _rollback_purchase_outputs(committed):
-    """尽最大努力删除本次已提交文件，不触碰任务开始前存在的历史结果。"""
+    """
+    尽最大努力删除本次已提交文件，不触碰任务开始前存在的历史结果。
+
+    回滚只遍历本次任务记录到 ``committed`` 的路径，因此不会误删历史输出；单个文件
+    删除失败只记录忽略，不掩盖最初导致失败的业务异常。
+
+    :param committed: 本次任务已成功提交的最终路径列表
+    """
 
     for target in committed:
         try:
@@ -423,9 +579,22 @@ def _rollback_purchase_outputs(committed):
 
 
 def _convert_purchase_plans(context, plans, log, progress):
-    """在同文件系统临时目录中转换全部批次，成功后统一原子提交。"""
+    """
+    在同文件系统临时目录中转换全部批次，成功后统一原子提交。
+
+    暂存目录创建在输出目录内，保证 ``os.replace`` 始终在同一文件系统上原子生效；
+    任意批次转换失败时已提交的文件会被回滚，未提交的暂存文件随目录清理，调用方不会
+    看到部分批次成功。
+
+    :param context: 采购计划任务上下文
+    :param plans: ``_plan_purchase_outputs`` 返回的批次计划
+    :param log: 可选的日志回调
+    :param progress: 可选的进度回调
+    :return: 累计全部批次统计的 ``_PurchasePlanTotals``
+    """
 
     totals = _PurchasePlanTotals()
+    # 暂存目录建在输出目录内，保证 os.replace 在同一文件系统上原子替换，不会退化为复制。
     staging = tempfile.mkdtemp(prefix=".purchase_plan_", dir=context.out_dir)
     prepared = []
     committed = []
@@ -460,7 +629,16 @@ def _convert_purchase_plans(context, plans, log, progress):
 
 
 def _learn_purchase_plan_data(context, totals, log):
-    """在文件事务成功后学习供应商代码和材料关系。"""
+    """
+    在文件事务成功后学习供应商代码和材料关系。
+
+    主数据学习被刻意放在全部输出文件提交之后：如果文件事务失败，主数据不会吸收任何
+    来自失败任务的供应商或材料，保持“输出成功才学习”的因果关系。
+
+    :param context: 采购计划任务上下文
+    :param totals: 已提交批次的累计统计
+    :param log: 可选的日志回调
+    """
 
     material_catalog.log_fill_summary(log, "采购计划", context.fill_counts)
     learned_suppliers = material_catalog.learn_suppliers(
@@ -478,7 +656,12 @@ def _learn_purchase_plan_data(context, totals, log):
 
 
 def _log_purchase_plan_totals(totals, log):
-    """输出面向管理员的生成、排除和新主数据摘要。"""
+    """
+    输出面向管理员的生成、排除和新主数据摘要。
+
+    :param totals: 已提交批次的累计统计
+    :param log: 可选的日志回调；为空时静默返回
+    """
 
     if not log:
         return
@@ -511,6 +694,16 @@ def run(
     到最终路径。提交阶段若发生并发占用或其他异常，会删除本次已经移动的文件，保证
     调用者看到“全部成功”或“没有本次结果”，而不是难以判断的一半成功状态。
     材料名称含“原厂”的记录始终排除。
+
+    :param template_paths: 采购计划模板路径列表，必须恰好包含一个文件
+    :param batch_paths: 辅料批次清单路径列表，至少一个文件
+    :param out_dir: 可选输出目录，为 ``None`` 时按设置解析
+    :param log: 可选的日志回调，只报告状态
+    :param progress: 可选的进度回调，取值 0～100
+    :return: 含输出目录、文件列表、行数、排除数和主数据学习候选的字典
+    :raises ValueError: 输入文件数量、格式或内容不符合业务要求
+    :raises FileNotFoundError: 输入文件不存在
+    :raises FileExistsError: 提交阶段最终路径被其他任务占用
     """
     context = _prepare_purchase_plan_context(
         template_paths, batch_paths, out_dir, log, progress,
@@ -567,7 +760,20 @@ class _DiffAccumulator:
 
 
 def _diff_row(values, columns, diff_col, actual_col, batch_name, accumulator):
-    """解析一行实收差异；非材料、原厂和零差异行直接忽略。"""
+    """
+    解析一行实收差异；非材料、原厂和零差异行直接忽略。
+
+    差异为零的行不进入差异清单，符合“只汇报真正差异”的口径；未识别到实收列时
+    实收值写 ``None``，仍保留该差异记录。最终采购数量缺失时按 0 展示，保证报告
+    列完整可读。
+
+    :param values: 业务页签当前行的单元格元组
+    :param columns: ``_best_sheet`` 识别出的基础字段列号映射
+    :param diff_col: “差异”列的 1 基列号
+    :param actual_col: “实收”列的 1 基列号，可能为 ``None``
+    :param batch_name: 当前批次号，写入报告第一列
+    :param accumulator: 差异累计器，原地追加有效记录和统计
+    """
 
     code = _text(_row_value(values, columns.get("code")))
     if not code or code in SUMMARY_IDS:
@@ -602,7 +808,18 @@ def _diff_row(values, columns, diff_col, actual_col, batch_name, accumulator):
 
 
 def _read_diff_batch(path, batch_name, accumulator, log):
-    """读取一个批次的非零实收差异，并合并到任务累计器。"""
+    """
+    读取一个批次的非零实收差异，并合并到任务累计器。
+
+    先读取 ``data_only`` 公式缓存并调用 ``warn_if_uncached``，避免公式未刷新时把
+    差异数量静默当成空值。没有识别到“差异”列时明确报错，而不是生成空报告。
+
+    :param path: 辅料批次清单路径
+    :param batch_name: 批次号，用于报告和错误提示
+    :param accumulator: 任务级差异累计器
+    :param log: 可选的日志回调
+    :raises ValueError: 批次中未识别到“差异”列
+    """
 
     common_core.warn_if_uncached(path, log, what="实收差异")
     workbook = openpyxl.load_workbook(path, read_only=True, data_only=True)
@@ -639,7 +856,13 @@ def _read_diff_batch(path, batch_name, accumulator, log):
 
 
 def _resolve_diff_output_dir(batches, out_dir):
-    """解析实收差异报告目录，并确保显式目录存在。"""
+    """
+    解析实收差异报告目录，并确保显式目录存在。
+
+    :param batches: 已校验的批次文件绝对路径列表
+    :param out_dir: 可选输出目录，为 ``None`` 时按设置解析
+    :return: 已存在的输出目录绝对路径
+    """
 
     if out_dir is None:
         current = settings.get_settings()
@@ -654,7 +877,16 @@ def _resolve_diff_output_dir(batches, out_dir):
 
 
 def _write_diff_report(out_dir, rows):
-    """把结构化实收差异写成带筛选友好样式的独立工作簿。"""
+    """
+    把结构化实收差异写成带筛选友好样式的独立工作簿。
+
+    输出文件固定命名为“实收差异清单.xlsx”，通过 ``common_core.unique_path`` 避免
+    覆盖同目录历史报告；表头加粗、着色和边框用于管理员在 Excel 中直接筛选查看。
+
+    :param out_dir: 输出目录
+    :param rows: 差异业务行列表
+    :return: 已保存的报告文件绝对路径
+    """
 
     from openpyxl.styles import Alignment, Border, Font as XlFont, PatternFill, Side
 
@@ -694,6 +926,14 @@ def diff(batch_paths, out_dir=None, log=None, progress=None) -> dict[str, object
     每条记录保留批次、材料属性、计划数量、实收和差异；材料属性缺失时由主数据库
     只补空值。没有“差异”列的批次属于不兼容输入并明确报错；没有任何非零差异时
     不生成空报告。原厂材料同采购计划主流程一致地排除。
+
+    :param batch_paths: 辅料批次清单路径列表，至少一个文件
+    :param out_dir: 可选输出目录，为 ``None`` 时按设置解析
+    :param log: 可选的日志回调
+    :param progress: 可选的进度回调
+    :return: 含输出目录、报告路径、记录数和排除数的字典
+    :raises ValueError: 输入为空、格式不受支持、无批次号、无“差异”列或没有非零差异
+    :raises FileNotFoundError: 输入文件不存在
     """
     batches = _validate_files(batch_paths, "辅料清单总表")
     if progress:

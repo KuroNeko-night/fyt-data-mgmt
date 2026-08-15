@@ -125,6 +125,86 @@ def _workshop_issue_images(issue_id: str, deps: WorkshopDependencies) -> list[An
         ).fetchall()
 
 
+def _issue_image_count(connection: Any, issue_id: str) -> int:
+    """返回问题当前关联的图片数量，供上限校验和强制图片规则使用。"""
+    return int(connection.execute(
+        "SELECT COUNT(*) AS n FROM workshop_issue_images WHERE issue_id = ?",
+        (issue_id,),
+    ).fetchone()["n"])
+
+
+def _insert_audit(
+    connection: Any, actor_id: int, action: str, target_user_id: int | None, now: str,
+) -> None:
+    """写入一条管理操作审计记录。
+
+    动作键使用稳定的英文命名，便于跨版本追踪；时间统一使用调用方提供的服务端时间。
+    """
+    connection.execute(
+        "INSERT INTO audit_log(actor_id, action, target_user_id, created_at) VALUES (?, ?, ?, ?)",
+        (actor_id, action, target_user_id, now),
+    )
+
+
+def _check_expected_updated_at(body: dict[str, object], row: Any) -> None:
+    """校验乐观并发控制中的前端版本戳。
+
+    未传时间戳时不提前报错，由最终 SQL 的 ``updated_at`` 条件兜底；传入但失配则立即
+    给出可读的冲突提示，避免用户填写内容后才被拒绝。
+    """
+    expected = str(body.get("expected_updated_at") or "").strip()
+    if expected and expected != str(row["updated_at"]):
+        raise ApiError(HTTPStatus.CONFLICT, "问题已被其他人更新，请刷新后重新编辑")
+
+
+def _normalized_issue_category(deps: WorkshopDependencies, row: Any) -> str:
+    """返回问题的规范化分类。
+
+    旧数据库可能没有规范分类值，需按字段内容经 Core 回推真实类型，避免旧记录绕过
+    强制图片规则。
+    """
+    return deps.workshop_core.normalize_workshop_category(
+        row["category"] if "category" in row.keys() else "", dict(row),
+    )
+
+
+def _ensure_image_required_for_category(
+    deps: WorkshopDependencies, category: str, image_count: int,
+) -> None:
+    """当分类属于强制带图模板时校验至少存在一张图片。"""
+    if category in deps.workshop_core.WORKSHOP_ISSUE_IMAGE_REQUIRED_CATEGORIES and image_count < 1:
+        raise ApiError(HTTPStatus.BAD_REQUEST, "该问题类型至少需要一张现场图片")
+
+
+def _ensure_published_image_rule(
+    connection: Any, deps: WorkshopDependencies, row: Any, image_count: int,
+) -> None:
+    """校验已发布问题是否满足模板强制图片规则。
+
+    只有已发布记录受约束，草稿可先保存后补图；分类经 Core 规范化后再判断。
+    """
+    if row["status"] != "published":
+        return
+    _ensure_image_required_for_category(deps, _normalized_issue_category(deps, row), image_count)
+
+
+def _send_workshop_issue(
+    handler: Any, deps: WorkshopDependencies, user: Any, issue_id: str,
+    message: str, status: HTTPStatus = HTTPStatus.OK,
+) -> None:
+    """重新读取问题与图片后，以统一结构返回给前端。
+
+    所有写操作完成后都应通过本函数响应，确保列表、编辑、上传、删除等入口看到的
+    ``issue`` 结构完全一致。
+    """
+    row = _workshop_issue_row(issue_id, user, deps)
+    images = _workshop_issue_images(issue_id, deps)
+    handler.send_json({
+        "message": message,
+        "issue": deps.issue_public(row, images, user),
+    }, status)
+
+
 def _payload_text(
     body: dict[str, object], current_values: dict[str, object], name: str,
     default: object = "",
@@ -290,6 +370,41 @@ def create_workshop_issue(handler: Any, body: dict[str, object], deps: WorkshopD
         HTTPStatus.CREATED,
     )
 
+def _parse_image_content_length(handler: Any) -> int:
+    """从请求头解析图片大小，非法值转换为业务提示。"""
+    try:
+        return int(handler.headers.get("Content-Length", "0"))
+    except ValueError as exc:
+        raise ApiError(HTTPStatus.BAD_REQUEST, "图片大小无效") from exc
+
+
+def _stream_upload_body(handler: Any, length: int, source_path: Path) -> None:
+    """按 Content-Length 分块接收请求体并写入暂存文件。
+
+    严格按声明长度读取，不能等待客户端无限追加数据；1 MiB 分块限制单次内存峰值。
+    中途断流会抛出业务提示，暂存目录由调用方统一清理。
+    """
+    remaining = length
+    with source_path.open("wb") as stream:
+        while remaining:
+            chunk = handler.rfile.read(min(1024 * 1024, remaining))
+            if not chunk:
+                raise ApiError(HTTPStatus.BAD_REQUEST, "图片上传不完整")
+            stream.write(chunk)
+            remaining -= len(chunk)
+
+
+def _normalize_uploaded_image(
+    deps: WorkshopDependencies, source_path: Path, staging_dir: Path,
+) -> tuple[dict[str, object], Path]:
+    """调用 Core 解码并规范图片，返回元数据和规范化后的临时路径。"""
+    try:
+        metadata = deps.workshop_core.normalize_image(source_path, staging_dir / "normalized")
+    except ValueError as exc:
+        raise ApiError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
+    return metadata, Path(str(metadata["path"]))
+
+
 def upload_workshop_issue_image(handler: Any, path: str, deps: WorkshopDependencies) -> None:
     """校验图片格式和数量限制后，为草稿或可编辑的已发布问题添加图片。
 
@@ -303,10 +418,7 @@ def upload_workshop_issue_image(handler: Any, path: str, deps: WorkshopDependenc
         raise ApiError(HTTPStatus.FORBIDDEN, "只有班组长本人或管理员可以编辑已发布问题")
     if row["status"] not in {"draft", "published"}:
         raise ApiError(HTTPStatus.CONFLICT, "当前问题状态不能添加图片")
-    try:
-        length = int(handler.headers.get("Content-Length", "0"))
-    except ValueError as exc:
-        raise ApiError(HTTPStatus.BAD_REQUEST, "图片大小无效") from exc
+    length = _parse_image_content_length(handler)
     if length <= 0:
         raise ApiError(HTTPStatus.BAD_REQUEST, "上传图片为空")
     if length > deps.max_image_bytes:
@@ -314,25 +426,15 @@ def upload_workshop_issue_image(handler: Any, path: str, deps: WorkshopDependenc
     query = parse_qs(urlparse(handler.path).query)
     name = deps.safe_name(query.get("name", ["现场图片"])[0])
     image_id = uuid.uuid4().hex
+    # 解码暂存区独立于问题目录；只有 Core 规范化成功后才进入账号隔离的问题目录。
     staging_root = deps.data_root / "temp" / "workshop-uploads"
     staging_root.mkdir(parents=True, exist_ok=True)
     staging_dir = Path(tempfile.mkdtemp(prefix=f"{issue_id}-", dir=staging_root))  # 每次上传独占目录，避免同名临时文件互相覆盖。
     source_path = staging_dir / "source.uploading"
     final_path: Path | None = None
     try:
-        remaining = length  # 严格按 Content-Length 读取，不能等待客户端无限追加数据。
-        with source_path.open("wb") as stream:
-            while remaining:
-                chunk = handler.rfile.read(min(1024 * 1024, remaining))  # 1 MiB 分块限制单次内存峰值。
-                if not chunk:
-                    raise ApiError(HTTPStatus.BAD_REQUEST, "图片上传不完整")
-                stream.write(chunk)
-                remaining -= len(chunk)
-        try:
-            metadata = deps.workshop_core.normalize_image(source_path, staging_dir / "normalized")
-        except ValueError as exc:
-            raise ApiError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
-        normalized_path = Path(str(metadata["path"]))
+        _stream_upload_body(handler, length, source_path)
+        metadata, normalized_path = _normalize_uploaded_image(deps, source_path, staging_dir)
 
         # 网络接收和图片解码不能占用全局存储锁，否则一个慢连接会阻塞所有上传。
         with deps.storage_lock:
@@ -340,10 +442,7 @@ def upload_workshop_issue_image(handler: Any, path: str, deps: WorkshopDependenc
             if next_row["status"] not in {"draft", "published"}:
                 raise ApiError(HTTPStatus.CONFLICT, "当前问题状态不能添加图片")
             with deps.db_lock, deps.db() as connection:
-                image_count = int(connection.execute(
-                    "SELECT COUNT(*) AS n FROM workshop_issue_images WHERE issue_id = ?",
-                    (issue_id,),
-                ).fetchone()["n"])
+                image_count = _issue_image_count(connection, issue_id)
             if image_count >= deps.max_images:
                 raise ApiError(
                     HTTPStatus.BAD_REQUEST,
@@ -368,22 +467,19 @@ def upload_workshop_issue_image(handler: Any, path: str, deps: WorkshopDependenc
                         (created, issue_id),
                     )
                     if next_row["status"] == "published":
-                        connection.execute(
-                            "INSERT INTO audit_log(actor_id, action, target_user_id, created_at) "
-                            "VALUES (?, ?, ?, ?)",
-                            (user["id"], f"workshop_image_add:{issue_id}:{image_id}", next_row["user_id"], created),
+                        _insert_audit(
+                            connection, user["id"],
+                            f"workshop_image_add:{issue_id}:{image_id}",
+                            next_row["user_id"], created,
                         )
             except Exception:
                 final_path.unlink(missing_ok=True)
                 raise  # 数据库未记录时不能遗留无法管理的孤儿文件。
     finally:
         shutil.rmtree(staging_dir, ignore_errors=True)
-    images = _workshop_issue_images(issue_id, deps)
-    next_row = _workshop_issue_row(issue_id, user, deps)
-    handler.send_json({
-        "message": "图片已上传",
-        "issue": deps.issue_public(next_row, images, user),
-    }, HTTPStatus.CREATED)
+    _send_workshop_issue(
+        handler, deps, user, issue_id, "图片已上传", HTTPStatus.CREATED,
+    )
 
 def update_workshop_issue(handler: Any, path: str, body: dict[str, object], deps: WorkshopDependencies) -> None:
     """按角色权限更新现场问题内容，并记录最后修改人。
@@ -398,21 +494,14 @@ def update_workshop_issue(handler: Any, path: str, body: dict[str, object], deps
         row = _workshop_issue_row(issue_id, user, deps, manage=True)
         if not deps.can_edit(row, user):
             raise ApiError(HTTPStatus.FORBIDDEN, "只有班组长本人或管理员可以编辑已发布问题")
-        expected_updated_at = str(body.get("expected_updated_at") or "").strip()  # 前端快照版本，可提前给出更清晰的冲突提示。
-        if expected_updated_at and expected_updated_at != str(row["updated_at"]):
-            raise ApiError(HTTPStatus.CONFLICT, "问题已被其他人更新，请刷新后重新编辑")
+        _check_expected_updated_at(body, row)
         values = _normalize_workshop_issue_payload(body, deps, row)
         with deps.db_lock, deps.db() as connection:
-            image_count = int(connection.execute(
-                "SELECT COUNT(*) AS n FROM workshop_issue_images WHERE issue_id = ?",
-                (issue_id,),
-            ).fetchone()["n"])
-            if (
-                row["status"] == "published"
-                and values["category"] in deps.workshop_core.WORKSHOP_ISSUE_IMAGE_REQUIRED_CATEGORIES
-                and image_count < 1
-            ):
-                raise ApiError(HTTPStatus.BAD_REQUEST, "该问题类型至少需要一张现场图片")
+            image_count = _issue_image_count(connection, issue_id)
+            # 分类可能已随本次提交变化，需按新模板重新检查强制图片规则。
+            published_row = dict(row)
+            published_row["category"] = values["category"]
+            _ensure_published_image_rule(connection, deps, published_row, image_count)
             updated = deps.now_iso()
             columns = (*values.keys(), "updated_at")
             changed = connection.execute(
@@ -422,16 +511,8 @@ def update_workshop_issue(handler: Any, path: str, body: dict[str, object], deps
             ).rowcount
             if not changed:
                 raise ApiError(HTTPStatus.CONFLICT, "问题已被其他人更新，请刷新后重新编辑")
-            connection.execute(
-                "INSERT INTO audit_log(actor_id, action, target_user_id, created_at) VALUES (?, ?, ?, ?)",
-                (user["id"], f"workshop_edit:{issue_id}", row["user_id"], updated),
-            )
-    next_row = _workshop_issue_row(issue_id, user, deps)
-    images = _workshop_issue_images(issue_id, deps)
-    handler.send_json({
-        "message": "问题内容已更新",
-        "issue": deps.issue_public(next_row, images, user),
-    })
+            _insert_audit(connection, user["id"], f"workshop_edit:{issue_id}", row["user_id"], updated)
+    _send_workshop_issue(handler, deps, user, issue_id, "问题内容已更新")
 
 def publish_workshop_issue(handler: Any, path: str, deps: WorkshopDependencies) -> None:
     """校验图片后将问题草稿发布到日清看板，重复调用保持幂等。
@@ -445,30 +526,21 @@ def publish_workshop_issue(handler: Any, path: str, deps: WorkshopDependencies) 
         row = _workshop_issue_row(issue_id, user, deps, manage=True)
         if row["status"] != "published":
             with deps.db_lock, deps.db() as connection:
-                image_count = int(connection.execute(
-                    "SELECT COUNT(*) AS n FROM workshop_issue_images WHERE issue_id = ?",
-                    (issue_id,),
-                ).fetchone()["n"])
-                category = deps.workshop_core.normalize_workshop_category(
-                    row["category"] if "category" in row.keys() else "", dict(row),
-                )  # 旧数据库可能没有规范分类值，需要按字段内容回推真实类型。
-                if category in deps.workshop_core.WORKSHOP_ISSUE_IMAGE_REQUIRED_CATEGORIES and image_count < 1:
-                    raise ApiError(HTTPStatus.BAD_REQUEST, "请至少上传一张现场图片")
+                image_count = _issue_image_count(connection, issue_id)
+                # 发布阶段无论当前状态如何都必须校验强制图片规则。
+                _ensure_image_required_for_category(
+                    deps, _normalized_issue_category(deps, row), image_count,
+                )
                 updated = deps.now_iso()
                 connection.execute(
                     "UPDATE workshop_issues SET status = 'published', updated_at = ? WHERE id = ?",
                     (updated, issue_id),
                 )
-                connection.execute(
-                    "INSERT INTO audit_log(actor_id, action, target_user_id, created_at) VALUES (?, ?, ?, ?)",
-                    (user["id"], f"workshop_publish:{issue_id}", row["user_id"], updated),
-                )
-    next_row = _workshop_issue_row(issue_id, user, deps)
-    images = _workshop_issue_images(issue_id, deps)
-    handler.send_json({
-        "message": "当天问题已发布" if row["status"] != "published" else "当天问题已经发布",
-        "issue": deps.issue_public(next_row, images, user),
-    })
+                _insert_audit(connection, user["id"], f"workshop_publish:{issue_id}", row["user_id"], updated)
+    _send_workshop_issue(
+        handler, deps, user, issue_id,
+        "当天问题已发布" if row["status"] != "published" else "当天问题已经发布",
+    )
 
 def resolve_workshop_issue(handler: Any, path: str, body: dict[str, object], deps: WorkshopDependencies) -> None:
     """将已发布问题标记为已解决，并保存解决过程补充说明。
@@ -489,9 +561,7 @@ def resolve_workshop_issue(handler: Any, path: str, body: dict[str, object], dep
             raise ApiError(HTTPStatus.FORBIDDEN, "只有班组长本人或管理员可以推进问题闭环")
         if row["status"] != "published":
             raise ApiError(HTTPStatus.CONFLICT, "问题尚未发布，不能标记为已解决")
-        expected_updated_at = str(body.get("expected_updated_at") or "").strip()
-        if expected_updated_at and expected_updated_at != str(row["updated_at"]):
-            raise ApiError(HTTPStatus.CONFLICT, "问题已被其他人更新，请刷新后重试")
+        _check_expected_updated_at(body, row)
         updated = deps.now_iso()
         with deps.db_lock, deps.db() as connection:
             changed = connection.execute(
@@ -501,16 +571,8 @@ def resolve_workshop_issue(handler: Any, path: str, body: dict[str, object], dep
             ).rowcount
             if not changed:
                 raise ApiError(HTTPStatus.CONFLICT, "问题已被其他人更新，请刷新后重试")
-            connection.execute(
-                "INSERT INTO audit_log(actor_id, action, target_user_id, created_at) VALUES (?, ?, ?, ?)",
-                (user["id"], f"workshop_resolve:{issue_id}", row["user_id"], updated),
-            )
-    next_row = _workshop_issue_row(issue_id, user, deps)
-    images = _workshop_issue_images(issue_id, deps)
-    handler.send_json({
-        "message": "问题已标记为已解决",
-        "issue": deps.issue_public(next_row, images, user),
-    })
+            _insert_audit(connection, user["id"], f"workshop_resolve:{issue_id}", row["user_id"], updated)
+    _send_workshop_issue(handler, deps, user, issue_id, "问题已标记为已解决")
 
 def reopen_workshop_issue(handler: Any, path: str, body: dict[str, object], deps: WorkshopDependencies) -> None:
     """重新打开已解决问题，并保留上次解决说明供追溯。
@@ -532,9 +594,7 @@ def reopen_workshop_issue(handler: Any, path: str, body: dict[str, object], deps
                 "issue": deps.issue_public(row, _workshop_issue_images(issue_id, deps), user),
             })
             return
-        expected_updated_at = str(body.get("expected_updated_at") or "").strip()
-        if expected_updated_at and expected_updated_at != str(row["updated_at"]):
-            raise ApiError(HTTPStatus.CONFLICT, "问题已被其他人更新，请刷新后重试")
+        _check_expected_updated_at(body, row)
         updated = deps.now_iso()
         with deps.db_lock, deps.db() as connection:
             changed = connection.execute(
@@ -544,16 +604,8 @@ def reopen_workshop_issue(handler: Any, path: str, body: dict[str, object], deps
             ).rowcount
             if not changed:
                 raise ApiError(HTTPStatus.CONFLICT, "问题已被其他人更新，请刷新后重试")
-            connection.execute(
-                "INSERT INTO audit_log(actor_id, action, target_user_id, created_at) VALUES (?, ?, ?, ?)",
-                (user["id"], f"workshop_reopen:{issue_id}", row["user_id"], updated),
-            )
-    next_row = _workshop_issue_row(issue_id, user, deps)
-    images = _workshop_issue_images(issue_id, deps)
-    handler.send_json({
-        "message": "问题已重新打开",
-        "issue": deps.issue_public(next_row, images, user),
-    })
+            _insert_audit(connection, user["id"], f"workshop_reopen:{issue_id}", row["user_id"], updated)
+    _send_workshop_issue(handler, deps, user, issue_id, "问题已重新打开")
 
 def list_workshop_issues(handler: Any, deps: WorkshopDependencies) -> None:
     """按日期返回全部已发布问题、图片元数据及闭环统计。
@@ -650,17 +702,14 @@ def delete_workshop_issue_image(handler: Any, path: str, deps: WorkshopDependenc
             ).fetchone()
             if image is None:
                 raise ApiError(HTTPStatus.NOT_FOUND, "现场图片不存在")
-            image_count = int(connection.execute(
-                "SELECT COUNT(*) AS n FROM workshop_issue_images WHERE issue_id = ?",
-                (issue_id,),
-            ).fetchone()["n"])
-            category = deps.workshop_core.normalize_workshop_category(row["category"], dict(row))
-            if (
-                row["status"] == "published"
-                and category in deps.workshop_core.WORKSHOP_ISSUE_IMAGE_REQUIRED_CATEGORIES
-                and image_count <= 1
-            ):
-                raise ApiError(HTTPStatus.BAD_REQUEST, "该问题类型至少需要保留一张现场图片")
+            image_count = _issue_image_count(connection, issue_id)
+            if row["status"] == "published":
+                category = _normalized_issue_category(deps, row)
+                if (
+                    category in deps.workshop_core.WORKSHOP_ISSUE_IMAGE_REQUIRED_CATEGORIES
+                    and image_count <= 1
+                ):
+                    raise ApiError(HTTPStatus.BAD_REQUEST, "该问题类型至少需要保留一张现场图片")
         target = deps.resolve_image_path(image)
         staging = target.with_name(f".{target.name}.{uuid.uuid4().hex}.deleting")  # 同目录暂存确保 ``os.replace`` 原子执行。
         if target.is_file():
@@ -678,21 +727,17 @@ def delete_workshop_issue_image(handler: Any, path: str, deps: WorkshopDependenc
                     "UPDATE workshop_issues SET updated_at = ? WHERE id = ?",
                     (updated, issue_id),
                 )
-                connection.execute(
-                    "INSERT INTO audit_log(actor_id, action, target_user_id, created_at) VALUES (?, ?, ?, ?)",
-                    (user["id"], f"workshop_image_delete:{issue_id}:{image_id}", row["user_id"], updated),
+                _insert_audit(
+                    connection, user["id"],
+                    f"workshop_image_delete:{issue_id}:{image_id}",
+                    row["user_id"], updated,
                 )
         except Exception:
             if staging.is_file() and not target.exists():
                 os.replace(staging, target)
             raise
         staging.unlink(missing_ok=True)  # 数据库事务成功后才真正清除文件。
-    next_row = _workshop_issue_row(issue_id, user, deps)
-    images = _workshop_issue_images(issue_id, deps)
-    handler.send_json({
-        "message": "现场图片已删除",
-        "issue": deps.issue_public(next_row, images, user),
-    })
+    _send_workshop_issue(handler, deps, user, issue_id, "现场图片已删除")
 
 def export_workshop_issues(handler: Any, deps: WorkshopDependencies) -> None:
     """按日期范围导出符合标准模板的现场问题报表。
@@ -806,9 +851,9 @@ def delete_workshop_issue(handler: Any, path: str, deps: WorkshopDependencies) -
                         "issue": dict(row), "images": [dict(image) for image in images],
                     }, ensure_ascii=False), relative, size, user["id"], deps.now_iso()),
                 )
-                connection.execute(
-                    "INSERT INTO audit_log(actor_id, action, target_user_id, created_at) VALUES (?, ?, ?, ?)",
-                    (user["id"], f"workshop_trash:{issue_id}", row["user_id"], deps.now_iso()),
+                _insert_audit(
+                    connection, user["id"], f"workshop_trash:{issue_id}",
+                    row["user_id"], deps.now_iso(),
                 )
         except Exception:
             if payload.exists() and not folder.exists():

@@ -27,6 +27,7 @@ import { useDashboardData } from "./hooks/useDashboardData";
 import { getNavigationItem, isNavigationAllowed, type WebRouteKey } from "./app/navigation";
 import Skeleton from "./ui/Skeleton";
 
+/** 全屏加载态：用于登录校验和工作台首次读取，不承载任何业务数据逻辑。 */
 function PageLoading({ text = "正在加载工作台..." }: { text?: string }) {
   return <div className="fyt-page-state" role="status" aria-live="polite"><div className="fyt-skeleton-group" aria-hidden="true"><Skeleton variant="title" /><Skeleton variant="rect" /></div><strong>{text}</strong></div>;
 }

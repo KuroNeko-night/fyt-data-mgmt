@@ -15,6 +15,7 @@ from web_backend.errors import ApiError
 from web_backend.config import BUSINESS_TZ
 
 
+# 报表时间范围参数与中文标题的映射；"week" 是 "7d" 的历史别名，统一显示为“近7天”。
 REPORT_RANGE_LABELS = {
     "7d": "近7天",
     "30d": "近30天",

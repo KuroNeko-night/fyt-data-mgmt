@@ -1,4 +1,4 @@
-param(
+﻿param(
   [int]$Port = 8787,
   [string]$HostAddress = "0.0.0.0",
   [string]$AdminPassword = "",

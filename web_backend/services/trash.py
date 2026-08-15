@@ -34,7 +34,11 @@ class TrashDependencies:
 
 
 def _trash_id(path: str, restore: bool = False) -> str:
-    """解析回收站路由编号，并拒绝嵌套路径和非字母数字字符。"""
+    """解析回收站路由编号，并拒绝嵌套路径和非字母数字字符。
+
+    路由编号只允许字母数字串，因此 ``%2F`` 等 URL 编码斜杠或 ``..`` 都会因包含非法
+    字符被拒绝，不能构造子路径。
+    """
     prefix = "/api/admin/trash/"
     suffix = "/restore" if restore else ""
     if not path.startswith(prefix) or (suffix and not path.endswith(suffix)):

@@ -30,7 +30,12 @@ def owned_upload_path(
     path_value: str | Path,
     user_id: int,
 ) -> Path:
-    """校验路径位于当前账号上传目录内。"""
+    """校验路径位于当前账号上传目录内，并返回解析后的真实绝对路径。
+
+    路径先经 ``resolve`` 展开相对段、``..`` 和符号链接，再检查结果必须等于账号上传
+    根目录或位于其子目录中；任何越界或解析失败都抛 ``ValueError``，由调用方统一转
+    成客户端错误。允许返回批次目录本身，便于多文件业务直接引用目录。
+    """
     root = (deps.data_root / "users" / str(user_id) / "uploads").resolve()  # 账号上传根是唯一允许业务任务读取的临时文件边界。
     try:
         resolved = Path(path_value).resolve()  # 展开 ..、符号链接和相对段后再判断，避免字符串前缀绕过。
@@ -116,6 +121,7 @@ def upload_file(handler: Any, deps: UploadDependencies) -> None:
         raise ApiError(HTTPStatus.BAD_REQUEST, "文件名不能为空")
     name = deps.safe_name(raw_name)
     group_id = str((query.get("group") or [uuid.uuid4().hex])[0])  # 多文件业务复用同一批次号，单文件未提供时自动生成。
+    # 批次号会拼入账号上传目录名，必须限制为字母数字和短横线，防止请求传入 ``..`` 等路径片段。
     if not group_id.replace("-", "").isalnum() or len(group_id) > 64:
         raise ApiError(HTTPStatus.BAD_REQUEST, "上传批次编号无效")
     length = _request_length(handler, deps.max_upload_bytes)

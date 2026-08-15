@@ -28,16 +28,34 @@ REMOVE_CHROMA_KEY = Path.home() / ".codex" / "skills" / ".system" / "imagegen" /
 
 
 def selected_ids(value: str | None) -> set[str]:
-    """解析资源编号；未指定时只选择缓存中本阶段的 A01～A07 原图。"""
+    """解析资源编号；未指定时只选择缓存中本阶段的 A01～A07 原图。
+
+    参数：
+        value: 逗号分隔的资源编号串，允许空串或 ``None``。
+    返回值：
+        去重后的编号集合；默认按缓存文件名首段推断，空项与重复项不影响处理顺序。
+    """
 
     if not value:
-        # 文件名约定为“编号-资源名.png”，这里只取首段编号并去重。
+        # 文件名约定为“编号-资源名.png”，这里只取首段编号并去重，且限制在本阶段 A01～A07 范围内。
         return {path.stem.split("-", 1)[0] for path in CACHE_ROOT.glob("A0[1-7]-*.png")}
     return {item.strip() for item in value.split(",") if item.strip()}
 
 
 def remove_chroma_key(source: Path, target: Path) -> None:
-    """调用统一抠图工具生成透明 PNG，失败时保留原始图片并向上抛错。"""
+    """调用统一抠图工具生成透明 PNG，失败时保留原始图片并向上抛错。
+
+    参数：
+        source: 对话生成的原始图片路径。
+        target: 透明 PNG 输出路径，父目录不存在时自动创建。
+    返回值：
+        无。
+    副作用：
+        启动 Python 子进程运行抠图工具；不捕获标准流，便于操作者直接看到诊断信息。
+    异常：
+        工具脚本缺失时抛出 ``RuntimeError``；抠图进程非零退出时抛出
+        ``subprocess.CalledProcessError``。
+    """
 
     if not REMOVE_CHROMA_KEY.exists():
         raise RuntimeError("找不到本地抠图工具 remove_chroma_key.py")
@@ -62,7 +80,17 @@ def remove_chroma_key(source: Path, target: Path) -> None:
 
 
 def validate_transparency(path: Path) -> None:
-    """检查图片四角是否完全透明，拦截最常见的色键去除失败。"""
+    """检查图片四角是否完全透明，拦截最常见的色键去除失败。
+
+    参数：
+        path: 待验证的 PNG 图片路径。
+    返回值：
+        无。
+    异常：
+        四角任一像素 alpha 不为 0 时抛出 ``RuntimeError``。
+    不变量：
+        只读检查，不修改图片；四角通常只包含纯背景，不会误判主体半透明边缘。
+    """
 
     with Image.open(path) as image:
         rgba = image.convert("RGBA")
@@ -73,14 +101,32 @@ def validate_transparency(path: Path) -> None:
 
 
 def write_webp(source: Path, target: Path) -> None:
-    """输出带透明通道的 WebP 副本，以降低 Web 和桌面静态资源体积。"""
+    """输出带透明通道的 WebP 副本，以降低 Web 和桌面静态资源体积。
+
+    参数：
+        source: 已准备好的 PNG 源文件。
+        target: WebP 输出路径。
+    返回值：
+        无。
+    副作用：
+        在目标路径写入新文件。
+    异常：
+        图片读取或编码失败时抛出 ``PIL`` 异常。
+    """
 
     with Image.open(source) as image:
         image.convert("RGBA").save(target, "WEBP", quality=88, method=6)
 
 
 def output_targets(asset: dict, base_name: str) -> list[Path]:
-    """根据清单用途计算资源需要落入 Web、Tauri 或双端的目标路径。"""
+    """根据清单用途计算资源需要落入 Web、Tauri 或双端的目标路径。
+
+    参数：
+        asset: 清单中的资源条目，必须包含 ``usage`` 与可选 ``output`` 字段。
+        base_name: 资源文件名（不含扩展名）。
+    返回值：
+        目标路径列表；Web 总是包含，仅明确标记桌面用途时才追加 Tauri，避免安装包膨胀。
+    """
 
     extension = str(asset.get("output", "png")).lower()
     targets = [OUTPUT_ROOT / "web" / f"{base_name}.{extension}"]
@@ -91,7 +137,17 @@ def output_targets(asset: dict, base_name: str) -> list[Path]:
 
 
 def clear_old_outputs(base_name: str) -> None:
-    """删除同名资源的旧格式变体，防止同步脚本继续拾取过期文件。"""
+    """删除同名资源的旧格式变体，防止同步脚本继续拾取过期文件。
+
+    参数：
+        base_name: 资源文件名（不含扩展名）。
+    返回值：
+        无。
+    副作用：
+        删除 ``assets/generated/web`` 与 ``assets/generated/tauri`` 下同名任意后缀文件。
+    异常：
+        删除失败时由 ``Path.unlink`` 抛出 ``OSError``。
+    """
 
     for directory in (OUTPUT_ROOT / "web", OUTPUT_ROOT / "tauri"):
         for path in directory.glob(f"{base_name}.*"):
@@ -99,7 +155,19 @@ def clear_old_outputs(base_name: str) -> None:
 
 
 def save_primary(source: Path, target: Path, chroma_key: bool) -> None:
-    """按清单格式保存主文件，透明资源保留 RGBA，非透明资源转为 RGB。"""
+    """按清单格式保存主文件，透明资源保留 RGBA，非透明资源转为 RGB。
+
+    参数：
+        source: 已准备好的源图片路径。
+        target: 输出文件路径；输出格式由目标扩展名决定。
+        chroma_key: 为真时保留透明通道，为假时丢弃 alpha 以减小体积。
+    返回值：
+        无。
+    副作用：
+        写入主文件，父目录须已存在。
+    异常：
+        图片读写失败时抛出 ``PIL`` 异常。
+    """
 
     with Image.open(source) as image:
         prepared = image.convert("RGBA" if chroma_key else "RGB")
@@ -107,11 +175,23 @@ def save_primary(source: Path, target: Path, chroma_key: bool) -> None:
 
 
 def main() -> None:
-    """按资源清单完成筛选、抠图、格式转换并重建本批资源记录。"""
+    """按资源清单完成筛选、抠图、格式转换并重建本批资源记录。
+
+    参数：
+        命令行参数：``--assets`` 可指定逗号分隔的资源编号。
+    返回值：
+        无。
+    副作用：
+        读取 ``scripts/art-prompts/manifest.json``，写入 ``assets/generated`` 及
+        ``assets/generated/manifest.json``；不修改 React 页面与设计令牌。
+    异常：
+        资源编号越界、原图缺失、抠图或透明度验证失败时抛出对应异常。
+    """
 
     parser = argparse.ArgumentParser(description="优化离线生成的峰运通静态美术资源")
     parser.add_argument("--assets", help="逗号分隔的资源编号，默认处理缓存中的 A01～A07")
     args = parser.parse_args()
+    # 资源清单是本脚本唯一事实源；读取失败会直接抛出 JSON/OSError，不进入半处理状态。
     prompt_manifest = json.loads((ROOT / "scripts" / "art-prompts" / "manifest.json").read_text(encoding="utf-8"))
     assets = {item["id"]: item for item in prompt_manifest["assets"]}
     records = []

@@ -28,10 +28,12 @@ from web_backend.config import BUSINESS_TZ
 class BackupDependencies:
     """备份服务的运行时依赖。"""
 
+    # 备份在 data_root 下生成；db_path 是正式账号库，恢复时先移入回滚区再替换。
     db_lock: Any
     db: Callable[[], Any]
     data_root: Path
     db_path: Path
+    # 恢复前必须确认没有运行中的任务；自动备份保留份数由配置注入。
     job_lock: Any
     job_processes: dict[str, Any]
     auto_backup_keep: int
@@ -162,6 +164,7 @@ def create_web_backup(
     }
 
 
+# 恢复路径白名单：数据库快照和主数据清单只接受固定条目，业务数据只接受三个顶层目录。
 _BACKUP_DATABASE_FILES = {"database/accounts.sqlite3", "database/catalog.json"}
 _BACKUP_DATA_PREFIXES = ("users/", "trash/", "master-data-imports/")
 
@@ -415,6 +418,75 @@ def _extract_backup(source: Path, stage: Path, manifest: dict[str, object]) -> N
                 shutil.copyfileobj(input_stream, output_stream, length=1024 * 1024)
 
 
+def _move_existing_aside(current: Path, old: Path, moved: list[tuple[Path, Path]]) -> None:
+    """把正式路径移入回滚目录并登记，便于失败时恢复。"""
+    if current.exists():
+        shutil.move(str(current), str(old))
+        moved.append((old, current))
+
+
+def _restore_catalog(
+    stage: Path, deps: BackupDependencies, rollback: Path,
+    moved: list[tuple[Path, Path]],
+) -> None:
+    """用备份中的主数据 JSON 替换当前主数据。"""
+    restored_catalog = stage / "database" / "catalog.json"
+    if not restored_catalog.is_file():
+        return
+    current_catalog = deps.data_root / "catalog.json"
+    _move_existing_aside(current_catalog, rollback / "catalog.json", moved)
+    os.replace(restored_catalog, current_catalog)  # 与数据库、业务目录同属一个可补偿替换序列。
+
+
+def _restore_data_dirs(
+    stage: Path, deps: BackupDependencies, rollback: Path,
+    moved: list[tuple[Path, Path]],
+) -> None:
+    """用备份中的业务数据目录替换正式目录。
+
+    仅处理清单白名单允许的三类目录；每个目录的旧数据先整体移入回滚区，再整体移入
+    备份目录，避免父目录与子资源逐项替换产生中间状态。
+    """
+    for name in ("users", "trash", "master-data-imports"):
+        current = deps.data_root / name
+        incoming = stage / name
+        _move_existing_aside(current, rollback / name, moved)
+        if incoming.exists():
+            shutil.move(str(incoming), str(current))
+
+
+def _rollback_restore(deps: BackupDependencies, moved: list[tuple[Path, Path]]) -> None:
+    """删除未完成的新数据，再按移动记录逆序恢复原数据库和目录。"""
+    deps.db_path.unlink(missing_ok=True)
+    for old, current in reversed(moved):
+        if current.exists():
+            if current.is_dir():
+                shutil.rmtree(current)
+            else:
+                current.unlink()
+        shutil.move(str(old), str(current))
+
+
+def _clear_sessions_and_audit(
+    deps: BackupDependencies, actor_id: int, backup_id: str,
+) -> None:
+    """恢复后清除会话和登录失败计数，并写入恢复审计。
+
+    会话 Cookie 与登录失败计数属于瞬时安全状态，不能随历史备份继续生效；审计仅在
+    操作者账号仍存在于备份数据库时写入。
+    """
+    with deps.db() as connection:
+        connection.execute("DELETE FROM sessions")  # 恢复后强制所有设备重新认证。
+        connection.execute("DELETE FROM login_attempts")
+        if connection.execute(
+            "SELECT 1 FROM users WHERE id = ?", (actor_id,),
+        ).fetchone():
+            connection.execute(
+                "INSERT INTO audit_log(actor_id, action, created_at) VALUES (?, ?, ?)",
+                (actor_id, f"restore_backup:{backup_id}", deps.now_iso()),
+            )
+
+
 def _restore_staged_data(
     deps: BackupDependencies,
     stage: Path,
@@ -429,52 +501,18 @@ def _restore_staged_data(
     的幂等迁移，并清除会话和登录失败计数，避免历史安全状态继续生效。
     """
     restored_db = stage / "database" / "accounts.sqlite3"
-    restored_catalog = stage / "database" / "catalog.json"
     _validate_restored_database(restored_db)
     moved: list[tuple[Path, Path]] = []  # 记录“回滚位置、正式位置”，失败时按逆序恢复。
     with deps.db_lock:
         try:
-            if deps.db_path.exists():
-                old_db = rollback / "accounts.sqlite3"
-                os.replace(deps.db_path, old_db)  # 旧数据库先移入回滚目录，新数据库才可占用正式路径。
-                moved.append((old_db, deps.db_path))
-            os.replace(restored_db, deps.db_path)
-            if restored_catalog.is_file():
-                current_catalog = deps.data_root / "catalog.json"
-                if current_catalog.exists():
-                    old_catalog = rollback / "catalog.json"
-                    os.replace(current_catalog, old_catalog)
-                    moved.append((old_catalog, current_catalog))
-                os.replace(restored_catalog, current_catalog)
-            for name in ("users", "trash", "master-data-imports"):
-                current = deps.data_root / name
-                old = rollback / name
-                incoming = stage / name
-                if current.exists():
-                    shutil.move(str(current), str(old))
-                    moved.append((old, current))
-                if incoming.exists():
-                    shutil.move(str(incoming), str(current))
+            _move_existing_aside(deps.db_path, rollback / "accounts.sqlite3", moved)
+            os.replace(restored_db, deps.db_path)  # 旧数据库先移入回滚区，新数据库才可占用正式路径。
+            _restore_catalog(stage, deps, rollback, moved)
+            _restore_data_dirs(stage, deps, rollback, moved)
             deps.init_db()  # 允许旧版本备份通过当前幂等迁移补齐新增表和字段。
-            with deps.db() as connection:
-                connection.execute("DELETE FROM sessions")  # 恢复后强制所有设备重新认证，旧 Cookie 不继续有效。
-                connection.execute("DELETE FROM login_attempts")  # 登录失败计数属于瞬时安全状态，不从历史备份恢复。
-                if connection.execute(
-                    "SELECT 1 FROM users WHERE id = ?", (actor_id,),
-                ).fetchone():
-                    connection.execute(
-                        "INSERT INTO audit_log(actor_id, action, created_at) VALUES (?, ?, ?)",
-                        (actor_id, f"restore_backup:{backup_id}", deps.now_iso()),
-                    )
-        except Exception:  # 删除未完成的新数据，再按移动记录逆序恢复原数据库和目录。
-            deps.db_path.unlink(missing_ok=True)
-            for old, current in reversed(moved):
-                if current.exists():
-                    if current.is_dir():
-                        shutil.rmtree(current)
-                    else:
-                        current.unlink()
-                shutil.move(str(old), str(current))
+            _clear_sessions_and_audit(deps, actor_id, backup_id)
+        except Exception:
+            _rollback_restore(deps, moved)
             raise
 
 

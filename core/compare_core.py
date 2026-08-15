@@ -262,6 +262,75 @@ def _index_by_key(rows, key):
     return idx, blank
 
 
+def _diff_cells(key_value, row_a, row_b, columns):
+    """返回两行在比较列上的单元格差异列表，等价时为空。"""
+    diffs = []
+    for col in columns:
+        va, vb = row_a.get(col), row_b.get(col)
+        if not _eq(_norm_cell(va), _norm_cell(vb)):
+            diffs.append({"key": key_value, "column": col, "a": va, "b": vb})
+    return diffs
+
+
+def _diff_count(row_a, row_b, columns):
+    """统计两行在比较列上内容不同的列数，用于同键重复行的贪心配对。"""
+    return sum(
+        not _eq(_norm_cell(row_a.get(col)), _norm_cell(row_b.get(col)))
+        for col in columns
+    )
+
+
+def _pair_same_key(key_value, group_a, group_b, columns):
+    """配对同一关键值下的重复行，返回差异、单边记录和成功配对数。
+
+    第一轮先消去所有比较列完全一致的行，解决同键记录乱序；第二轮把剩余 A 行与
+    差异列数量最少的 B 行配对。该策略是局部贪心，目标是减少明显误报而不是推断
+    业务上的唯一对应关系，因此重复键仍由调用方单独提示。
+    """
+    diffs, only_a, only_b = [], [], []
+    matched = 0
+    # 使用 B 的位置列表，才能正确处理内容也重复的多行；一个 B 行只能消费一次，
+    # 否则多个 A 重复行会错误配到同一条记录。
+    remaining_b = list(range(len(group_b)))
+    leftovers_a = []
+    for ra in group_a:
+        exact = next(
+            (pos for pos in remaining_b if _diff_count(ra, group_b[pos], columns) == 0),
+            None,
+        )
+        if exact is None:
+            leftovers_a.append(ra)
+        else:
+            matched += 1
+            remaining_b.remove(exact)
+    # 未精确命中的同键行选择差异列最少的剩余对家；没有对家才是真正单边记录。
+    for ra in leftovers_a:
+        if not remaining_b:
+            only_a.append({"key": key_value, "row": ra})
+            continue
+        best = min(remaining_b, key=lambda pos: _diff_count(ra, group_b[pos], columns))
+        rb = group_b[best]
+        remaining_b.remove(best)
+        matched += 1
+        diffs.extend(_diff_cells(key_value, ra, rb, columns))
+    for pos in remaining_b:
+        only_b.append({"key": key_value, "row": group_b[pos]})
+    return diffs, only_a, only_b, matched
+
+
+def _validate_compare_input(headers_a, headers_b, key, columns):
+    """校验关键列与比较列同时存在，并返回生效的比较列列表。"""
+    if key not in headers_a or key not in headers_b:
+        raise ValueError("关键列「%s」需同时存在于两份表" % key)
+    if columns is None:
+        # 默认只比较两表都具备的字段，避免版本新增列被误判为每行差异。
+        columns = [c for c in common_columns(headers_a, headers_b) if c != key]
+    missing_columns = [c for c in columns if c not in headers_a or c not in headers_b]
+    if missing_columns:
+        raise ValueError("比较列需同时存在于两份表：%s" % "、".join(missing_columns))
+    return columns
+
+
 def compare(headers_a, rows_a, headers_b, rows_b, key, columns=None, log=None):
     """按关键列和内容相似度配对两表记录，返回结构化差异。
 
@@ -273,14 +342,7 @@ def compare(headers_a, rows_a, headers_b, rows_b, key, columns=None, log=None):
     记录乱序；第二轮把剩余 A 行与差异列数量最少的 B 行配对。该策略是局部贪心，
     目标是减少明显误报而不是推断业务上的唯一对应关系，因此重复键仍会单独提示。
     """
-    if key not in headers_a or key not in headers_b:
-        raise ValueError("关键列「%s」需同时存在于两份表" % key)
-    if columns is None:
-        # 默认只比较两表都具备的字段，避免版本新增列被误判为每行差异。
-        columns = [c for c in common_columns(headers_a, headers_b) if c != key]
-    missing_columns = [c for c in columns if c not in headers_a or c not in headers_b]
-    if missing_columns:
-        raise ValueError("比较列需同时存在于两份表：%s" % "、".join(missing_columns))
+    columns = _validate_compare_input(headers_a, headers_b, key, columns)
 
     idx_a, blank_a = _index_by_key(rows_a, key)
     idx_b, blank_b = _index_by_key(rows_b, key)
@@ -289,45 +351,16 @@ def compare(headers_a, rows_a, headers_b, rows_b, key, columns=None, log=None):
 
     diffs, only_a, only_b = [], [], []
     matched = 0
-    for k in sorted(set(idx_a) | set(idx_b)):
-        group_a, group_b = list(idx_a.get(k, [])), list(idx_b.get(k, []))
-        # 先消去完全相同的记录；使用 B 的位置列表，才能正确处理内容也重复的多行。
-        remaining_b = list(range(len(group_b)))
-        paired = []
-        for ra in group_a:
-            exact = next((pos for pos in remaining_b
-                          if all(_eq(_norm_cell(ra.get(col)),
-                                     _norm_cell(group_b[pos].get(col)))
-                                 for col in columns)), None)
-            if exact is not None:
-                # 一个 B 行只能消费一次，否则多个 A 重复行会错误配到同一条记录。
-                paired.append((ra, group_b[exact]))
-                remaining_b.remove(exact)
-            else:
-                paired.append((ra, None))
-        leftovers_a = []
-        for ra, rb in paired:
-            if rb is None:
-                leftovers_a.append(ra)
-            else:
-                matched += 1
-        # 未精确命中的同键行选择差异列最少的剩余对家；没有对家才是真正单边记录。
-        for ra in leftovers_a:
-            if not remaining_b:
-                only_a.append({"key": k, "row": ra})
-                continue
-            best = min(remaining_b, key=lambda pos: sum(
-                not _eq(_norm_cell(ra.get(col)), _norm_cell(group_b[pos].get(col)))
-                for col in columns))
-            rb = group_b[best]
-            remaining_b.remove(best)
-            matched += 1
-            for col in columns:
-                va, vb = ra.get(col), rb.get(col)
-                if not _eq(_norm_cell(va), _norm_cell(vb)):
-                    diffs.append({"key": k, "column": col, "a": va, "b": vb})
-        for pos in remaining_b:
-            only_b.append({"key": k, "row": group_b[pos]})
+    for key_value in sorted(set(idx_a) | set(idx_b)):
+        group_a = list(idx_a.get(key_value, []))
+        group_b = list(idx_b.get(key_value, []))
+        group_diffs, group_only_a, group_only_b, group_matched = _pair_same_key(
+            key_value, group_a, group_b, columns,
+        )
+        diffs.extend(group_diffs)
+        only_a.extend(group_only_a)
+        only_b.extend(group_only_b)
+        matched += group_matched
 
     if log:
         log("· 比对完成:差异 %d 处,只在A %d 行,只在B %d 行"

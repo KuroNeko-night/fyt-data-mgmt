@@ -4,6 +4,12 @@
  * `key` 同时用于页面路由、快捷入口和页面元数据查找；新增桌面功能时应在此注册，
  * 不要在侧栏或工作台分别维护重复清单。分组为空的首页由侧栏固定置顶。
  */
+/**
+ * 桌面导航项的稳定结构。
+ *
+ * `key` 是页面路由、快捷入口和元数据查找的统一键；`group` 为空表示置顶的首页；
+ * `icon` 使用 Icon 组件的语义名称，业务文案只来自 `title` 与 `description`。
+ */
 export interface NavItem {
   key: string;
   group: string;

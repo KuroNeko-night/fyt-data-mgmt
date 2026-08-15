@@ -146,6 +146,7 @@ def upload_import(handler: Any, deps: MasterDataDependencies) -> None:
     if length > deps.max_upload_bytes:
         raise ApiError(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "主数据表格不能超过 50 MB")
     batch_id = uuid.uuid4().hex  # 批次编号同时作为目录名和治理记录主键，便于追踪原始表格。
+    # 导入表格按管理员账号隔离存放，与其他管理员及桌面端本地档案互不可见。
     folder = (
         deps.data_root / "users" / str(actor["id"])
         / "master-data-imports" / batch_id

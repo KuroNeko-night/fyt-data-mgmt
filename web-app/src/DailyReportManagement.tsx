@@ -1,3 +1,10 @@
+/**
+ * 日清看板的维护性子页面集合。
+ *
+ * 为管理员提供人员考勤、班组编制、日清事项、到料/安全资料和生产发运资料
+ * 的填写与上传入口；所有解析和聚合仍在服务端/核心层完成，这里只提交
+ * 明确表单字段并回读服务端规范化后的结果。
+ */
 import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
 import {
   createDailyBriefItem,

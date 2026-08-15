@@ -4,6 +4,7 @@ import LocalWorkbench from "./app/LocalWorkbench";
 import ModePicker from "./app/ModePicker";
 import RemoteWorkbench from "./app/RemoteWorkbench";
 
+/** 本地存储键：保存上次选择的桌面工作模式。 */
 const MODE_KEY = "fyt-desktop-mode";
 
 /**

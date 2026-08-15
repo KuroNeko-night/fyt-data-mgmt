@@ -19,9 +19,13 @@ import Notice from "./ui/Notice";
 import type { StatusKey } from "./ui/status";
 import "./workflows.css";
 
+/** 业务参数支持的原生表单控件种类。 */
 type FieldKind = "text" | "select" | "checkbox" | "textarea" | "month";
+/** 单个可调参数：键名与界面标签一致，`choices` 使用“值、文案”二元组。 */
 type OptionField = { key: string; label: string; kind: FieldKind; value: string | boolean; choices?: Array<[string, string]>; placeholder?: string; optional?: boolean };
+/** 一个文件上传组：描述界面文案，`accept` 限定文件类型，`optional` 不参与启动校验。 */
 type FileGroup = { key: string; label: string; description: string; multiple?: boolean; optional?: boolean; accept: string };
+/** 单个业务模块的前端规格：执行动作、可选的复核动作、文件组和参数定义。 */
 type FeatureSpec = { action: string; reviewAction?: string; reviewOnly?: boolean; files: FileGroup[]; options: OptionField[]; runLabel: string; reviewLabel?: string };
 
 const WORKFLOW_STEPS = ["准备文件", "检查设置", "运行并查看结果"];

@@ -122,6 +122,47 @@ def _guess_data_region(ws, scan_rows, max_cols):
     return best_r
 
 
+def _assign_shape_columns(profile, profs, max_cols):
+    """按 profile 顺序贪心指派列，返回列映射和置信度分子。
+
+    每个角色选择未用列中契合度最高者；ANY 角色不参与置信度计算。多列同分时，先到
+    先得的顺序由 ``profile`` 决定，贴合真实表的典型列序。
+    """
+    col_map = {}
+    used = set()
+    conf_sum = 0.0
+    for role, rtype, _req in profile:
+        best_c, best_s = None, 0.0
+        for c in range(1, max_cols + 1):
+            if c in used:
+                continue
+            s = _score_role(rtype, profs[c])
+            if s > best_s:
+                best_s, best_c = s, c
+        if best_c is not None and best_s > 0.0:
+            col_map[role] = best_c
+            used.add(best_c)
+            if rtype != ANY:
+                conf_sum += best_s
+    return col_map, conf_sum
+
+
+def _log_shape_outcome(log, conf, required_ok):
+    """按统一口径记录形态兜底采用或未采用的原因。"""
+    if log is None:
+        return
+    try:
+        if required_ok:
+            log("· 形态兜底:按数据形态推断列映射(置信度 %.2f),请在预览面板核对后再生成"
+                % conf)
+        else:
+            log("· 形态兜底:置信度 %.2f%s,未采用"
+                % (conf, "" if required_ok else "(缺必需列)"))
+    except Exception:
+        # 日志回调不应影响识别主流程；失败时静默跳过。
+        pass
+
+
 def detect_by_shape(ws, profile, scan_rows=12, min_conf=0.5, log=None):
     """按数据形态兜底识别列。返回 (header_row, {角色:列号}, confidence)。
 
@@ -140,38 +181,14 @@ def detect_by_shape(ws, profile, scan_rows=12, min_conf=0.5, log=None):
         return None, {}, 0.0
     profs = {c: profile_column(ws, c, data_start, max_row) for c in range(1, max_cols + 1)}
 
-    col_map = {}
-    used = set()
-    conf_sum = 0.0
+    col_map, conf_sum = _assign_shape_columns(profile, profs, max_cols)
     weighted = [p for p in profile if p[1] != ANY]     # ANY 不计入置信度
-    for role, rtype, _req in profile:
-        best_c, best_s = None, 0.0
-        for c in range(1, max_cols + 1):
-            if c in used:
-                continue
-            s = _score_role(rtype, profs[c])
-            if s > best_s:
-                best_s, best_c = s, c
-        if best_c is not None and best_s > 0.0:
-            col_map[role] = best_c
-            used.add(best_c)
-            if rtype != ANY:
-                conf_sum += best_s
     conf = conf_sum / len(weighted) if weighted else 0.0
 
     required = [r for r, _t, req in profile if req]
-    if not all(r in col_map for r in required) or conf < min_conf:
-        if log:
-            try:
-                log("· 形态兜底:置信度 %.2f%s,未采用" % (
-                    conf, "(缺必需列)" if not all(r in col_map for r in required) else ""))
-            except Exception:
-                pass
+    required_ok = all(r in col_map for r in required)
+    if not required_ok or conf < min_conf:
+        _log_shape_outcome(log, conf, required_ok)
         return None, {}, conf
-    if log:
-        try:
-            log("· 形态兜底:按数据形态推断列映射(置信度 %.2f),请在预览面板核对后再生成"
-                % conf)
-        except Exception:
-            pass
+    _log_shape_outcome(log, conf, required_ok)
     return header_row, col_map, conf

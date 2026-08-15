@@ -1,4 +1,9 @@
-"""管理员数据总览、审计记录和资料维护服务。"""
+"""管理员数据总览、审计记录和资料维护服务。
+
+覆盖系统管理页聚合数据、审计日志查询、任务删除与上传资料回收。全部接口要求
+admin 角色；上传资料进入回收站时执行路径归属校验、文件移动和数据库删除的可补偿
+事务，失败时把文件移回原位，避免出现半删除状态。
+"""
 
 from __future__ import annotations
 
@@ -19,13 +24,16 @@ from web_backend.http.path_params import path_id
 class AdminDataDependencies:
     """管理员数据服务的运行时依赖。"""
 
+    # db_lock 串行化 SQLite 事务；storage_lock 只包围文件移动与索引删除的补偿段。
     db_lock: Any
     db: Callable[[], Any]
     storage_lock: Any
     data_root: Path
+    # 删除任务前先从进程表摘除句柄并终止子进程，再移动结果文件。
     job_lock: Any
     job_processes: dict[str, Any]
     now_iso: Callable[[], str]
+    # 用户投影与兼容 JSON 解析器保证脏数据不会阻断管理页；任务回收复用统一事务。
     user_public: Callable[[Any], dict[str, object]]
     json_list: Callable[..., list[Any]]
     move_job_to_trash: Callable[..., str | None]
@@ -157,7 +165,7 @@ def delete_job(handler: Any, path: str, deps: AdminDataDependencies) -> None:
         ).fetchone()
     if exists is None:
         raise ApiError(HTTPStatus.NOT_FOUND, "任务不存在")
-    with deps.job_lock:
+    with deps.job_lock:  # 先从共享进程表摘除句柄，避免其他请求继续操作正在删除的任务。
         process = deps.job_processes.pop(job_id, None)
     if process and process.poll() is None:
         process.terminate()
@@ -178,7 +186,7 @@ def delete_upload(handler: Any, path: str, deps: AdminDataDependencies) -> None:
     """
     actor = handler.require_user(admin=True)
     handle = path_id(path, "/api/admin/uploads/")
-    with deps.storage_lock:
+    with deps.storage_lock:  # 文件移动与数据库删除必须处于同一存储锁，防止并发下载读到半移动状态。
         with deps.db_lock, deps.db() as connection:
             row = connection.execute(
                 "SELECT * FROM uploads WHERE handle = ?", (handle,),

@@ -25,6 +25,7 @@ from http import HTTPStatus
 from pathlib import Path
 import urllib.request
 
+# core 是纯业务事实源；入口只导入配置、解析器和库操作，不复制任何业务算法。
 from core.version import VERSION
 from core import arrival_core
 from core import daily_report_core
@@ -37,6 +38,7 @@ from core import report_center_core
 from core import storage_lock as core_storage_lock
 from core import workshop_issue_core
 
+# web_backend 承载 HTTP、数据库、领域服务与任务运行器；本文件仅做装配和兼容导出。
 from web_backend import config as server_config
 from web_backend import presenters
 from web_backend import server_runtime
@@ -74,10 +76,12 @@ from web_backend.tasks import results as task_results
 from web_backend.tasks import runner as task_runner
 
 
+# Web 配置的唯一事实源是 web_backend/config.py；此处只兼容导出旧名称，避免部署脚本与测试失效。
 ROOT = server_config.ROOT
 WEB_ROOT = server_config.WEB_ROOT
 STATIC_ROOT = server_config.STATIC_ROOT
 
+# 运行路径、监听地址和会话安全上限均由配置模块集中管理；入口层只读全局值。
 DATA_ROOT = server_config.DATA_ROOT
 DB_PATH = server_config.DB_PATH
 HOST = server_config.HOST
@@ -105,6 +109,8 @@ TRASH_ROOT = server_config.TRASH_ROOT
 AUTO_BACKUP_KEEP = server_config.AUTO_BACKUP_KEEP
 NOTIFY_WEBHOOK_URL = server_config.NOTIFY_WEBHOOK_URL
 
+# 角色矩阵：业务成员/班组长/管理员及其中文文案、可访问能力全部由配置模块定义。
+# 前端隐藏导航不能替代后端鉴权，入口只导出稳定英文键给 HTTP 层使用。
 ROLE_LABELS = server_config.ROLE_LABELS
 ROLE_CHOICES = server_config.ROLE_CHOICES
 LIBRARY_ROLES = server_config.LIBRARY_ROLES
@@ -117,7 +123,10 @@ WORKSHOP_ISSUE_TEMPLATE_FIELDS = server_config.WORKSHOP_ISSUE_TEMPLATE_FIELDS
 
 
 def role_label(role: object) -> str:
-    """兼容旧调用名，转由配置模块返回中文角色名称。"""
+    """兼容旧调用名，转由配置模块返回中文角色名称。
+
+    入口层不保存角色映射副本，避免角色键、中文文案与权限矩阵出现第二份事实源。
+    """
     return server_config.role_label(role)
 
 
@@ -176,7 +185,11 @@ def db() -> sqlite3.Connection:
 
 
 def master_data_import_root() -> Path:
-    """返回 Web 服务共享的主数据导入元数据目录。"""
+    """返回 Web 服务共享的主数据导入元数据目录。
+
+    该目录用于保存待合并批次和导入过程文件，不直接暴露给浏览器；调用 Core 前必须通过
+    ``web_master_data_environment`` 注入环境变量。
+    """
     return DATA_ROOT / "master-data-imports"
 
 
@@ -208,6 +221,7 @@ def web_master_data_environment():
             else:
                 os.environ[import_key] = old_import
 
+# Web 动作白名单与两阶段人工复核动作；新动作必须同时评估桥接白名单、路径校验和复核协议。
 WEB_ACTIONS = server_config.WEB_ACTIONS
 REVIEW_ACTIONS = server_config.REVIEW_ACTIONS
 
@@ -278,7 +292,11 @@ def path_is_within(root: Path, target: Path) -> bool:
 
 
 def write_audit(actor_id: int, action: str) -> None:
-    """写入一条管理审计记录，供管理页“管理记录”查询。"""
+    """写入一条管理审计记录，供管理页“管理记录”查询。
+
+    审计写入使用独立数据库锁并立即提交，不参与业务事务回滚；动作文本截断到 200 字符，
+    防止异常输入撑大审计页。
+    """
     with DB_LOCK, db() as connection:
         connection.execute(
             "INSERT INTO audit_log(actor_id, action, created_at) VALUES (?, ?, ?)",
@@ -362,7 +380,11 @@ def _daily_management_dependencies() -> daily_management_service.DailyManagement
 
 
 def _request_context_dependencies() -> request_context.RequestContextDependencies:
-    """组装会话读取、账号识别和角色权限服务依赖。"""
+    """组装会话读取、账号识别和角色权限服务依赖。
+
+    会话 Cookie 校验、设备管理和角色判定都在请求上下文模块中完成；入口只注入锁、数据库
+    工厂和统一时间函数，不在此复制任何权限矩阵。
+    """
     return request_context.RequestContextDependencies(
         db_lock=DB_LOCK,
         db=db,
@@ -373,12 +395,18 @@ def _request_context_dependencies() -> request_context.RequestContextDependencie
 
 
 def _static_file_dependencies() -> static_files.StaticFileDependencies:
-    """组装前端静态资源服务依赖。"""
+    """组装前端静态资源服务依赖。
+
+    静态目录来自配置模块并由 HTTP 层做路径包含校验，本函数只传递值，不解析用户请求路径。
+    """
     return static_files.StaticFileDependencies(static_root=STATIC_ROOT)
 
 
 def _dashboard_dependencies() -> dashboard_service.DashboardDependencies:
-    """组装工作台概览与个人看板聚合服务依赖。"""
+    """组装工作台概览与个人看板聚合服务依赖。
+
+    看板只读聚合当前用户可见数据；角色可访问功能和业务日期边界由注入函数统一提供。
+    """
     return dashboard_service.DashboardDependencies(
         db_lock=DB_LOCK,
         db=db,
@@ -395,7 +423,11 @@ def _dashboard_dependencies() -> dashboard_service.DashboardDependencies:
 
 
 def _upload_dependencies() -> upload_service.UploadDependencies:
-    """组装临时业务上传与上传句柄解析服务依赖。"""
+    """组装临时业务上传与上传句柄解析服务依赖。
+
+    上传目录按用户隔离，``safe_name`` 与大小上限在服务端执行；浏览器提交的路径不会直接
+    用于文件读写。
+    """
     return upload_service.UploadDependencies(
         db_lock=DB_LOCK,
         db=db,
@@ -423,7 +455,10 @@ def _bridge_dependencies() -> task_bridge.BridgeDependencies:
 
 
 def _result_dependencies() -> task_results.ResultDependencies:
-    """组装任务结果投影、版本查询和受控下载路径依赖。"""
+    """组装任务结果投影、版本查询和受控下载路径依赖。
+
+    返回浏览器的结构会隐藏绝对路径；后续下载、预览和分享链接仍需经过所属关系校验。
+    """
     return task_results.ResultDependencies(
         data_root=DATA_ROOT,
         db_lock=DB_LOCK,
@@ -451,7 +486,11 @@ def _runner_dependencies() -> task_runner.RunnerDependencies:
 
 
 def _job_dependencies() -> jobs_service.JobDependencies:
-    """组装任务、人工复核和分享服务依赖。"""
+    """组装任务、人工复核和分享服务依赖。
+
+    人工复核遵循“只读分析 -> 返回计划 -> 用户选择 -> 最终执行”的两阶段协议；任务公开
+    投影隐藏服务端绝对路径。
+    """
     return jobs_service.JobDependencies(
         db_lock=DB_LOCK,
         db=db,
@@ -503,7 +542,10 @@ def _workshop_dependencies() -> workshop_service.WorkshopDependencies:
 
 
 def _library_dependencies() -> library_service.LibraryDependencies:
-    """组装共享文件数据库服务依赖。"""
+    """组装共享文件数据库服务依赖。
+
+    允许角色、用户配额和分类注册表均在此注入；文件路径在服务层重新解析到所属账号目录。
+    """
     return library_service.LibraryDependencies(
         db_lock=DB_LOCK,
         db=db,
@@ -526,7 +568,10 @@ def _library_dependencies() -> library_service.LibraryDependencies:
 
 
 def _notification_dependencies() -> notification_service.NotificationDependencies:
-    """组装消息和公告服务依赖。"""
+    """组装消息和公告服务依赖。
+
+    消息中心只返回当前账号可见内容，公告展示不包含服务端路径或令牌。
+    """
     return notification_service.NotificationDependencies(
         db_lock=DB_LOCK,
         db=db,
@@ -537,7 +582,10 @@ def _notification_dependencies() -> notification_service.NotificationDependencie
 
 
 def _admin_account_dependencies() -> admin_account_service.AdminAccountDependencies:
-    """组装管理员账号服务依赖，保留当前数据路径和任务进程状态。"""
+    """组装管理员账号服务依赖，保留当前数据路径和任务进程状态。
+
+    管理员密码策略、会话失效和备份创建都由领域服务执行；本入口不直接处理明文密码。
+    """
     return admin_account_service.AdminAccountDependencies(
         db_lock=DB_LOCK,
         db=db,
@@ -554,7 +602,11 @@ def _admin_account_dependencies() -> admin_account_service.AdminAccountDependenc
 
 
 def _backup_dependencies() -> backup_service.BackupDependencies:
-    """组装备份创建、校验和恢复服务依赖。"""
+    """组装备份创建、校验和恢复服务依赖。
+
+    备份与恢复需要暂停任务进程并持有数据库锁，因此同时注入 ``JOB_LOCK`` 与
+    ``JOB_PROCESSES``，防止备份期间新任务写入文件或数据库。
+    """
     return backup_service.BackupDependencies(
         db_lock=DB_LOCK,
         db=db,
@@ -589,7 +641,10 @@ def _admin_data_dependencies() -> admin_data_service.AdminDataDependencies:
 
 
 def _trash_dependencies() -> trash_service.TrashDependencies:
-    """组装回收站分类恢复服务依赖。"""
+    """组装回收站分类恢复服务依赖。
+
+    回收站按文件类别恢复，分类枚举来自 core 事实源，恢复前仍需重新校验所属账号目录。
+    """
     return trash_service.TrashDependencies(
         db_lock=DB_LOCK,
         db=db,
@@ -606,7 +661,11 @@ def _trash_dependencies() -> trash_service.TrashDependencies:
 
 
 def _master_data_dependencies() -> master_data_service.MasterDataDependencies:
-    """组装主数据正式档案与表格学习服务依赖。"""
+    """组装主数据正式档案与表格学习服务依赖。
+
+    通过环境上下文把 Core 主数据路径指向 Web 账号隔离目录；正式档案只补空值，管理员确认
+    值不会被被动学习覆盖。
+    """
     return master_data_service.MasterDataDependencies(
         db_lock=DB_LOCK,
         db=db,
@@ -621,7 +680,10 @@ def _master_data_dependencies() -> master_data_service.MasterDataDependencies:
 
 
 def _report_dependencies() -> report_service.ReportDependencies:
-    """组装报表中心、批次跟踪与周期报表服务依赖。"""
+    """组装报表中心、批次跟踪与周期报表服务依赖。
+
+    报表文件路径由 ``path_is_within`` 校验，防止越权读取任务输出目录之外的报告。
+    """
     return report_service.ReportDependencies(
         db_lock=DB_LOCK,
         db=db,
@@ -663,26 +725,33 @@ def _tree_size(path: Path) -> int:
 
 
 def create_web_backup(created_by: int | None = None, auto: bool = False) -> dict[str, object]:
-    """保留原公开入口，委托备份服务创建可校验快照。"""
+    """保留原公开入口：先同步旧全局备份根，再委托备份服务创建可校验快照。"""
     global BACKUP_ROOT
     BACKUP_ROOT = DATA_ROOT / "backups"
     return backup_service.create_web_backup(_backup_dependencies(), created_by, auto)
 
 
 def auto_backup_if_due() -> str:
-    """保留原公开入口，执行每日备份与滚动清理。"""
+    """保留原公开入口：先同步旧全局备份根，再执行每日备份与滚动清理。"""
     global BACKUP_ROOT
     BACKUP_ROOT = DATA_ROOT / "backups"
     return backup_service.auto_backup_if_due(_backup_dependencies())
 
 
 def verify_web_backup(path: Path) -> dict[str, object]:
-    """保留原公开入口，委托备份服务完成完整性校验。"""
+    """保留原公开入口，委托备份服务完成完整性校验。
+
+    校验只读备份文件，不修改生产数据库或任务进程。
+    """
     return backup_service.verify_web_backup(path)
 
 
 def init_db() -> None:
-    """初始化当前配置指向的 Web 数据库，保留旧入口兼容测试和部署脚本。"""
+    """初始化当前配置指向的 Web 数据库，保留旧入口兼容测试和部署脚本。
+
+    建库事务、表结构和幂等迁移由 ``web_backend.database.initializer`` 统一编排；本函数
+    只负责注入数据库锁、时间与密码摘要能力。
+    """
     initialize_database(
         db_lock=DB_LOCK,
         db_factory=db,
@@ -780,6 +849,7 @@ def run_storage_maintenance(
     )
 
 
+# 统一投影层：所有“公开模型”只输出浏览器可看字段并隐藏服务端路径，入口保留旧名称供 HTTP 层复用。
 user_public = presenters.user_public
 daily_person_public = presenters.daily_person_public
 daily_attendance_public = presenters.daily_attendance_public
@@ -805,7 +875,10 @@ def safe_name(value: str) -> str:
 
 
 def library_scope(value: object) -> str:
-    """校验共享文件的可见范围。"""
+    """校验共享文件的可见范围。
+
+    只允许 ``team``/``private`` 两个稳定英文键；无效值直接拒绝，防止未登记范围写入库。
+    """
     scope = str(value or "team").strip().lower()
     if scope not in {"team", "private"}:
         raise ApiError(HTTPStatus.BAD_REQUEST, "文件可见范围无效")
@@ -819,7 +892,10 @@ def library_category_catalog() -> list[dict[str, str]]:
 
 
 def library_category(value: object) -> str:
-    """校验分类键，避免客户端提交未注册分类污染索引。"""
+    """校验分类键，避免客户端提交未注册分类污染索引。
+
+    合法集合来自 core 分类注册表；空值回退到“未知”而不是拒绝，便于旧文件补录。
+    """
     category = str(value or core_library.UNKNOWN).strip()
     valid = {item["key"] for item in library_category_catalog()}
     if category not in valid:
@@ -885,11 +961,16 @@ def _json_object(value: object, fallback: dict[str, object] | None = None) -> di
     return _json_object_from_backend(value, fallback)
 
 
+# 共享文件投影同样复用统一投影层；路径转换在 resolve_library_path 中完成。
 library_file_public = presenters.library_file_public
 
 
 def resolve_library_path(row: sqlite3.Row) -> Path:
-    """把数据库路径限制在所属账号的共享文件目录内。"""
+    """把数据库路径限制在所属账号的共享文件目录内。
+
+    使用 ``resolve()`` 后再做父目录判断，既防 ``..`` 穿越也防符号链接逃逸；路径必须解析
+    为账号目录的真实子路径，否则按无效路径拒绝。
+    """
     target = Path(row["path"]).resolve()
     root = (DATA_ROOT / "users" / str(row["owner_id"]) / "library").resolve()
     if root not in target.parents:
@@ -981,6 +1062,7 @@ def resolve_workshop_image_path(row: sqlite3.Row) -> Path:
     return target
 
 
+# 现场问题角色矩阵：成员仅维护自己的草稿，班组长可编辑/闭环/删除自己发布的，管理员可维护全部。
 workshop_issue_can_edit = presenters.workshop_issue_can_edit
 workshop_issue_can_resolve = presenters.workshop_issue_can_resolve
 workshop_issue_can_delete = presenters.workshop_issue_can_delete
@@ -1053,7 +1135,11 @@ def run_bridge(job_id: str, user_id: int, action: str, payload: dict[str, object
 
 
 def execute_action(job_id: str, user_id: int, action: str, payload: dict[str, object]) -> object:
-    """执行 Web 特殊两阶段动作，普通动作直接进入统一 Core 桥接层。"""
+    """执行 Web 特殊两阶段动作，普通动作直接进入统一 Core 桥接层。
+
+    两阶段动作的只读分析、计划返回和最终执行都由任务动作模块实现；本入口只负责把任务
+    推进统一桥接。
+    """
     return task_actions.execute_action(job_id, user_id, action, payload, run_bridge)
 
 
@@ -1121,7 +1207,10 @@ def _handler_bindings() -> HandlerBindings:
 
 
 class Handler(ApiHandler):
-    """装配当前应用依赖的 HTTP Handler；协议实现位于独立 HTTP 模块。"""
+    """装配当前应用依赖的 HTTP Handler；协议实现位于独立 HTTP 模块。
+
+    类属性只在导入时求值一次，运行期动态替换依赖由各工厂函数负责。
+    """
 
     bindings = _handler_bindings()
 # 保留历史导入名；实际服务生命周期实现位于 ``web_backend.server_runtime``。

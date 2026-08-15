@@ -19,7 +19,11 @@ from web_backend.serializers import json_list, json_object
 
 
 def user_public(row: sqlite3.Row) -> dict[str, object]:
-    """输出不包含密码摘要、盐值等敏感字段的账号信息。"""
+    """输出不包含密码摘要、盐值等敏感字段的账号信息。
+
+    参数 ``row`` 来自 ``users`` 表的完整行；返回结构只包含可被浏览器和任务列表安全展示
+    的字段，密码摘要、盐值等认证列在任何情况下都不进入公开投影。
+    """
     return {
         "id": row["id"],
         "username": row["username"],
@@ -32,7 +36,11 @@ def user_public(row: sqlite3.Row) -> dict[str, object]:
 
 
 def daily_person_public(row: sqlite3.Row) -> dict[str, object]:
-    """把参会人员主数据转换为前端稳定字段。"""
+    """把参会人员主数据转换为前端稳定字段。
+
+    参数 ``row`` 来自 ``daily_people`` 表；返回整数、布尔等稳定类型，避免不同 SQLite
+    驱动产生 ``0``/``1`` 与 ``True``/``False`` 混用。
+    """
     return {
         "id": int(row["id"]),
         "name": row["name"],
@@ -50,7 +58,11 @@ def daily_attendance_public(
     row: sqlite3.Row,
     person: sqlite3.Row | None = None,
 ) -> dict[str, object]:
-    """组合参会人员主数据与指定日期的考勤记录。"""
+    """组合参会人员主数据与指定日期的考勤记录。
+
+    当查询已 JOIN 人员主数据时直接读取行内字段；只传考勤表行时从可选的 ``person``
+    参数补齐姓名、单位、班次和人员类型。返回结构中 ``updated_by`` 保持空值语义。
+    """
     keys = set(row.keys())  # 部分查询包含人员 JOIN 字段，兼容只传考勤表行的内部调用。
     return {
         "id": int(row["id"]) if row["id"] is not None else None,
@@ -73,7 +85,11 @@ def daily_attendance_public(
 
 
 def daily_production_shift_public(row: sqlite3.Row) -> dict[str, object]:
-    """输出生产班组下的班次和编制信息。"""
+    """输出生产班组下的班次和编制信息。
+
+    参数 ``row`` 来自 ``daily_production_shifts`` 表；空编制按 0 返回，激活状态转为
+    布尔值，保证前端表单和列表共用一套类型。
+    """
     return {
         "id": int(row["id"]),
         "group_id": int(row["group_id"]),
@@ -90,7 +106,11 @@ def daily_production_group_public(
     row: sqlite3.Row,
     shifts: Sequence[sqlite3.Row] = (),
 ) -> dict[str, object]:
-    """输出生产班组及其班次列表，供管理页维护。"""
+    """输出生产班组及其班次列表，供管理页维护。
+
+    ``staffing_count`` 是有效班次编制之和而不是独立存储列，因此先归一化 ``shifts``
+    再计算，避免历史数据中已有列与子表不一致时出现两个口径。
+    """
     shift_values = [daily_production_shift_public(item) for item in shifts]  # 先统一班次字段，再由规范化结果计算有效编制。
     return {
         "id": int(row["id"]),
@@ -109,7 +129,11 @@ def daily_production_group_public(
 
 
 def daily_production_attendance_public(row: sqlite3.Row) -> dict[str, object]:
-    """输出生产班组当日出勤、编制和差异。"""
+    """输出生产班组当日出勤、编制和差异。
+
+    差异为编制减去出勤，正数表示缺员、负数表示实际出勤超过编制；无记录时的空值保持
+    原样，由前端按 0 展示。
+    """
     staffing_count = int(row["staffing_count"] or 0)
     attendance_count = int(row["attendance_count"] or 0)
     return {
@@ -129,7 +153,11 @@ def daily_production_attendance_public(row: sqlite3.Row) -> dict[str, object]:
 
 
 def daily_brief_public(row: sqlite3.Row) -> dict[str, object]:
-    """输出重大事项、通报和会议待办的公共字段。"""
+    """输出重大事项、通报和会议待办的公共字段。
+
+    参数 ``row`` 来自 ``daily_brief_items`` 表；创建者编号可能为空（历史数据），因此
+    保持 ``None`` 语义而不是写成 0。
+    """
     return {
         "id": row["id"],
         "report_date": row["report_date"],
@@ -148,7 +176,11 @@ def daily_brief_public(row: sqlite3.Row) -> dict[str, object]:
 
 
 def production_plan_public(row: sqlite3.Row) -> dict[str, object]:
-    """输出生产计划上传记录及其解析摘要。"""
+    """输出生产计划上传记录及其解析摘要。
+
+    解析摘要存为 JSON 文本，历史空值或损坏值统一降级为空对象；下载地址只暴露受权限
+    控制的编号路由，不暴露服务端文件路径。
+    """
     try:
         summary = json.loads(row["summary"] or "{}")  # 解析结果存为 JSON 文本，展示层负责兼容历史空值和损坏值。
     except (TypeError, json.JSONDecodeError):
@@ -224,7 +256,11 @@ def daily_source_upload_public(row: sqlite3.Row) -> dict[str, object]:
 
 
 def notification_public(row: sqlite3.Row, kind: str) -> dict[str, object]:
-    """统一消息与公告的通知中心字段。"""
+    """统一消息与公告的通知中心字段。
+
+    消息与公告表结构略有差异，缺失的可选列（如公告过期时间、已读时间）通过
+    ``row.keys()`` 探测，保证同一条输出契约覆盖两类记录。
+    """
     keys = set(row.keys())
     return {
         "id": row["id"],
@@ -238,7 +274,11 @@ def notification_public(row: sqlite3.Row, kind: str) -> dict[str, object]:
 
 
 def announcement_public(row: sqlite3.Row) -> dict[str, object]:
-    """输出全局公告的前端字段。"""
+    """输出全局公告的前端字段。
+
+    参数 ``row`` 来自 ``announcements`` 表；激活状态转为布尔值，过期时间保持字符串或
+    空值原样，由前端决定展示口径。
+    """
     return {
         "id": row["id"],
         "title": row["title"],
@@ -311,7 +351,11 @@ def library_file_public(row: sqlite3.Row, user: sqlite3.Row) -> dict[str, object
 
 
 def workshop_issue_can_edit(row: sqlite3.Row, user: sqlite3.Row) -> bool:
-    """草稿由发布者维护；已发布内容仅班组长本人或管理员可编辑。"""
+    """草稿由发布者维护；已发布内容仅班组长本人或管理员可编辑。
+
+    管理员始终可编辑全部问题；普通成员只能维护自己的草稿，班组长额外可编辑自己发布
+    的已发布问题。权限比较使用数字用户编号，不依赖可修改的显示名。
+    """
     is_owner = int(row["user_id"]) == int(user["id"])  # 权限比较使用内部数字编号，不依赖可修改的显示名。
     if user["role"] == "admin":
         return True
@@ -319,7 +363,10 @@ def workshop_issue_can_edit(row: sqlite3.Row, user: sqlite3.Row) -> bool:
 
 
 def workshop_issue_can_resolve(row: sqlite3.Row, user: sqlite3.Row) -> bool:
-    """已发布问题由班组长本人或管理员推进闭环。"""
+    """已发布问题由班组长本人或管理员推进闭环。
+
+    草稿或历史其他状态不能直接闭环；闭环是发布后的独立状态推进，不包含编辑和删除权限。
+    """
     return (
         row["status"] == "published"
         and (
@@ -333,7 +380,11 @@ def workshop_issue_can_resolve(row: sqlite3.Row, user: sqlite3.Row) -> bool:
 
 
 def workshop_issue_can_delete(row: sqlite3.Row, user: sqlite3.Row) -> bool:
-    """草稿由发布者维护；已发布问题由班组长本人或管理员移入回收站。"""
+    """草稿由发布者维护；已发布问题由班组长本人或管理员移入回收站。
+
+    管理员可删除全部问题；普通成员只能删除自己的草稿，班组长额外可删除自己发布的
+    已发布问题。删除进入回收站而不是物理删除，保留审计和恢复可能。
+    """
     is_owner = int(row["user_id"]) == int(user["id"])
     return user["role"] == "admin" or (
         is_owner and (row["status"] != "published" or user["role"] == "team_leader")

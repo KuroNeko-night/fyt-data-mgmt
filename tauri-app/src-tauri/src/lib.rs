@@ -16,6 +16,7 @@ use std::sync::{mpsc, Mutex, OnceLock};
 use std::thread;
 use tauri::{Emitter, Manager};
 
+// 前端 JSON 使用 camelCase 命名，由 serde 统一映射到 Rust 的 snake_case 字段。
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 /// 前端传给 Python 桥接进程的标准请求。
@@ -33,10 +34,13 @@ struct BridgeRequest {
 #[derive(Debug, Deserialize, Serialize)]
 /// Python 标准输出返回的统一成功或失败信封。
 struct BridgeEnvelope {
+    /// 桥接是否成功；为 false 时前端应读取 error 字段。
     ok: bool,
     #[serde(default)]
+    /// 成功时携带的业务数据，缺失时按 null 处理。
     data: Value,
     #[serde(default)]
+    /// 失败时的中文错误信息；为空时由 Rust 回退到 stderr 诊断文本。
     error: String,
 }
 
@@ -64,6 +68,10 @@ fn project_root() -> PathBuf {
 }
 
 /// 按环境覆盖、正式 sidecar、开发虚拟环境的顺序定位 Python 核心运行时。
+///
+/// `root` 是项目根目录，仅用于开发环境虚拟机的相对定位。返回可直接启动的
+/// Python 解释器或 sidecar 可执行文件路径；三层候选都不存在时返回中文错误，
+/// 由调用方直接展示给用户。
 fn python_executable(root: &Path) -> Result<PathBuf, String> {
     if let Ok(value) = std::env::var("FYT_PYTHON_EXECUTABLE") {
         let path = PathBuf::from(value);
@@ -85,6 +93,10 @@ fn python_executable(root: &Path) -> Result<PathBuf, String> {
 }
 
 /// 构造 UTF-8、无控制台窗口且兼容 sidecar 与开发 Python 的子进程命令。
+///
+/// 参数 `executable` 是 `python_executable` 选中的运行时；参数 `root` 是项目根目录，
+/// 仅在直接启动 `python.exe` 时用作工作目录。sidecar 模式不追加 `-m` 参数，因为桥接
+/// 入口已经冻结在可执行文件中。
 fn make_command(executable: &Path, root: &Path) -> Command {
     let mut command = Command::new(executable);
     command.env("PYTHONIOENCODING", "utf-8");
@@ -109,9 +121,13 @@ fn make_command(executable: &Path, root: &Path) -> Command {
 ///
 /// 同步执行一次桥接请求，并可把 stderr 中的结构化事件转发给调用方。
 ///
-/// 请求 JSON 写入子进程标准输入，最终信封从标准输出读取；stderr 由独立线程持续消费，
-/// 防止大量日志填满管道导致子进程死锁。带事件前缀的行解析为进度或日志事件，其余行只在
-/// 桥接失败时作为诊断补充。进程编号在启动后登记、等待完成后移除。
+/// 参数 `request` 会原样序列化为 Python 桥接的标准输入；参数 `event_sender` 为 `Some`
+/// 时，stderr 中带 `__FYT_EVENT__` 前缀的行会解析为 JSON 事件并发送出去。函数返回
+/// Python 成功信封中的 `data` 字段，失败时返回中文错误信息。
+///
+/// 副作用：启动一个 Python 子进程，并把带 `request_id` 的进程编号登记进全局进程表，
+/// 等待完成后自动移除。stderr 由独立线程持续消费，防止大量日志填满管道导致子进程死锁。
+/// 普通 stderr 行不实时展示，只在桥接失败时作为诊断补充。
 fn bridge_request_sync_with_events(
     request: BridgeRequest,
     event_sender: Option<mpsc::Sender<Value>>,
@@ -187,13 +203,19 @@ fn bridge_request_sync_with_events(
     }
 }
 
-/// 不需要实时事件的同步桥接简化入口，供更新和测试复用。
+/// 不需要实时事件的同步桥接简化入口，供更新安装、取消通知和 Rust 测试复用。
+///
+/// 参数与返回值约定同 [`bridge_request_sync_with_events`]，仅省略事件发送器。
 fn bridge_request_sync(request: BridgeRequest) -> Result<Value, String> {
     bridge_request_sync_with_events(request, None)
 }
 
 #[tauri::command]
 /// 在阻塞线程执行 Python 任务，并把结构化事件转发到前端全局事件总线。
+///
+/// 参数 `app` 用于向所有 WebView 窗口广播 `bridge-task-event` 事件；参数 `request`
+/// 由前端通过白名单命令传入。返回 Python 桥接的业务结果或中文错误。事件转发线程
+/// 与阻塞任务线程分离，任务结束后会先释放 sender 再回收事件线程，确保残余事件不丢失。
 async fn bridge_request(app: tauri::AppHandle, request: BridgeRequest) -> Result<Value, String> {
     let (event_sender, event_receiver) = mpsc::channel();
     let event_thread = thread::spawn(move || {
@@ -212,6 +234,9 @@ async fn bridge_request(app: tauri::AppHandle, request: BridgeRequest) -> Result
 
 #[tauri::command]
 /// 把可能阻塞的系统进程终止操作移出异步运行时工作线程。
+///
+/// 参数 `request_id` 对应发起长任务时的前端请求编号；返回是否真的终止了登记进程。
+/// 未登记或已完成的任务返回 `false`，不视为错误。
 async fn cancel_bridge_request(request_id: String) -> Result<bool, String> {
     tauri::async_runtime::spawn_blocking(move || cancel_bridge_request_sync(&request_id))
         .await
@@ -219,6 +244,10 @@ async fn cancel_bridge_request(request_id: String) -> Result<bool, String> {
 }
 
 /// 仅终止进程表中与指定请求编号绑定的子进程，并同步通知 Python 任务历史。
+///
+/// 参数 `request_id` 必须是此前登记过且仍在运行的长任务编号；返回 `true` 表示系统
+/// 终止命令成功，`false` 表示任务未登记或已完成。进程终止成功后还会尽力调用
+/// `tasks.cancel` 通知 Python 任务历史，但通知失败不会影响真实取消结果。
 fn cancel_bridge_request_sync(request_id: &str) -> Result<bool, String> {
     let process_id = active_processes()
         .lock()
@@ -252,6 +281,10 @@ fn cancel_bridge_request_sync(request_id: &str) -> Result<bool, String> {
 
 #[tauri::command]
 /// 通过 Python 更新器安装指定包，成功启动安装后退出当前桌面进程。
+///
+/// 参数 `path` 必须是已经存在的绝对安装包路径，先经过 Rust 边界校验，再由 Python
+/// 更新器二次确认。返回更新器给出的结果数据；成功触发安装后调用 `app.exit(0)`，
+/// 释放正在占用的程序文件以便安装器覆盖当前版本。
 async fn install_update(app: tauri::AppHandle, path: String) -> Result<Value, String> {
     // 与 open_local_path 一致：Rust 边界先拒绝相对路径和不存在的安装包，避免把任意路径
     // 交给高权限安装命令；最终能否安装仍由 Python updater 二次校验。
@@ -270,11 +303,16 @@ async fn install_update(app: tauri::AppHandle, path: String) -> Result<Value, St
 
 #[tauri::command]
 /// 更新关闭主窗口时是否最小化到托盘的进程内设置。
+///
+/// 参数 `enabled` 仅影响当前进程的原子开关；设置不落盘，重启后回到默认开启值。
 fn set_minimize_to_tray(enabled: bool) {
     MINIMIZE_TO_TRAY.store(enabled, Ordering::Relaxed);
 }
 
 /// 校验前端请求打开的是已存在绝对路径，拒绝相对路径受当前目录影响。
+///
+/// 参数 `path` 来自前端白名单命令，会先去除首尾空白。返回规范化后的 `PathBuf`；
+/// 相对路径或不存在的路径返回中文错误，禁止把任意路径交给系统打开能力。
 fn validate_open_path(path: &str) -> Result<PathBuf, String> {
     let target = PathBuf::from(path.trim());
     if !target.is_absolute() {
@@ -288,11 +326,17 @@ fn validate_open_path(path: &str) -> Result<PathBuf, String> {
 
 #[tauri::command]
 /// 通过受控 Tauri 命令打开本地文件或目录，不向前端授予通用 opener 权限。
+///
+/// 参数 `path` 必须是前端显式请求的已存在绝对路径；所有访问先经
+/// [`validate_open_path`] 校验，成功打开返回 `Ok(())`，失败返回中文错误。
 fn open_local_path(path: String) -> Result<(), String> {
     open_local_path_sync(&path)
 }
 
 /// 执行经过绝对路径与存在性校验的系统原生打开操作。
+///
+/// 供命令层和冒烟测试复用；参数与错误约定同 [`validate_open_path`]，
+/// 额外封装 opener 插件调用失败的场景。
 fn open_local_path_sync(path: &str) -> Result<(), String> {
     let target = validate_open_path(&path)?;
     tauri_plugin_opener::open_path(target, None::<&str>)
@@ -301,6 +345,10 @@ fn open_local_path_sync(path: &str) -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 /// 构建插件、托盘菜单、关闭行为和前端可调用命令白名单，然后启动 Tauri。
+///
+/// 这是桌面与移动端共用的应用装配入口：注册对话框、路径打开和通知插件，创建
+/// “显示主窗口 / 退出程序”托盘菜单，拦截关闭请求实现最小化到托盘，并只暴露
+/// 五个前端命令。启动失败会 panic，因为缺少这些基础能力时桌面应用无法工作。
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -357,6 +405,7 @@ pub fn run() {
 }
 
 #[cfg(test)]
+/// 覆盖桥接层与路径安全的轻量 Rust 测试；多数用例需要本地已安装 Python 核心。
 mod tests {
     use super::*;
     use std::fs;

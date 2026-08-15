@@ -1,8 +1,15 @@
+/**
+ * 消息中心页面。
+ *
+ * 汇总服务端下发的公告与定向消息，支持单条/全部已读，并通过 `onChanged`
+ * 把未读数量同步回应用壳，保持侧栏徽标与当前页面一致。
+ */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { markAllNotificationsRead, markNotificationRead, notifications, type NotificationItem } from "./api";
 import { Icon } from "./icons";
 import PageHeader from "./ui/PageHeader";
 
+/** 页面回调：未读数变化时通知应用壳刷新侧栏徽标。 */
 type Props = { onChanged: (count: number) => void };
 
 /** 格式化消息时间，保留月、日和分钟，避免列表中展示冗长年份与秒数。 */

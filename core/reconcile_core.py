@@ -45,7 +45,12 @@ SOURCE_WORK_COLUMN_TIERS = (
 
 
 def _source_header_columns(row):
-    """从一行表头中识别姓名、日期和实际工时三列。"""
+    """从一行表头中识别姓名、日期和实际工时三列。
+
+    ``row`` 为工作表的表头单元格序列；工时列按“实际工作时间/实际工时”、
+    “工作时长/工作时间”、普通“工时”三级优先级匹配，并跳过已识别为姓名或日期的列。
+    识别成功返回 ``(姓名列, 日期列, 工时列)`` 零基元组，否则返回 ``None``。
+    """
 
     texts = [str(cell).replace("\n", "") if cell is not None else "" for cell in row]
     name_col = next((column for column, text in enumerate(texts) if "姓名" in text), None)
@@ -87,7 +92,11 @@ def _detect_source_header(rows, roles=None, header=None):
 
 
 def _source_row_record(row, name_col, date_col, work_col, skip):
-    """把一行来源明细规范化为 ``(姓名, 日期键, 工时)``，无效行返回 ``None``。"""
+    """把一行来源明细规范化为 ``(姓名, 日期键, 工时)``，无效行返回 ``None``。
+
+    日期优先规范为完整 ``(年, 月, 日)``，旧表只有日号时才回退为纯日号键；
+    ``skip`` 中的假、休等标记会令工时解析失败并丢弃整行，避免非出勤记录进入汇总。
+    """
 
     if name_col >= len(row):
         return None
@@ -108,7 +117,11 @@ def _source_row_record(row, name_col, date_col, work_col, skip):
 
 
 def _accumulate_source_sheet(rows, start, columns, data, days_seen, skip):
-    """累加一个已识别页签中的有效工时明细，并返回纳入行数。"""
+    """累加一个已识别页签中的有效工时明细，并返回纳入行数。
+
+    直接修改调用方传入的 ``data`` 与 ``days_seen``：同一员工同一天存在多条记录时
+    必须累加而不是覆盖，这是后续总表填写和逐日对账的共同事实基础。
+    """
 
     count = 0
     for row in rows[start:]:
@@ -155,6 +168,7 @@ def _load_source_one(path, data, days_seen, log=None, opts=None):
             _lg("  · [跳过] %s / %s（无 姓名/日期/实际工时 列，非考勤明细）" % (fname, sname))
             continue
         hdr_idx, col_name, col_date, col_work = det
+        # 人工数据起始行优先于“表头下一行”，兼容表头下方还有说明行或合并行的旧模板。
         start = (ds_override - 1) if ds_override else (hdr_idx + 1)
         cnt = _accumulate_source_sheet(
             rows,
@@ -275,7 +289,12 @@ def _combined_header_text(rows, header_rows, column):
 
 
 def _find_labor_total_column(rows, name_row, day_row, day_cols):
-    """在日期区右侧按“工时/出勤、合计/总计”两级优先级寻找合计列。"""
+    """在日期区右侧按“工时/出勤、合计/总计”两级优先级寻找合计列。
+
+    只在日期列最右侧之后查找，避免把姓名、编号等左侧列误判为合计；合并多层表头
+    文字后先排除天数、工价、金额等干扰词。找不到明确合计列时返回 ``None``，由
+    调用方回退为逐日求和。
+    """
 
     header_rows = [row for row in (name_row, day_row) if row < len(rows)]
     start_column = max(day_cols.values()) + 1
@@ -323,7 +342,11 @@ def _find_labor_layout(rows, roles=None, header=None, data_start=None):
 
 
 def _collect_labor_candidates(path, roles, header, data_start, wanted_sheet, log):
-    """读取并评估全部页签，返回有效候选与被跳过的页签名称。"""
+    """读取并评估全部页签，返回 ``(有效候选列表, 被跳过页签名列表)``。
+
+    每个候选形如 ``(页签名, 行数据, 布局)``；被跳过的页签通过 ``log`` 记录原因，
+    供可信度诊断和用户核对。未命中 ``wanted_sheet`` 的页签直接忽略，不进入候选。
+    """
 
     filename = os.path.basename(path)
     candidates = []
@@ -341,7 +364,12 @@ def _collect_labor_candidates(path, roles, header, data_start, wanted_sheet, log
 
 
 def _parse_labor_rows(rows, layout, skip):
-    """按已确认的劳务表布局解析人员逐日工时，并统计合计口径不一致人数。"""
+    """按已确认的劳务表布局解析人员逐日工时，并统计合计口径不一致人数。
+
+    逐日单元格中解析为 ``None``（含 ``skip`` 假、休标记）的日期不纳入该人员的
+    逐日字典；表内合计列存在时优先采用，缺失时才使用逐日数字求和。返回
+    ``({姓名: {"days": 日号->工时, "total": 合计或None}}, 合计不一致人数)``。
+    """
 
     result = {}
     mismatch = 0
@@ -443,7 +471,11 @@ def _zong_header_rows(header):
 
 
 def _scan_zong_role_columns(ws, rows):
-    """扫描总表表头，识别姓名、劳务公司、出勤工时和对账时间列。"""
+    """扫描总表表头，识别姓名、劳务公司、出勤工时和对账时间列。
+
+    ``rows`` 是 1 基表头候选行；返回同结构的 1 基列号字典，未识别的可选列保持
+    ``None``。“姓名”要求整格精确匹配，避免“姓名备注”等列抢先生效。
+    """
 
     columns = {"name": None, "comp": None, "work": None, "check": None}
     for row in rows:
@@ -620,6 +652,7 @@ def fill_zong(ws, src_data, log=None, opts=None, path=""):
     if not lay["day_cols"]:
         raise ValueError("总表未能识别到任何『日期』列(日期表头行识别失败)，请检查表头")
     month_days = _source_month_days(src_data)
+    # 总表逐日列只有日号、没有年月维度，必须先选定主月份，不能把跨月数据写进同一列。
     target_ym = _target_source_month(month_days)
     if len(month_days) > 1:
         # 总表仅有日号、没有年月维度，跨月内容无法无歧义地写入同一组列，必须告知用户取舍。
@@ -927,6 +960,7 @@ class _RunReporter:
     """统一管理阶段进度、实时日志和写入可信度报告的完整日志。"""
 
     def __init__(self, log, progress):
+        """保存回调与进度对象，并初始化供可信度页使用的运行日志缓冲。"""
         self._callback = log
         self._progress = cc.Progress(progress, stages=RUN_STAGES)
         self.lines = []
@@ -1011,7 +1045,12 @@ def _path_list(paths):
 
 
 def _apply_review_choices(opts, target_path, choices, log):
-    """把人工确认转换为本次任务专用配置，并返回姓名别名映射。"""
+    """把人工确认转换为本次任务专用配置，并返回姓名别名映射。
+
+    返回 ``(opts, aliases)``：传入 ``choices`` 时深拷贝配置再写入，确保复核选择只
+    影响当前任务；未提供选择时直接返回原配置对象。``aliases`` 为
+    ``{劳务姓名: 我司姓名}`` 字典，供后续内存索引改写。
+    """
 
     aliases = {}
     if not choices:
@@ -1055,7 +1094,11 @@ def _resolve_run_output_dir(target_path, out_dir):
 
 def _build_run_context(target_path, source_paths, labor_paths, out_dir, opts, choices,
                        reporter):
-    """规范化一次运行的路径、选项、人工确认和输出位置。"""
+    """规范化一次运行的路径、选项、人工确认和输出位置。
+
+    统一字符串/列表形式的输入路径，应用人工复核选择，解析并创建输出目录，返回
+    后续各阶段共享的 ``_RunContext``。所有副作用（建目录、写日志）集中在本步。
+    """
 
     options = opts or cc.DEFAULTS
     options, aliases = _apply_review_choices(options, target_path, choices, reporter.log)
@@ -1081,6 +1124,7 @@ def _read_source_stage(context):
     context.reporter.stage("read_src")
     context.reporter.log("① 读取数据来源 ...")
     for path in context.source_paths:
+        # 读取公式结果前先警告无缓存，避免 data_only 副本把公式显示为空值。
         cc.warn_if_uncached(path, context.reporter.log, what="工时")
     data, days_seen = load_source(
         context.source_paths,
@@ -1125,6 +1169,7 @@ def _extract_company_map(values_worksheet, layout):
             if layout["comp_col"]
             else None
         )
+        # 公式没有缓存结果时跳过，避免把公式文本当成劳务公司名称写入比较结果。
         if value is not None and not (isinstance(value, str) and value.startswith("=")):
             company_map[name] = str(value).strip()
     return company_map
@@ -1175,6 +1220,7 @@ def _prepare_target_stage(context, source):
             ".xlsx",
             ts=context.timestamp,
         )
+        # 先保存“已填写”副本再继续比较：即使后续对账失败，填表成果也已落盘。
         workbook.save(filled_path)
         context.reporter.log("   已保存：%s" % os.path.basename(filled_path))
         return _TargetStage(
@@ -1187,13 +1233,18 @@ def _prepare_target_stage(context, source):
             filled_path=filled_path,
         )
     except Exception:
+        # 失败路径必须释放工作簿，避免 Windows 下输入/输出文件保持锁定并阻断重试。
         _safe_close_workbook(values_workbook)
         _safe_close_workbook(workbook)
         raise
 
 
 def _merge_labor_file(target, incoming, source_name, conflict, log):
-    """把一个劳务文件并入人员索引，返回本文件触发的重复姓名数量。"""
+    """把一个劳务文件并入人员索引，返回本文件触发的重复姓名数量。
+
+    直接修改 ``target`` 并在每人记录上写入 ``source`` 字段。重复姓名按 ``conflict``
+    策略处理：``first`` 保留先读取者，``warn`` 仅提示不覆盖，其余值按后者覆盖。
+    """
 
     duplicates = 0
     for name, info in incoming.items():

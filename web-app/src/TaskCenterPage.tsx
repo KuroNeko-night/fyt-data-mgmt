@@ -1,3 +1,9 @@
+/**
+ * 任务中心页面。
+ *
+ * 维护当前账号的持久化任务列表，轮询活动任务、筛选复核/异常记录、下载结果、
+ * 创建限时分享，并支持从任务记录反向打开对应业务工作区。
+ */
 import { useEffect, useMemo, useState } from "react";
 import { createShare, revokeShare, type ShareLink } from "./api";
 import { cancelJob, downloadJobFile, getJob, listJobs, retryJob, searchAll, type SearchResponse, type WebJob } from "./api";
@@ -14,7 +20,9 @@ import TaskRow from "./ui/TaskRow";
 import type { StatusKey } from "./ui/status";
 import "./workflows.css";
 
+/** 页面入参：根据任务动作与编号打开对应业务工作区。 */
 type Props = { onOpenFeature: (action: string, jobId: string) => void };
+/** 任务筛选键；`active` 是排队与运行中的合成筛选，`failed` 包含异常、取消和中断。 */
 export type TaskFilter = "all" | "active" | "review" | "completed" | "failed";
 
 const labels: Record<string, string> = {

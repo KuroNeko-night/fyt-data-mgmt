@@ -12,6 +12,7 @@ import { FilePickerField, FieldRow, ResultSummary, TaskPanel } from "../componen
 import { useBridgeAction, useBridgeTask } from "../hooks/useBridgeTask";
 import BusinessResultView from "../ui/BusinessResultView";
 
+/** 业务页面共用的 Excel/CSV 文件筛选器。 */
 const excelFilters = [{ name: "Excel 表格", extensions: ["xlsx", "xlsm", "xls", "csv"] }];
 
 /** 读取单个表格的工作表名称，并在路径快速切换时丢弃过期响应。 */
@@ -46,6 +47,7 @@ function reviewValue(value: unknown): string {
   return String(value);
 }
 
+/** 考勤填报结果。 */
 interface AttendanceResult { out_files: string[]; out_dir: string; }
 
 /** 收集打卡来源、待填模板和工时口径，批量生成不覆盖原文件的考勤结果。 */
@@ -87,11 +89,13 @@ export function AttendancePage() {
   </section></div>;
 }
 
+/** 工时对账分析计划：核心层识别的目标结构、待配对姓名和两侧差异。 */
 interface ReconcilePlan {
   target: { sheet: string; sheets: string[]; name_col: number; comp_col: number; work_col: number; names: string[] };
   only_labor: string[];
   only_zong: string[];
 }
+/** 工时对账执行结果：包含已填写文件、汇总报告、可信度和异常明细。 */
 interface ReconcileResult { filled_path: string; summary_path: string; credibility: { level: string; score: number }; anomalies: unknown[]; }
 
 /**
@@ -150,7 +154,9 @@ export function ReconcilePage() {
   </section></div>;
 }
 
+/** 到料预扫描的单个批次复核行。 */
 interface ArrivalRow { path: string; batch_no: string; total: number; auto_total: number; missing_count: number; remark: string; include: boolean; }
+/** 到料明细生成结果：输出文件与逐批次写入摘要。 */
 interface ArrivalResult { out_file: string; out_dir: string; results: Array<[string, number, number, number]>; }
 
 /** 预扫描送货计划中的批次与主料总类数，允许逐批修正后生成每日到料明细。 */
@@ -183,10 +189,15 @@ export function ArrivalPage() {
   </section></div>;
 }
 
+/** 采购透视分析中的单个工作表识别项。 */
 interface PivotSheet { id: string; file: string; sheet: string; use: boolean; kind: string; confidence: number; reason: string; }
+/** 疑似误删行复核项。 */
 interface PivotHeld { sid: string; ridx: number; sheet?: string; summary?: string; rec?: unknown; }
+/** 单位冲突或规格归并复核项。 */
 interface PivotConflict { gk: unknown; default: string; dist?: Record<string, number>; variants?: Record<string, number>; name?: string; code?: string; spec?: string; }
+/** 采购透视分析计划：汇总待确认的工作表、误删行、单位冲突与规格归并。 */
 interface PivotPlan { sheets: PivotSheet[]; held_index: PivotHeld[]; unit_conflicts: PivotConflict[]; spec_merges: PivotConflict[]; }
+/** 采购透视执行结果：输出文件、分组统计与可信度。 */
 interface PivotResult { out: string; out_dir: string; report: string; groups: number; total: number; level: string; score: number; }
 
 /**
@@ -232,6 +243,7 @@ export function PivotPage() {
   </section></div>;
 }
 
+/** 采购对账执行结果：配对明细、逐行匹配标记与数量疑点。 */
 interface PurchaseResult { out_dir: string; report: string; pairs: unknown[]; matched1: boolean[]; matched2: boolean[]; qty_conflicts: unknown[]; }
 
 /** 对比我方与供应商采购明细，支持分别选择工作表和设置报告中的双方名称。 */
@@ -260,6 +272,7 @@ export function PurchasePage() {
   </section></div>;
 }
 
+/** 发运评审对比结果：包装计划与评审活动页签的逐项核对统计。 */
 interface ShippingReviewResult {
   report_path: string;
   out_dir: string;
@@ -295,6 +308,7 @@ export function ShippingReviewPage() {
   </section></div>;
 }
 
+/** 送货计划生成结果：输出文件、供应商匹配和 CASE 使用情况。 */
 interface DeliveryResult { plan_path: string; out_dir: string; rows: number; matched: number; missing: unknown[]; order_type: string; case_hit: number; case_used: boolean; supplier_used: boolean; }
 
 /**
@@ -325,11 +339,16 @@ export function DeliveryPage() {
   </section></div>;
 }
 
+/** 供应商批次分析中的单个供应商汇总。 */
 interface SupplierBatchSupplier { name: string; rows: number; batches: Array<{ batch: string; rows: number }>; }
+/** 供应商批次分析计划：识别到的供应商、批次及排除/未匹配统计。 */
 interface SupplierBatchPlan { suppliers: SupplierBatchSupplier[]; batches: Array<{ batch: string; file: string; sheet: string; rows: number }>; excluded_original_count: number; unmatched_count: number; }
+/** 供应商批次表生成结果：输出文件、交付日期和生成统计。 */
 interface SupplierBatchResult { out_dir: string; files: string[]; suppliers: string[]; batch_dates: Record<string, string>; generated: number; rows: number; excluded_original_count: number; unmatched_count: number; }
 
+/** 采购计划生成结果：输出文件、生成统计及档案新增项。 */
 interface PurchasePlanResult { out_dir: string; files: string[]; generated: number; rows: number; excluded_original_count: number; new_materials?: string[]; new_suppliers?: string[]; }
+/** 辅料实收差异清单结果。 */
 interface PurchaseDiffResult { out_dir: string; path: string; rows: number; excluded_original_count: number; }
 
 /** 在同一页提供采购计划生成和辅料实收差异检查，两项任务状态彼此独立。 */
@@ -397,6 +416,7 @@ export function SupplierBatchPage() {
   </section></div>;
 }
 
+/** 考勤月度归档结果：汇总文件、月份、人数与出勤记录数。 */
 interface AttendanceArchiveResult { out_dir: string; path: string; month: string; persons: number; days: number; }
 
 /** 汇总多份已填考勤表，生成按人员和每日明细组织的月度归档。 */
@@ -411,8 +431,11 @@ export function AttendanceArchivePage() {
   </section></div>;
 }
 
+/** 对账单扫描结果中的单个批次。 */
 interface ScanBatchInfo { batch: string; sheet: string; rows: number; excluded_rows: number; }
+/** 对账单扫描结果中的单个文件。 */
 interface ScanFileInfo { name: string; path: string; supplier: string | null; batches: ScanBatchInfo[]; }
+/** 对账单生成结果：各供应商对账单文件与总行数。 */
 interface ReconcileStatementResult { files: Array<{ path: string; name: string; supplier: string; month: string; rows: number }>; total_rows: number; }
 
 /**
@@ -471,9 +494,13 @@ export function ReconcileStatementPage() {
   </section></div>;
 }
 
+/** 发票扫描识别项。 */
 interface InvoiceItem { path: string; num: string; date: string; seller: string; amount: number | null; tax: number | null; total: number | null; rate: string; item_seed: string; note_seed: string; special: boolean; }
+/** 发票扫描结果：识别到的发票、存疑项和建议月份。 */
 interface InvoiceScan { invoices: InvoiceItem[]; suspects: Array<[string, string]>; suggested_month: string; }
+/** 发票台账生成结果。 */
 interface InvoiceResult { xlsx: string; review_dir: string; out_dir: string; count: number; suspects: number; }
+/** 票货匹配结果：正常匹配、无票采购和有发票无采购家数。 */
 interface InvoiceMatchResult { out_dir: string; path: string; matched: number; no_invoice: number; no_purchase: number; }
 
 /**

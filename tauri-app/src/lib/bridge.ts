@@ -7,8 +7,10 @@
  */
 import { invoke } from "@tauri-apps/api/core";
 
+/** 桥接请求的 JSON 安全载荷，具体键值由 Python Core 白名单动作定义。 */
 export type BridgePayload = Record<string, unknown>;
 
+/** Core 健康检查返回的运行时、版本与已启用能力信息。 */
 export interface HealthInfo {
   app_name: string;
   version: string;
@@ -18,6 +20,12 @@ export interface HealthInfo {
   features: string[];
 }
 
+/**
+ * 客户端设置快照。
+ *
+ * 读取与保存都通过 `settings.get` / `settings.update` 桥接动作进入 Python Core；
+ * 其中 `minimize_to_tray` 额外由 Rust 运行时内存状态消费。
+ */
 export interface AppSettings {
   output_mode: "unified" | "beside" | "custom";
   custom_output_root: string;
@@ -30,6 +38,7 @@ export interface AppSettings {
   enable_incremental_cache: boolean;
 }
 
+/** 任务中心单条历史记录，字段与 Python 任务历史保持稳定对应。 */
 export interface TaskItem {
   id: string;
   feature: string;
@@ -42,11 +51,13 @@ export interface TaskItem {
   output_dir: string;
 }
 
+/** 任务中心列表响应：汇总计数与最近任务条目。 */
 export interface TaskResult {
   summary: Record<string, number>;
   items: TaskItem[];
 }
 
+/** 数据库摘要：分类计数、占用空间、标题映射、最近条目与库目录。 */
 export interface LibrarySummary {
   counts: Record<string, number>;
   storage: Record<string, number>;
@@ -55,6 +66,7 @@ export interface LibrarySummary {
   library_dir: string;
 }
 
+/** 数据库单条文件记录，含分类、可信度与识别信号。 */
 export interface LibraryItem {
   name: string;
   category: string;
@@ -66,6 +78,7 @@ export interface LibraryItem {
   signals?: string[];
 }
 
+// 浏览器预览专用的设置快照，只存在于当前页面会话，刷新后恢复默认值。
 let previewSettings: AppSettings = {
   output_mode: "unified",
   custom_output_root: "",

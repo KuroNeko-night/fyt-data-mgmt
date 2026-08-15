@@ -49,6 +49,12 @@ const SIMPLE_PAGES: Readonly<Record<string, ComponentType>> = {
   compare: ComparePage,
 };
 
+/**
+ * 页面渲染器所需的共享摘要与更新回调。
+ *
+ * 所有摘要都允许为 null：表示启动查询尚未完成或该项读取失败，由具体页面自行降级展示。
+ * 更新回调只把页面结果提升回工作台状态，不直接写任何存储。
+ */
 interface PageRendererProps {
   activeItem: NavItem;
   navigate: (key: string) => void;
@@ -97,11 +103,13 @@ export default function LocalWorkbench() {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [library, setLibrary] = useState<LibrarySummary | null>(null);
   const [tasks, setTasks] = useState<TaskResult | null>(null);
+  // 应用级 UI 状态：桥接错误提示、手动重试令牌、系统深浅色、更新版本号与引导开关。
   const [bridgeError, setBridgeError] = useState("");
   const [refreshToken, setRefreshToken] = useState(0);
   const [systemDark, setSystemDark] = useState(false);
   const [updateAvailable, setUpdateAvailable] = useState("");
   const [tourOpen, setTourOpen] = useState(false);
+  /** 内容滚动容器引用，供页面切换回顶与引导定位计算使用。 */
   const contentScrollRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -159,7 +167,9 @@ export default function LocalWorkbench() {
   }, []);
 
   const activeItem = useMemo(() => NAV_ITEMS.find((item) => item.key === activeKey) ?? NAV_ITEMS[0], [activeKey]); // 只在导航键变化时重新查找配置对象。
+  // 标题与描述由导航单一事实源派生，不在此处硬编码任何页面文案。
   const header = getPageHeading(activeItem);
+  // 显式主题优先；自动主题跟随系统深浅色偏好。
   const dark = settings?.theme_mode === "dark" || (settings?.theme_mode === "auto" && systemDark);
 
   const navigateTo = useCallback((nextKey: string) => {

@@ -6,6 +6,10 @@
  */
 import type { WorkshopIssue, WorkshopIssueCategory } from "./api";
 
+/**
+ * 现场问题模板字段的全量键集合。
+ * 所有类别共享同一张字段表，但每个类别只渲染 `sections` 中列出的子集。
+ */
 export type WorkshopTemplateFields = {
   issue_source: string;
   model: string;
@@ -34,9 +38,12 @@ export type WorkshopTemplateFields = {
   tracking_status: string;
 };
 
+/** 字段键联合类型，保证模板配置里的字段名始终有对应元数据。 */
 export type WorkshopTemplateFieldKey = keyof WorkshopTemplateFields;
+/** 问题表单中的一个分组：图例加上该分组要展示的字段。 */
 export type WorkshopFieldSection = { legend: string; fields: WorkshopTemplateFieldKey[] };
 
+/** 单个问题类别的表单配置：分区、必填、图片要求与标签覆盖均在此声明。 */
 export type WorkshopIssueFormConfig = {
   description: string;
   causeLabel: "故障描述" | "问题描述";
@@ -48,6 +55,10 @@ export type WorkshopIssueFormConfig = {
   fieldLabels?: Partial<Record<WorkshopTemplateFieldKey, string>>;
 };
 
+/**
+ * 现场问题五类模板的稳定键与中文名。
+ * 类别键必须与核心层 workshop_issue_core.py 的模板白名单一致，前端不自行扩展类别。
+ */
 export const WORKSHOP_CATEGORY_OPTIONS = [
   ["main_material", "主料异常"],
   ["auxiliary_material", "辅料异常"],
@@ -56,11 +67,15 @@ export const WORKSHOP_CATEGORY_OPTIONS = [
   ["error_proofing", "防错异常"],
 ] as const satisfies readonly (readonly [WorkshopIssueCategory, string])[];
 
-// 从同一类别选项生成标签表，避免下拉框与看板使用两套名称。
+/**
+ * 类别中文标签表，由上方选项一次性生成。
+ * 下拉框、看板与详情页共用同一套名称，避免出现两处中文文案不一致。
+ */
 export const ISSUE_CATEGORY_LABELS: Record<WorkshopIssueCategory, string> = Object.fromEntries(
   WORKSHOP_CATEGORY_OPTIONS,
 ) as Record<WorkshopIssueCategory, string>;
 
+/** 新建问题时的空表单值；补齐全部字段可避免受控输入在切换类别时出现未定义值。 */
 export const EMPTY_WORKSHOP_TEMPLATE_FIELDS: WorkshopTemplateFields = {
   issue_source: "", model: "", country: "", batch_no: "", team: "", material_code: "", material_name: "",
   cause_analysis: "", corrective_action: "", responsibility_party: "", external_inspection_owner: "", discoverer: "",
@@ -69,7 +84,10 @@ export const EMPTY_WORKSHOP_TEMPLATE_FIELDS: WorkshopTemplateFields = {
   carrier: "", supplier: "", tracking_status: "",
 };
 
-// 字段元数据只定义通用名称；个别类别可通过 `fieldLabels` 覆盖模板中的专用叫法。
+/**
+ * 字段通用元数据：只定义所有类别共用的中文标签和可选占位提示。
+ * 个别类别可通过 `WorkshopIssueFormConfig.fieldLabels` 覆盖模板中的专用叫法。
+ */
 export const WORKSHOP_FIELD_META: Record<WorkshopTemplateFieldKey, { label: string; placeholder?: string }> = {
   issue_source: { label: "问题源", placeholder: "例如：包装过程中" },
   model: { label: "车型" }, country: { label: "国家" }, batch_no: { label: "批次号" }, team: { label: "班组" },
@@ -83,6 +101,11 @@ export const WORKSHOP_FIELD_META: Record<WorkshopTemplateFieldKey, { label: stri
   tracking_status: { label: "状态" },
 };
 
+/**
+ * 五类现场问题的表单渲染配置。
+ * `requiresImages` 遵循核心层规则：主料、辅料、包装、海外必须传图片，防错不要求；
+ * `allowsNotes` 仅防错开放补充说明，避免模板外字段混入其他类别。
+ */
 export const WORKSHOP_ISSUE_FORM_CONFIG: Record<WorkshopIssueCategory, WorkshopIssueFormConfig> = {
   main_material: {
     description: "填写主料异常的现场信息、原因和整改结果。",
@@ -155,7 +178,11 @@ export const WORKSHOP_ISSUE_FORM_CONFIG: Record<WorkshopIssueCategory, WorkshopI
   },
 };
 
-/** 返回规范类别中文名，输入类型已限制为五种已维护类别。 */
+/**
+ * 返回规范类别中文名，输入类型已限制为五种已维护类别。
+ * @param category 已维护的现场问题类别键。
+ * @returns 类别中文名，用于下拉框、标题与看板展示。
+ */
 export function workshopCategoryLabel(category: WorkshopIssueCategory) {
   return ISSUE_CATEGORY_LABELS[category];
 }
@@ -163,6 +190,8 @@ export function workshopCategoryLabel(category: WorkshopIssueCategory) {
 /**
  * 根据问题类别选择模板中的责任字段和标签。
  * 海外、防错允许回退旧版 `primary_owner`，包装使用责任方，其余类别展示发现人。
+ * @param issue 只取责任相关字段的问题对象。
+ * @returns `[字段标签, 负责人文本]` 元组；文本可能为空，由调用方决定是否显示占位。
  */
 export function workshopIssueOwnerLabel(issue: Pick<WorkshopIssue, "category" | "responsible_person" | "primary_owner" | "responsibility_party" | "discoverer">) {
   if (issue.category === "overseas") return ["负责人", issue.responsible_person || issue.primary_owner];

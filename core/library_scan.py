@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""本机文件库分类前的轻量表头扫描。"""
+"""本机文件库分类前的轻量表头扫描。
+
+本模块只负责从 xlsx/xlsm/xls 的顶部区域提取关键词集合，不参与评分与归档。扫描采用
+有限行数和列数上限，失败时返回空结果而不是抛出异常，确保分类流程始终能继续按
+文件名信号给出保守结论。xlsx/xlsm 使用只读流式模式并在 finally 中关闭工作簿，
+避免 Windows 下 ZIP 句柄占用影响后续归档覆盖。"""
 
 from __future__ import annotations
 
@@ -43,6 +48,7 @@ def _scan_modern(path: str, max_rows: int, max_cells: int) -> dict[str, set[str]
 def _scan_legacy(path: str, max_rows: int, max_cells: int) -> dict[str, set[str]]:
     """直接扫描旧 xls 顶部区域，不复制整本工作簿到中间列表。"""
 
+    # xlrd 仅在处理 .xls 时延迟导入，避免现代格式路径承担旧格式库启动开销。
     import xlrd
 
     book = xlrd.open_workbook(path)

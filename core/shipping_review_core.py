@@ -119,7 +119,12 @@ def _json_number(value: Decimal) -> int | float:
 
 
 def _match_headers(values: Iterable[object], required: Mapping[str, Iterable[str]]) -> dict[str, int] | None:
-    """在一行中匹配全部必需表头，返回零基列号；缺少任意角色即判定失败。"""
+    """在一行中匹配全部必需表头并返回零基列号。
+
+    参数 ``required`` 把角色名映射到别名列表，便于同一字段兼容不同文件写法。
+    返回 ``{角色: 列号}``；只要有一个必需角色缺失就整体返回 ``None``，防止用残缺
+    列布局继续读数据。
+    """
 
     normalized = {_header_key(value): index for index, value in enumerate(values) if _header_key(value)}
     columns: dict[str, int] = {}
@@ -132,7 +137,11 @@ def _match_headers(values: Iterable[object], required: Mapping[str, Iterable[str
 
 
 def _optional_headers(values: Iterable[object], aliases: Mapping[str, Iterable[str]]) -> dict[str, int]:
-    """识别审计需要但不影响业务执行的可选列。"""
+    """识别审计需要但不影响业务执行的可选列。
+
+    可选列缺一不会让页签判定失败；找不到的列不写入结果字典，调用方需先做存在性
+    判断，避免读取越界或把空值写入审计明细。
+    """
 
     normalized = {_header_key(value): index for index, value in enumerate(values) if _header_key(value)}
     result: dict[str, int] = {}
@@ -144,7 +153,11 @@ def _optional_headers(values: Iterable[object], aliases: Mapping[str, Iterable[s
 
 
 def _sheet_layout(worksheet, required: Mapping[str, Iterable[str]], *, max_rows: int = 60):
-    """在页签前若干行中定位表头，避免把说明行或合并标题误当作数据。"""
+    """在页签前若干行中定位表头，避免把说明行或合并标题误当作数据。
+
+    返回 ``(表头行号, {角色: 列号}, 表头单元格值)`` 三元组；找不到时返回
+    ``None``。只在表头行之前的有限行内扫描，跳过工作簿开头的标题、说明和合并区域。
+    """
 
     # 流式读取器为修复错误 dimension 声明会把 max_row 重置为 None，因此不能依赖它做 min。
     for row_number, row in enumerate(
@@ -232,14 +245,21 @@ def _fill_empty_names(items: Mapping[str, dict[str, object]], resolver, counts: 
 
 
 def _read_package(path: str, requested_sheet: str | None, resolver, fill_counts, log, progress):
-    """读取包装计划，记录状态审计，并建立描述维度透视和物料号汇总。"""
+    """读取包装计划，返回按物料号汇总的数据、描述透视和过滤审计信息。
+
+    副作用：推进 ``progress``、通过 ``log`` 报告公式缓存警告，并向 ``fill_counts``
+    追加主数据名称补全计数。已作废记录只进入审计明细，不参与数量汇总；数量必须
+    可解析，空数量或非法数量直接抛出 ``ValueError``，避免按零吞掉导致对比失真。
+    """
 
     workbook = common_core.load_data_only_stream(path)
     try:
         worksheet, (header_row, columns, header_values) = _select_package_sheet(workbook, requested_sheet)
         optional = _optional_headers(header_values, OPTIONAL_PACKAGE_HEADERS)
         common_core.warn_if_uncached(path, log, sheet=worksheet.title, what="实际包装数量")
+        # 同一物料号可能因 BOX 或供应商拆成多行，必须先聚合到 by_code 再比较，保证不重不漏。
         by_code: dict[str, dict[str, object]] = {}
+        # 透视按“物料号+描述”保留描述维度；描述为空的行在聚合后从 by_code 回填主数据名称。
         pivot: dict[tuple[str, str], dict[str, object]] = {}
         status_counts: Counter[str] = Counter()
         excluded: list[dict[str, object]] = []
@@ -268,6 +288,7 @@ def _read_package(path: str, requested_sheet: str | None, resolver, fill_counts,
                 values[columns["quantity"]] if columns["quantity"] < len(values) else None,
                 file_name=file_name, sheet=worksheet.title, row=row_number, label="实际包装数量",
             )
+            # 已作废记录只在内存中过滤并进入审计明细，不写入 by_code/pivot，避免污染数量对比。
             if status == "已作废":
                 excluded.append({
                     "row": row_number,
@@ -314,7 +335,12 @@ def _read_package(path: str, requested_sheet: str | None, resolver, fill_counts,
 
 
 def _read_review(path: str, requested_sheet: str | None, resolver, fill_counts, log, progress):
-    """读取评审表并按 Part No 汇总；供应商拆行必须累加而不是覆盖。"""
+    """读取评审表并按 Part No 汇总，返回聚合后的物料字典。
+
+    副作用与 ``_read_package`` 一致：推进 ``progress``、记录公式缓存警告并补全名称。
+    同一物料号因供应商或批次拆成多行时必须累加，任何“最后一行覆盖”的实现都会
+    低估评审总数。
+    """
 
     workbook = common_core.load_data_only_stream(path)
     try:
@@ -387,9 +413,14 @@ def _row_status(package_item, review_item, name_state: str, difference: Decimal)
 
 
 def _compare(package_items, review_items, progress):
-    """以物料号并集生成完整对比行和状态统计。"""
+    """以物料号并集生成完整对比行，任何一侧独有或两侧共有都会进入结果。
+
+    数量差以包装减评审的精确十进制计算，状态按单侧、数量和名称三个维度互斥划分；
+    返回的列表只供报告和前端展示，不修改两边的聚合字典。
+    """
 
     rows = []
+    # 按物料号键排序生成行，保证报告行序稳定，不依赖两侧工作簿的物理行序。
     keys = sorted(set(package_items) | set(review_items))
     for index, key in enumerate(keys, start=1):
         package_item = package_items.get(key)
@@ -419,7 +450,11 @@ def _compare(package_items, review_items, progress):
 
 
 def _counts(rows: list[dict[str, object]]) -> dict[str, int]:
-    """汇总前端指标和报告顶部卡片所需计数。"""
+    """汇总前端指标和报告顶部卡片所需计数。
+
+    ``both`` 只统计两侧都有来源行的物料，因此数量一致率、数量差异和名称问题不会
+    被单侧物料稀释；``exceptions`` 是全部非“一致”行数，作为异常表条数来源。
+    """
 
     statuses = Counter(str(row["status"]) for row in rows)
     both = [row for row in rows if row["package_rows"] and row["review_rows"]]
@@ -577,6 +612,7 @@ def _write_report(report_path: str, rows, counts, package_data) -> str:
     _write_compare_sheet(workbook.create_sheet("异常明细"), rows, counts, exceptions_only=True)
     _write_pivot_sheet(workbook.create_sheet("包装透视"), package_data["pivot"])
     _write_audit_sheet(workbook.create_sheet("过滤审计"), package_data)
+    # 先写同目录临时文件再用 os.replace 原子替换：保存失败不会损坏旧报告，也不会留下正式路径的半成品。
     temp_path = report_path + ".tmp.xlsx"
     try:
         workbook.save(temp_path)
@@ -613,6 +649,7 @@ def run(
     指定，只有包装工作簿存在多个同结构页签时才要求人工选择。
     """
 
+    # 先统一转为绝对路径再做存在性和扩展名校验，避免后续读取时因相对路径基准变化读到不同文件。
     package_path = os.path.abspath(str(package_plan))
     review_path = os.path.abspath(str(review_workbook))
     for label, file_path in (("包装日计划", package_path), ("发运评审表", review_path)):
@@ -622,6 +659,11 @@ def run(
             raise ValueError(f"{label}仅支持 .xlsx 或 .xlsm 文件。")
 
     def _log(message: str) -> None:
+        """向调用方转发状态日志。
+
+        仅当 ``log`` 可调用时才发送，避免调用方未提供日志回调时中断主流程；本函数不
+        收集或缓存日志，也不向日志文本附加业务数据。
+        """
         if callable(log):
             log(message)
 

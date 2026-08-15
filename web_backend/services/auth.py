@@ -1,7 +1,12 @@
 """账号注册、登录、密码和会话服务。
 
-服务函数不直接导入 ``web_server``，所有易变运行参数通过依赖对象传入，
-这样测试可以注入临时数据库，部署配置也不会被模块导入时固定。
+覆盖注册申请、登录限流、Cookie 会话、退出、改密与设备管理。服务函数不直接导入
+``web_server``，所有易变运行参数通过依赖对象传入，这样测试可以注入临时数据库，
+部署配置也不会被模块导入时固定。
+
+安全不变量：密码只保存盐值与摘要；会话令牌高熵生成并以 HttpOnly/SameSite=Strict
+Cookie 下发；失败计数按“来源地址+账号”隔离；修改密码或管理员撤销设备时使对应会话
+立即失效，权限与密码变化不等待旧 Cookie 过期。
 """
 
 from __future__ import annotations
@@ -25,6 +30,7 @@ from ..http.path_params import path_id
 class AuthDependencies:
     """认证服务所需的运行时依赖。"""
 
+    # 数据库回调与写锁由组合根注入；所有 SQLite 写事务必须串行经过 db_lock。
     db: Callable[[], sqlite3.Connection]
     db_lock: Any
     now_iso: Callable[[], str]
@@ -32,6 +38,7 @@ class AuthDependencies:
     verify_password: Callable[[str, str, str], bool]
     password_policy_error: Callable[[str], str]
     user_public: Callable[[sqlite3.Row], dict[str, object]]
+    # 会话有效期、续期间隔和登录限流参数来自配置，服务内不写死安全阈值。
     session_days: int
     touch_interval_seconds: int
     login_failure_limit: int
@@ -92,6 +99,7 @@ def login(handler: Any, body: dict[str, object], deps: AuthDependencies) -> None
         if attempt and int(attempt["locked_until"] or 0) > now:
             minutes = max(1, (int(attempt["locked_until"]) - now + 59) // 60)
             raise ApiError(HTTPStatus.TOO_MANY_REQUESTS, f"登录尝试次数过多，请在 {minutes} 分钟后重试")
+        # 查询在锁内完成，慢速密码校验放在锁外，避免 bcrypt/argon2 占用 SQLite 写锁。
         row = connection.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
     valid = bool(row and deps.verify_password(password, row["salt"], row["password_hash"]))  # 不存在的账号也走统一失败响应，避免通过接口枚举账号。
     if not valid:
@@ -143,7 +151,7 @@ def login(handler: Any, body: dict[str, object], deps: AuthDependencies) -> None
 def logout(handler: Any, deps: AuthDependencies) -> None:
     """删除当前会话并清除浏览器中的会话 Cookie。"""
     token = session_token(handler)  # 同时兼容桌面端请求头和浏览器 Cookie 的退出路径。
-    with deps.db_lock, deps.db() as connection:  # 修改密码、撤销其他设备和写审计记录在同一事务中完成。
+    with deps.db_lock, deps.db() as connection:  # 会话删除经过同一数据库写锁，避免与登录、续期并发交错。
         connection.execute("DELETE FROM sessions WHERE token = ?", (token,))
     handler.send_json(
         {"message": "已退出登录"},
@@ -206,6 +214,7 @@ def delete_session(handler: Any, path: str, deps: AuthDependencies) -> None:
     user = handler.require_user()
     session_id = path_id(path, "/api/auth/sessions/")
     with deps.db_lock, deps.db() as connection:
+        # 删除条件同时限定会话编号与当前用户，路径中的编号不能越权删除他人设备。
         deleted = connection.execute(
             "DELETE FROM sessions WHERE id = ? AND user_id = ?", (session_id, user["id"])
         ).rowcount

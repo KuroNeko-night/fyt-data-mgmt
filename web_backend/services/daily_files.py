@@ -1,7 +1,8 @@
 """日清生产计划、到料成品、安全检查资料与报告下载服务。
 
 本模块集中处理二进制上传、Core 分析、账号目录隔离、受控下载和可补偿回收站事务。
-文件解析规则仍由各 Core 提供，本层不复制表格业务算法。
+文件解析规则仍由各 Core 提供，本层不复制表格业务算法。全部入口要求 admin；上传按
+用户 ID 隔离目录，下载与删除前都重新解析数据库路径并校验父目录归属，防止路径穿越。
 """
 
 from __future__ import annotations
@@ -134,6 +135,7 @@ class DailyFileTrashSpec:
     conflict_message: str
 
 
+# 两个资料类型共享同一套“先移文件、再删索引、失败回滚”的回收站事务，差异仅在这些受控参数。
 _PLAN_TRASH = DailyFileTrashSpec(
     table="daily_production_plans",
     kind="daily_production_plan",
@@ -162,7 +164,7 @@ def _move_daily_file_to_trash(
     relative = folder.resolve().relative_to(deps.data_root.resolve()).as_posix()
     payload = deps.data_root / "trash" / trash_id / "payload"
     size = deps.tree_size(folder)
-    with deps.storage_lock:
+    with deps.storage_lock:  # 目录移动与数据库删除必须在同一存储锁内，防止并发下载看到半移动状态。
         payload.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(folder), str(payload))
         try:

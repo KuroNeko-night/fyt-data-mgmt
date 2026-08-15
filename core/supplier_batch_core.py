@@ -90,6 +90,7 @@ def _validate_files(values, label: str) -> list[str]:
     for path in result:
         if not os.path.isfile(path):
             raise FileNotFoundError("找不到文件：%s" % path)
+        # 只接受与模板一致的工作簿格式，避免把 CSV 或旧版 xls 误当可解析对象传给 openpyxl。
         if Path(path).suffix.lower() not in EXCEL_SUFFIXES:
             raise ValueError("%s仅支持 xlsx 或 xlsm 文件：%s" % (label, os.path.basename(path)))
     return result
@@ -379,14 +380,26 @@ def _supplier_summaries(
 
 
 def _collection_inputs(batch_paths, history_paths):
-    """校验正式批次输入与可选历史明细，并返回统一的绝对路径列表。"""
+    """
+    校验正式批次输入与可选历史明细，并返回统一的绝对路径列表。
+
+    ``batch_paths`` 必须非空，``history_paths`` 允许为空；两个列表都会经过存在性和
+    扩展名校验，历史明细为空时直接返回空列表，供后续读取阶段跳过。返回元组与读取
+    顺序一一对应，调用方按同样的顺序消费文件。
+    """
     batches = _validate_files(batch_paths, "当前批次清单")
     history = _validate_files(history_paths, "历史供应商明细") if history_paths else []
     return batches, history
 
 
 def _read_current_batches(batch_paths, resolver, fill_counts, log, progress):
-    """读取全部当前批次，并把 20%～65% 的进度按文件数线性上报。"""
+    """
+    读取全部当前批次，并把 20%～65% 的进度按文件数线性上报。
+
+    ``resolver`` 与 ``fill_counts`` 由调用方创建并贯穿本次任务，确保各批次补全使用
+    同一个主数据库解析器，补全统计不会因重复加载而失真。返回批次顺序与
+    ``batch_paths`` 一致，后续供应商冲突按该顺序取最后一次有效值。
+    """
     batches = []
     total = len(batch_paths)
     for index, path in enumerate(batch_paths, start=1):
@@ -402,13 +415,24 @@ def _read_current_batches(batch_paths, resolver, fill_counts, log, progress):
 
 
 def _ensure_batch_items(batches):
-    """拒绝只有零数量、无单位或原厂记录的输入，避免生成空成品。"""
+    """
+    拒绝所有批次都无可制作记录的输入，避免生成空成品或空工作簿。
+
+    输入为空意味着正式执行只会产生无内容的目录或零行文件，还会让后续“至少一家
+    供应商”校验失去意义，因此在读取完成后立即失败。
+    """
     if not any(batch["items"] for batch in batches):
         raise ValueError("批次清单中没有可制作的正数采购记录")
 
 
 def _resolve_batch_suppliers(batches, history_map, resolver, fill_counts):
-    """合并当前、历史与主数据供应关系，返回复核摘要和两层冲突数量。"""
+    """
+    合并当前、历史与主数据供应关系，返回复核摘要和两层冲突数量。
+
+    先聚合当前批次映射，再按“当前 -> 历史 -> 主数据”优先级分配供应商；没有任何
+    供应商被识别时抛出 ``ValueError``，因为“未匹配”不能作为供应商写出。返回值中
+    ``suppliers`` 已按名称排序，``unmatched`` 保持输入扫描顺序便于人工逐条排查。
+    """
     current_map, current_conflicts = _current_supplier_mapping(batches)
     unmatched, supplier_counts = _assign_suppliers(
         batches,
@@ -426,7 +450,12 @@ def _resolve_batch_suppliers(batches, history_map, resolver, fill_counts):
 
 def _build_collection_result(batches, suppliers, unmatched, history_map,
                              history_conflicts, current_conflicts):
-    """组装分析与执行共同使用的稳定中间协议。"""
+    """
+    组装分析与执行共同使用的稳定中间协议。
+
+    返回字典是 ``analyze`` 与 ``run`` 共用的业务快照：同一输入、同一扫描顺序下
+    内容稳定，复核阶段展示的供应商、未匹配数量和原厂排除数量与执行阶段完全一致。
+    """
     return {
         "suppliers": suppliers,
         "batches": batches,
@@ -648,6 +677,7 @@ def _write_supplier_workbook(
                 start_row = _write_block(
                     worksheet, start_row, batch_name, batch_dates[batch_name], items,
                 ) + 2  # 在上一批次末行后留一空行，再开始下一个标题区块。
+        # 所有页签写入完成后再执行唯一一次落盘；目标是 unique_path 生成的新路径，保存失败不会影响既有文件。
         workbook.save(path)
     finally:
         workbook.close()
@@ -750,6 +780,7 @@ def _generate_supplier_files(
     for index, supplier in enumerate(selected, start=1):
         filename = "%s%s批次采购清单明细.xlsx" % (_safe_name(supplier, "供应商"), group_name)
         # 始终生成唯一名称，避免用户重复执行时悄悄覆盖已确认并发送过的采购文件。
+        # 同一目录下并发执行时，unique_path 的序号机制也会错开目标，防止相互覆盖。
         target = common_core.unique_path(os.path.join(out_dir, filename))
         rows = _write_supplier_workbook(target, supplier, batches, batch_dates)
         if rows:
@@ -762,7 +793,13 @@ def _generate_supplier_files(
 
 
 def _prepare_run_review(data, selected_suppliers, batch_dates):
-    """按本次重新扫描结果校验供应商选择和逐批交付日期。"""
+    """
+    按本次重新扫描结果校验供应商选择和逐批交付日期。
+
+    供应商选择只允许落在本次扫描结果内，交付日期必须覆盖全部输入批次；返回的
+    ``selected`` 保留用户勾选顺序，``normalized_dates`` 按扫描顺序重建，保证输出
+    文件与标题排列稳定。
+    """
     available = [str(item["name"]) for item in data["suppliers"]]
     selected = _selected_supplier_names(available, selected_suppliers)
     batch_names = [str(batch["batch"]) for batch in data["batches"]]
@@ -772,7 +809,12 @@ def _prepare_run_review(data, selected_suppliers, batch_dates):
 
 
 def _log_generation_summary(log, data, files, total_rows):
-    """汇报正常产出、原厂排除和未匹配三类正式执行结果。"""
+    """
+    汇报正常产出、原厂排除和未匹配三类正式执行结果。
+
+    ``log`` 允许为空；这里只报告结果供界面和日志使用，不改变任何业务数据或返回
+    结构，未匹配记录也不会因此被写成供应商文件。
+    """
     if not log:
         return
     log("已生成 %d 家供应商、%d 行批次明细。" % (len(files), total_rows))
@@ -783,7 +825,12 @@ def _log_generation_summary(log, data, files, total_rows):
 
 
 def _build_run_result(out_dir, files, selected, normalized_dates, total_rows, data):
-    """生成供应商批次表正式入口的稳定返回结构。"""
+    """
+    生成供应商批次表正式入口的稳定返回结构。
+
+    仅把已确认的输入和统计值封装为返回字典，不做额外计算；调用方按该结构展示
+    输出目录、文件列表和排除/未匹配统计。
+    """
     return {
         "out_dir": out_dir,
         "files": files,

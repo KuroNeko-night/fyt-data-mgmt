@@ -21,13 +21,26 @@ const base = `http://127.0.0.1:${port}`;
 const screenshotDir = process.env.FYT_QA_OUTPUT || path.join(tmpdir(), "fyt-web-smoke");
 mkdirSync(screenshotDir, { recursive: true });
 
-/** 同步执行构建命令并把输出原样转发到终端，非零退出码立即终止冒烟流程。 */
+/**
+ * 同步执行构建命令并把输出原样转发到终端，非零退出码立即终止冒烟流程。
+ *
+ * @param {string} command 可执行命令名。
+ * @param {string[]} args 命令参数列表。
+ * @param {string} cwd 子进程工作目录。
+ * @returns {void} 命令成功时不返回；失败时直接抛出中文错误。
+ */
 function run(command, args, cwd) {
   const result = spawnSync(`${command} ${args.join(" ")}`, { cwd, shell: true, stdio: "inherit" });
   if (result.status !== 0) throw new Error(`${command} 退出码 ${result.status}`);
 }
 
-/** 轮询 preview 首页，区分“进程已创建”和“HTTP 服务已经可以接收请求”。 */
+/**
+ * 轮询 preview 首页，区分“进程已创建”和“HTTP 服务已经可以接收请求”。
+ *
+ * @param {string} url 要探测的首页地址。
+ * @param {number} [timeoutMs] 最长等待时间，默认 30 秒。
+ * @returns {Promise<void>} 服务就绪后返回；超时抛出中文错误。
+ */
 async function waitForServer(url, timeoutMs = 30000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -44,7 +57,12 @@ async function waitForServer(url, timeoutMs = 30000) {
 
 let smokeRole = "team_leader"; // 同一页面先验收班组长可见的数据库与批次跟踪，再切换管理员。
 
-/** 按当前冒烟角色构造认证用户，角色切换后所有相关接口自动保持一致。 */
+/**
+ * 按当前冒烟角色构造认证用户，角色切换后所有相关接口自动保持一致。
+ *
+ * @returns {{ id: number, username: string, display_name: string, role: string,
+ *   status: string, created_at: string, approved_at: string }} 当前角色的合成用户。
+ */
 function currentUser() {
   return {
     id: smokeRole === "admin" ? 2 : 1,
@@ -210,7 +228,12 @@ const dashboard = {
   ],
 };
 
-/** 为管理员各子页返回结构完整的空数据，重点验证入口和权限而非管理操作。 */
+/**
+ * 为管理员各子页返回结构完整的空数据，重点验证入口和权限而非管理操作。
+ *
+ * @param {string} pathname 具体管理接口路径。
+ * @returns {object | undefined} 对应接口的合成 JSON；未知路径返回 undefined。
+ */
 function adminPayload(pathname) {
   const user = currentUser();
   return {
@@ -229,6 +252,9 @@ function adminPayload(pathname) {
 
 /**
  * 拦截前端同源 API，并返回与服务端契约一致的合成 JSON。
+ *
+ * @param {import("playwright").Route} route Playwright 路由对象，代表一个同源 API 请求。
+ * @returns {Promise<void>} 已声明的接口直接 fulfill，其余请求继续交给 preview。
  *
  * 未登录判定依赖请求头中的会话令牌；已登录响应统一读取 smokeRole。没有列入本脚本
  * 验收范围的接口继续交给 preview，使意外新增请求暴露为控制台或网络错误，而不是
@@ -259,7 +285,11 @@ async function mockApi(route) {
   await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
 }
 
-/** 串联构建、服务启动、页面验收和资源回收，最终统一汇总失败项。 */
+/**
+ * 串联构建、服务启动、页面验收和资源回收，最终统一汇总失败项。
+ *
+ * @returns {Promise<void>} 全部通过时正常返回；存在失败项或捕获异常时以退出码 1 结束。
+ */
 async function main() {
   console.log("[1/4] 构建 web-app ...");
   run("npm", ["run", "build"], webRoot);
@@ -269,6 +299,7 @@ async function main() {
   const failures = [];
   try {
     await waitForServer(base);
+    // 浏览器与上下文在 main 内创建和关闭；preview 服务由 finally 统一停止。
     const browser = await chromium.launch();
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const page = await context.newPage();

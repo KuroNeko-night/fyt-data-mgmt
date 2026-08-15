@@ -6,8 +6,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { Icon } from "./icons";
 
+/** 单个引导步骤：目标 `data-guide` 选择器以及弹窗文案。 */
 type GuideStep = { target: string; title: string; text: string };
 
+/** 引导步骤表；target 指向各壳层组件上稳定的 data-guide 锚点，不依赖易变的 DOM 结构。 */
 const STEPS: GuideStep[] = [
   { target: '[data-guide="nav-workshop"]', title: "侧栏导航", text: "工作台、现场问题、业务模块、数据库与任务中心都从侧栏进入，常用入口一目了然。" },
   { target: '[data-guide="nav-features"]', title: "业务模块", text: "考勤、对账、采购、送货等业务都在「业务模块」中：上传文件、填写参数，系统自动处理并生成结果。" },
@@ -15,9 +17,15 @@ const STEPS: GuideStep[] = [
   { target: '[data-guide="nav-tasks"]', title: "任务中心", text: "所有处理任务、结果文件下载与需要确认的任务都汇总在这里，处理过程全程可查。" },
 ]; 
 
+/**
+ * 首次使用引导浮层。
+ * @param open 是否显示引导；关闭时卸载整个浮层。
+ * @param onClose 用户跳过、完成或点击遮罩时的关闭回调。
+ */
 export function GuidedTour({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [index, setIndex] = useState(0);
   const [box, setBox] = useState<DOMRect | null>(null);
+  // 索引夹紧到末步，防止异常状态导致取步越界。
   const step = STEPS[Math.min(index, STEPS.length - 1)];
   const last = index >= STEPS.length - 1;
 
@@ -35,6 +43,7 @@ export function GuidedTour({ open, onClose }: { open: boolean; onClose: () => vo
 
   useEffect(() => {
     if (!open) return;
+    // 打开时立即测量一次，并在窗口尺寸或任意内部滚动变化时重新定位。
     update();
     window.addEventListener("resize", update);
     window.addEventListener("scroll", update, true); // 捕获阶段可接收内部滚动容器的非冒泡滚动事件。
@@ -46,6 +55,7 @@ export function GuidedTour({ open, onClose }: { open: boolean; onClose: () => vo
 
   if (!open) return null;
   const below = box ? box.bottom + 190 < window.innerHeight : true; // 预留对话框近似高度，空间不足时放到目标上方。
+  // 目标存在时贴住目标定位并夹在视口内；目标因权限隐藏时改用居中回退。
   const style: React.CSSProperties = box
     ? {
         left: Math.max(16, Math.min(box.left, window.innerWidth - 340)),

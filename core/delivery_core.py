@@ -101,8 +101,9 @@ _SHAPE_PROFILE = [
 def detect_layout_or_shape(ws, scan_rows=12, log=None):
     """先识别表头文字，失败后再按数据形态推断列角色。
 
-    返回 (header_row, col_map, source):source 为 "header"(表头识别)或
-    ``shape`` 结果只说明数据分布相似，必须在界面交由用户核对，不得直接静默落盘。
+    返回 (header_row, col_map, source): source 为 "header"(表头文字识别)或
+    "shape"(数据形态兜底)；``shape`` 结果只说明数据分布相似，必须在界面交由用户
+    核对，不得直接静默落盘。两种方式都失败时返回 (None, {}, None)。
     """
     hr, col = detect_layout(ws, scan_rows=scan_rows, log=log)
     if hr:
@@ -509,7 +510,11 @@ def _match_ref_header(ws, scan_rows=8):
 
 
 def _find_reference_detail_sheet(workbook):
-    """按工作簿顺序返回首个符合参考计划明细结构的页签及布局。"""
+    """按工作簿顺序返回首个符合参考计划明细结构的页签及布局。
+
+    返回 (worksheet, header_row, columns)；没有符合结构的页签时返回 None，由调用方
+    记录提示并跳过参考计划，参考表缺失不阻断主计划生成。
+    """
     for sheet_name in workbook.sheetnames:
         worksheet = workbook[sheet_name]
         header_row, columns = _match_ref_header(worksheet)
@@ -615,12 +620,14 @@ def run(file_a, file_b=None, sheet_a=None, sheet_b=None, out_dir=None, log=None,
         sup_rows, _ls, sup_file = pack[sup_key]
         _lg("主表(物料清单)：%s —— %d 行" % (os.path.basename(master_file), len(master_rows)))
         _lg("供应商来源：%s —— %d 行" % (os.path.basename(sup_file), len(sup_rows)))
+        # 先统一构造供应商映射，后续主数据补全与输出阶段都从这里查询，避免每行重复扫表。
         sup_map = build_supplier_map(sup_rows, log=_lg)
     else:
         # 单文件模式允许主表自带供应商；完全没有时不是错误，主数据和人工维护可继续补充。
         master_rows, master_file, sup_file = rows_a, file_a, ""
         _lg("主表(物料清单)：%s —— %d 行" % (os.path.basename(master_file), len(master_rows)))
         if _has_supplier(lay_a):
+            # 单文件模式下物料行同时充当供应商来源，复用同一映射构造逻辑，保证取首条与冲突日志口径一致。
             sup_map = build_supplier_map(rows_a, log=_lg)
             _lg("未单独提供供应商明细，已从物料清单自带的供应商列带出。")
         else:
@@ -654,6 +661,7 @@ def run(file_a, file_b=None, sheet_a=None, sheet_b=None, out_dir=None, log=None,
         ws, master_rows, sup_map, order_type=ot, case_map=case_map, log=_lg,
         report_missing=supplier_used)
     if supplier_used:
+        # 匹配数按“写入行数 - 未匹配编码数”计算，与 build_plan_sheet 的 missing 统计保持同一口径。
         matched = n - len(missing)
         _lg("已生成 %d 行，供应商匹配 %d / %d。" % (n, matched, n))
     else:

@@ -3,9 +3,14 @@ import { useState } from "react";
 import Icon from "../components/Icon";
 import ArtAsset from "../ui/ArtAsset";
 
+/** 本地存储键：保存最近连接过的服务器地址。 */
 const SERVER_URL_KEY = "fyt-server-url";
 
-/** 读取最近服务器地址；没有记录时回退到本机默认 Web 服务端口。 */
+/**
+ * 读取最近连接过的服务器地址。
+ *
+ * @returns 用户上次保存的地址；没有记录时回退到本机默认 Web 服务端口。
+ */
 function serverUrlOrDefault() {
   return localStorage.getItem(SERVER_URL_KEY) || "http://127.0.0.1:8787";
 }

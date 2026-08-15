@@ -1,4 +1,4 @@
-# 构建正式 Tauri 安装程序前校验四处发布版本一致，并先重建 Python sidecar。
+﻿# 构建正式 Tauri 安装程序前校验四处发布版本一致，并先重建 Python sidecar。
 # 版本不一致会在耗时的 Rust/安装包构建之前失败，避免生成文件名与应用元数据互相矛盾的产物。
 $ErrorActionPreference = "Stop"
 

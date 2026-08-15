@@ -17,13 +17,19 @@ import Surface from "../ui/Surface";
 import EmptyState from "../ui/EmptyState";
 import ArtAsset from "../ui/ArtAsset";
 
+/** 带页面导航能力的通用属性。 */
 interface NavigateProps {
+  /** 按导航键跳转页面，键值来自导航配置。 */
   navigate: (key: string) => void;
 }
 
+/** 工作台属性：导航回调加上顶层并行加载的只读摘要数据。 */
 interface HomeProps extends NavigateProps {
+  /** 文件数据库摘要；尚未加载完成时为 null。 */
   library: LibrarySummary | null;
+  /** 系统健康与版本信息；尚未加载完成时为 null。 */
   health: HealthInfo | null;
+  /** 最近任务结果；尚未加载完成时为 null。 */
   tasks: TaskResult | null;
 }
 
@@ -47,6 +53,12 @@ function formatStorage(bytes: number) {
 /**
  * 展示本地工作台总览、常用业务入口和最近任务。
  * 所有数据由应用顶层并行加载后传入，本页面只做分组和格式化，不自行重复请求。
+ *
+ * @param navigate 页面导航回调，快捷入口和最近任务均通过它跳转。
+ * @param library 文件数据库摘要，用于归档数与占用空间指标。
+ * @param health 系统健康信息，用于就绪状态与版本展示。
+ * @param tasks 最近任务摘要，用于任务数与完成数指标。
+ * @returns 工作台首页内容。
  */
 export function HomePage({ navigate, library, health, tasks }: HomeProps) {
   const total = Number(library?.storage.files ?? 0);
@@ -203,8 +215,11 @@ export function TaskCenterPage() {
   );
 }
 
+/** 设置页属性。 */
 interface SettingsProps {
+  /** 顶层提供的当前设置；可为 null，等待读取时显示加载态。 */
   settings: AppSettings | null;
+  /** 保存成功后回传核心层规范化设置，供顶层更新运行时状态。 */
   onSaved: (settings: AppSettings) => void;
 }
 
@@ -212,6 +227,10 @@ interface SettingsProps {
  * 编辑本地外观、运行、输出和服务器连接设置，并展示归档、缓存和系统目录状态。
  * 设置使用草稿模式，只有点击保存后才写入核心配置；服务器模式选择单独保存在
  * `localStorage`，随后通过整页重载重新建立运行环境边界。
+ *
+ * @param settings 顶层传入的当前设置快照；为 null 时先显示骨架屏。
+ * @param onSaved 保存成功后的回调，把规范化设置回传应用顶层。
+ * @returns 设置表单及只读的目录/缓存状态区。
  */
 export function SettingsPage({ settings, onSaved }: SettingsProps) {
   const [draft, setDraft] = useState<AppSettings | null>(settings);
@@ -307,6 +326,9 @@ function SettingToggle({ label, description, checked, onChange }: { label: strin
 /**
  * 展示本地应用版本并执行“检查清单—下载校验—用户确认安装”的更新流程。
  * 下载与摘要校验由核心层完成，真正启动安装器仍需用户确认，不会静默替换程序。
+ *
+ * @param health 系统健康信息；版本号缺失时回退到默认版本文案。
+ * @returns 关于卡片与在线更新操作区。
  */
 export function AboutPage({ health }: { health: HealthInfo | null }) {
   const [checking, setChecking] = useState(false);

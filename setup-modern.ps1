@@ -1,4 +1,4 @@
-$ErrorActionPreference = "Stop"
+﻿$ErrorActionPreference = "Stop"
 # 为源码运行创建项目私有 Python 3.13 虚拟环境并安装锁定依赖。
 # 脚本不修改系统 Python；已有 .venv 时直接复用。pip 命令失败会因 Stop 策略终止流程。
 $ProjectRoot = $PSScriptRoot

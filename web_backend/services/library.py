@@ -126,6 +126,7 @@ def upload_library_file(handler: Any, deps: LibraryDependencies) -> None:
     分类列、JSON 多分类列和关联表，任一步失败都会删除整个隔离目录。
     """
     user = handler.require_role("admin", "team_leader")
+    # 共享数据库写入口只对班组长和管理员开放；普通成员通过业务模块临时上传，不直接写共享数据库。
     parsed = urlparse(handler.path)
     query = parse_qs(parsed.query)
     name = deps.safe_name(query.get("name", [""])[0])

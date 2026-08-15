@@ -62,48 +62,62 @@ def _safe_sheet_title(name, used):
     return t
 
 
+def _read_xlsx_sheets(path):
+    """读取 xlsx/xlsm 的全部页签，返回 ``[(页签名, 行值列表)]``。
+
+    必须使用公共 ``load_data_only`` 而非 read_only：部分导出文件把 XML 使用范围
+    错误标成 ``A1``，只读模式会信任该范围并静默漏掉整张表。
+    """
+    wb = _common.load_data_only(path)
+    try:
+        # 此辅助结构只承载值，不保留单元格坐标或样式；格式操作使用其他路径。
+        return [(ws.title, [list(r) for r in ws.iter_rows(values_only=True)])
+                for ws in wb.worksheets]
+    finally:
+        wb.close()
+
+
+def _read_xls_cell(book, sh, row_index, col_index):
+    """读取单个 xls 单元格，并把日期序列号恢复为 datetime。
+
+    xls 把日期存成受工作簿日期制影响的浮点序列号，必须结合 ``datemode`` 逐格还原；
+    转换失败时保留原值，比丢弃整行更利于人工发现异常。
+    """
+    cell = sh.cell(row_index, col_index)
+    if cell.ctype != xlrd.XL_CELL_DATE:
+        return cell.value
+    try:
+        return xlrd.xldate.xldate_as_datetime(cell.value, book.datemode)
+    except Exception:
+        return cell.value
+
+
+def _read_xls_sheets(path):
+    """读取旧 .xls 的全部页签，日期单元格还原为 datetime。"""
+    if not _HAS_XLRD:
+        raise ExcelToolError("未安装 xlrd,无法读取老式 .xls 文件")
+    book = xlrd.open_workbook(path)
+    return [
+        (sh.name, [
+            [_read_xls_cell(book, sh, row_index, col_index)
+             for col_index in range(sh.ncols)]
+            for row_index in range(sh.nrows)
+        ])
+        for sh in book.sheets()
+    ]
+
+
 def _read_sheets(path):
     """把一个支持的表格文件读取为 ``[(页签名, 行值列表)]``。
 
-    xlsx/xlsm 通过公共 ``load_data_only`` 取得公式缓存值；不得改用 read_only，
-    因为部分导出文件的 XML 使用范围错误标成 ``A1``，只读模式会信任该范围并静默
-    漏掉整张表。xls 使用 xlrd，并专门把日期单元格从序列号恢复为 datetime；CSV
-    复用编码探测函数并包装成单页签结构。未知扩展名抛出业务异常。
+    xlsx/xlsm 走公共 ``load_data_only``；xls 走 xlrd 并还原日期；CSV 复用编码探测
+    函数并包装成单页签结构。未知扩展名抛出业务异常。
     """
     ext = os.path.splitext(path)[1].lower()
     if ext in (".xlsx", ".xlsm"):
-        wb = _common.load_data_only(path)
-        out = []
-        for ws in wb.worksheets:
-            # 此辅助结构只承载值，不保留单元格坐标或样式；格式操作使用其他路径。
-            rows = [list(r) for r in ws.iter_rows(values_only=True)]
-            out.append((ws.title, rows))
-        wb.close()
-        return out
+        return _read_xlsx_sheets(path)
     if ext == ".xls":
-        if not _HAS_XLRD:
-            raise ExcelToolError("未安装 xlrd,无法读取老式 .xls 文件")
-        book = xlrd.open_workbook(path)
-        out = []
-        for sh in book.sheets():
-            rows = []
-            for r in range(sh.nrows):
-                # xls 把日期存成受工作簿日期制影响的浮点序列号，必须结合 datemode
-                # 逐格还原；转换失败时保留原值，比丢弃整行更利于人工发现异常。
-                cells = []
-                for c in range(sh.ncols):
-                    cell = sh.cell(r, c)
-                    if cell.ctype == xlrd.XL_CELL_DATE:
-                        try:
-                            cells.append(xlrd.xldate.xldate_as_datetime(
-                                cell.value, book.datemode))
-                        except Exception:
-                            cells.append(cell.value)
-                    else:
-                        cells.append(cell.value)
-                rows.append(cells)
-            out.append((sh.name, rows))
-        return out
+        return _read_xls_sheets(path)
     if ext == ".csv":
         return [(os.path.splitext(os.path.basename(path))[0], _read_csv(path))]
     raise ExcelToolError("不支持的文件类型:%s" % ext)
@@ -331,6 +345,59 @@ def convert(files, target, out_dir=None, log=None):
     return {"out_files": outs, "out_dir": out_dir, "out_file": outs[0]}
 
 
+def _header_keys(header, filename):
+    """生成忽略空白和大小写的字段键，并拒绝同表内重复字段。
+
+    空字段使用位置占位（``__blank_N``），确保两个模板的空列只有在相同位置才被视为
+    一致，避免把不同位置的空列误对齐。
+    """
+    keys, seen = [], set()
+    for index, value in enumerate(header, 1):
+        text = "".join(_common.clean_str(value).split()).lower()
+        key = text or "__blank_%d" % index
+        if key in seen:
+            raise ExcelToolError("%s 的表头存在重复列「%s」，无法安全纵向合并"
+                                 % (os.path.basename(filename), value or "空列"))
+        seen.add(key)
+        keys.append(key)
+    return keys
+
+
+def _check_stack_headers(base_keys, header, filename):
+    """校验后续表头集合与基准一致，并返回按基准列序重排的源列下标。"""
+    keys = _header_keys(header, filename)
+    if set(keys) != set(base_keys):
+        # 集合不一致意味着无法无损对齐；报出双方差异而不是按位置硬拼。
+        missing = [base_keys[i] for i in range(len(base_keys))
+                   if base_keys[i] not in keys]
+        extra = [key for key in keys if key not in base_keys]
+        raise ExcelToolError("%s 的表头与首表不一致（缺少:%s；新增:%s），请先统一结构"
+                             % (os.path.basename(filename), ",".join(missing) or "无",
+                                ",".join(extra) or "无"))
+    source_pos = {key: index for index, key in enumerate(keys)}
+    if keys != base_keys:
+        return [source_pos[key] for key in base_keys], True
+    return None, False
+
+
+def _align_stack_row(row, reorder, base_cols, filename, log):
+    """把一行按基准表头重排并补齐/截断到基准列宽。
+
+    行宽异常不能改变后续“来源文件”列的位置，因此显式补齐或截断；短行缺失的尾部
+    单元格按 ``None`` 补齐，避免索引越界并保持列语义。
+    """
+    if reorder is not None:
+        row = [row[index] if index < len(row) else None for index in reorder]
+    if base_cols is not None and len(row) != base_cols:
+        log("警告:%s 某行列数为 %d,与首表 %d 列不一致,已补齐/截断对齐"
+            % (os.path.basename(filename), len(row), base_cols))
+        if len(row) < base_cols:
+            row = row + [None] * (base_cols - len(row))
+        else:
+            row = row[:base_cols]
+    return row
+
+
 def stack_tables(files, has_header=True, out_dir=None,
                  out_name="纵向合并.xlsx", log=None):
     """把多个同结构文件的首个页签纵向合并为一张可追溯明细表。
@@ -350,19 +417,6 @@ def stack_tables(files, has_header=True, out_dir=None,
     base_cols = None
     base_keys = None
 
-    def header_keys(header, filename):
-        """生成忽略空白和大小写的字段键，并拒绝同表内重复字段。"""
-        keys, seen = [], set()
-        for index, value in enumerate(header, 1):
-            # 空字段使用位置占位，确保两个模板的空列只有在相同位置才被视为一致。
-            text = "".join(_common.clean_str(value).split()).lower()
-            key = text or "__blank_%d" % index
-            if key in seen:
-                raise ExcelToolError("%s 的表头存在重复列「%s」，无法安全纵向合并"
-                                     % (os.path.basename(filename), value or "空列"))
-            seen.add(key)
-            keys.append(key)
-        return keys
     for f in files:
         sheets = _read_sheets(f)
         if not sheets:
@@ -378,38 +432,16 @@ def stack_tables(files, has_header=True, out_dir=None,
                 ws.append(list(rows[0]) + ["来源文件"])
                 header_written = True
                 base_cols = len(rows[0])
-                base_keys = header_keys(rows[0], f)
+                base_keys = _header_keys(rows[0], f)
             else:
-                keys = header_keys(rows[0], f)
-                if set(keys) != set(base_keys):
-                    # 集合不一致意味着无法无损对齐；报出双方差异而不是按位置硬拼。
-                    missing = [base_keys[i] for i in range(len(base_keys))
-                               if base_keys[i] not in keys]
-                    extra = [key for key in keys if key not in base_keys]
-                    raise ExcelToolError("%s 的表头与首表不一致（缺少:%s；新增:%s），请先统一结构"
-                                         % (os.path.basename(f), ",".join(missing) or "无",
-                                            ",".join(extra) or "无"))
-                source_pos = {key: index for index, key in enumerate(keys)}
-                if keys != base_keys:
+                reorder, changed_order = _check_stack_headers(base_keys, rows[0], f)
+                if changed_order:
                     log("%s 的表头顺序不同，已按列名重排后合并" % os.path.basename(f))
-                reorder = [source_pos[key] for key in base_keys]
             start = 1
-        else:
-            if base_cols is None:
-                base_cols = len(rows[0])
+        elif base_cols is None:
+            base_cols = len(rows[0])
         for r in rows[start:]:
-            row = list(r)
-            if reorder is not None:
-                # 短行缺失的尾部单元格按 None 补齐，避免索引越界并保持列语义。
-                row = [row[index] if index < len(row) else None for index in reorder]
-            # 行宽异常不能改变后续“来源文件”列的位置，因此显式补齐或截断到基准宽度。
-            if base_cols is not None and len(row) != base_cols:
-                log("警告:%s 某行列数为 %d,与首表 %d 列不一致,已补齐/截断对齐"
-                    % (os.path.basename(f), len(row), base_cols))
-                if len(row) < base_cols:
-                    row = row + [None] * (base_cols - len(row))
-                else:
-                    row = row[:base_cols]
+            row = _align_stack_row(list(r), reorder, base_cols, f, log)
             ws.append(row + [os.path.basename(f)])
             total_rows += 1
         log("追加 %s:%d 行" % (os.path.basename(f), len(rows) - start))

@@ -131,7 +131,13 @@ def _read_purchase(path: str, log=None) -> list[dict[str, object]]:
 
 
 def _validate_inputs(invoice_paths, purchase_paths) -> tuple[list[str], list[str]]:
-    """规范化并一次性校验两侧输入路径。"""
+    """规范化并一次性校验两侧输入路径。
+
+    参数为两个文件路径序列（允许 ``None`` 或空项）；返回值是去空、去首尾空白后的
+    绝对路径元组 ``(发票路径列表, 采购路径列表)``。任一输入侧为空抛出
+    ``ValueError``，文件不存在抛出 ``FileNotFoundError``，扩展名不合法抛出
+    ``ValueError``。全部校验在读取前完成，避免读到一半才失败。
+    """
     invoices = [os.path.abspath(str(value)) for value in (invoice_paths or []) if str(value).strip()]  # 去掉空选择并固定绝对路径。
     purchases = [os.path.abspath(str(value)) for value in (purchase_paths or []) if str(value).strip()]
     if not invoices or not purchases:
@@ -145,7 +151,12 @@ def _validate_inputs(invoice_paths, purchase_paths) -> tuple[list[str], list[str
 
 
 def _collect_supplier_totals(invoice_paths, purchase_paths, log, progress):
-    """读取发票金额和采购供应商集合，返回匹配所需的两个事实集合。"""
+    """读取发票金额和采购供应商集合，返回匹配所需的两个事实集合。
+
+    返回值是 ``(invoice_totals, purchase_suppliers)``：前者为销售方到累计价税
+    合计的字典，后者为去重后的供应商名称集合。任一侧读取结果为空都会抛出
+    ``ValueError``；两侧读取完成后通过 ``progress(60)`` 报告进度。
+    """
     invoice_totals: dict[str, float] = defaultdict(float)
     for path in invoice_paths:
         for item in _read_invoices(path, log=log):
@@ -164,7 +175,12 @@ def _collect_supplier_totals(invoice_paths, purchase_paths, log, progress):
 
 
 def _supplier_sets(invoice_totals, purchase_suppliers):
-    """生成稳定排序的匹配、无票采购和有票无采购集合。"""
+    """生成稳定排序的匹配、无票采购和有票无采购集合。
+
+    返回三元组 ``(both, no_invoice, no_purchase)``：both 为票货两侧都出现的
+    供应商，no_invoice 为采购有而发票无（无票采购），no_purchase 为发票有而
+    采购无（有发票无采购）。三者均按名称排序，保证报告行序稳定可测试。
+    """
     invoice_suppliers = set(invoice_totals)  # 发票侧供应商来自累计金额字典键。
     return (
         sorted(invoice_suppliers & purchase_suppliers),
@@ -174,7 +190,12 @@ def _supplier_sets(invoice_totals, purchase_suppliers):
 
 
 def _write_match_report(out_dir, invoice_totals, both, no_invoice, no_purchase):
-    """按稳定模板写出匹配报告并返回文件路径。"""
+    """按稳定模板写出匹配报告并返回文件路径。
+
+    参数 ``both``、``no_invoice``、``no_purchase`` 是已排序的供应商名称列表，
+    报告先写正常行再写两类异常行，异常行使用警示底色。输出文件名带秒级时间戳，
+    并通过 ``unique_path`` 避免覆盖同秒产生的既有报告；保存成功后才返回完整路径。
+    """
     thin = Side(style="thin", color="9AA5B1")  # 统一边框对象，减少工作簿样式数量。
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
     head_fill = PatternFill("solid", fgColor="EAF1FF")
@@ -193,6 +214,7 @@ def _write_match_report(out_dir, invoice_totals, both, no_invoice, no_purchase):
             cell.font = head_font; cell.fill = head_fill
             cell.alignment = Alignment(horizontal="center", vertical="center"); cell.border = border
         row_index = 2
+        # 固定“正常 → 无票采购 → 有发票无采购”的行序，前端和测试无需再次排序。
         for supplier, amount, marker, status, warning in (
             *[(name, invoice_totals[name], "✓", "正常", False) for name in both],
             *[(name, 0, "✓", "无票采购", True) for name in no_invoice],

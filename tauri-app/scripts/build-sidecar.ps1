@@ -1,4 +1,4 @@
-# 把 Python 业务桥接打包为 Tauri sidecar，并按 Rust 主机目标三元组命名最终可执行文件。
+﻿# 把 Python 业务桥接打包为 Tauri sidecar，并按 Rust 主机目标三元组命名最终可执行文件。
 # PyInstaller 输出先落入项目 build 暂存目录，只有成功生成 FYTCoreBridge.exe 后才复制到
 # src-tauri/binaries。窗口隐藏、模块白名单和排除 GUI 依赖由 packaging/tauri_bridge.spec 定义。
 $ErrorActionPreference = "Stop"

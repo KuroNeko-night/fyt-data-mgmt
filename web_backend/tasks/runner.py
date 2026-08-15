@@ -42,6 +42,7 @@ def _persist_completed_version(
     """在同一事务中计算下一版本号并写入不可变任务版本。"""
     result_json = json.dumps(public_value, ensure_ascii=False)
     files_json = json.dumps(files, ensure_ascii=False)
+    # 版本号与插入在同一事务和 DB_LOCK 内计算，并发完成任务也不会产生重复版本。
     with deps.db_lock, deps.db() as connection:
         latest = connection.execute(
             "SELECT COALESCE(MAX(version), 0) AS version FROM web_job_versions WHERE job_id = ?",
@@ -105,6 +106,7 @@ def run_web_job(
             return
         files = deps.collect_result_files(result)
         public_value = deps.public_result(result)
+        # 版本必须先落库再更新主任务状态；即使后续保留策略失败，本次结果也已持久化可追踪。
         _persist_completed_version(job_id, user_id, public_value, files, deps)
         deps.update_job(
             job_id,

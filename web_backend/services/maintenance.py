@@ -137,6 +137,7 @@ def enforce_output_retention(
 
     moved = 0
     for job_id in candidates:
+        # 默认调用 move_job_to_trash 并固定自动归档审计动作；测试可注入 move_job 观察候选而不真正移动文件。
         if (move_job or (lambda job_id, **kwargs: move_job_to_trash(deps, job_id, **kwargs)))(job_id, audit_action=f"auto_retention_job:{job_id}"):
             moved += 1
     return moved
@@ -236,7 +237,11 @@ def cleanup_stale_workshop_drafts(
     return removed
 
 def merge_confirmed_master_data(deps: MaintenanceDependencies, limit: int = 5) -> dict[str, int]:
-    """定期合并管理员已确认的主数据批次，并记录系统审计。"""
+    """定期合并管理员已确认的主数据批次，并记录系统审计。
+
+    主数据路径通过 ``merge_environment`` 临时切到 Web 数据根，避免污染桌面端本地档案。
+    返回已合并数量、待复核数量和失败数量，便于维护调度器区分成功、重试与人工介入。
+    """
     with deps.merge_environment():  # 主数据路径通过临时环境切到 Web 数据根，避免污染桌面端本地档案。
         report = deps.merge_ready_batches(limit=limit)
     merged_ids = [str(value) for value in report.get("merged", [])]

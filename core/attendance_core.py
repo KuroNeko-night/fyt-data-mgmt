@@ -37,19 +37,31 @@ STANDARD_WORKDAY_HOURS = cc.STANDARD_WORKDAY_HOURS
 
 # ---------- 读取源表（每日统计表） ----------
 def _detect_source_header(rows, opts, path=""):
-    """兼容旧内部入口，实际识别规则由独立来源读取模块维护。"""
+    """兼容旧内部入口，实际识别规则由独立来源读取模块维护。
+
+    参数原样透传给 attendance_source.detect_source_header；返回其识别到的
+    ``(表头行索引, 列号映射)``，未识别到有效表头时返回 ``None``。
+    """
 
     return _attendance_source.detect_source_header(rows, opts, path)
 
 
 def load_source(path, opts=None):
-    """读取单个每日统计文件；稳定公开名称保持不变。"""
+    """读取单个每日统计文件，返回该文件首个有效页签解析出的打卡记录字典。
+
+    该名称是历史公开入口，实现已委托给独立来源模块；本函数只做透传，便于来源
+    识别规则单独演进，调用方不需要感知拆分细节。文件无有效表头时抛出 ValueError。
+    """
 
     return _attendance_source.load_source(path, opts)
 
 
 def load_source_multi(paths, opts=None, log=None):
-    """合并多个来源文件；冲突与失败提示由独立来源模块统一处理。"""
+    """合并多个来源文件，返回 ``(打卡记录字典, 来源统计字典)``。
+
+    重复姓名日期的覆盖策略由 ``opts.conflict`` 决定，读取失败与冲突告警也由
+    独立来源模块统一记录；本函数只保持公开入口稳定，不在此处重复实现合并口径。
+    """
 
     return _attendance_source.load_source_multi(paths, opts, log)
 
@@ -227,7 +239,10 @@ class _SheetFillStats:
 
 
 def _select_target_sheets(workbook, target_path, opts):
-    """应用管理员的页签选择；未指定时返回工作簿全部页签。"""
+    """应用管理员的页签选择；未指定时返回工作簿全部页签。
+
+    页签名精确匹配，找不到指定页签时抛出 ValueError，而不是静默改写其它页。
+    """
     wanted = opts.resolve_sheet(target_path)
     if not wanted:
         return workbook.worksheets
@@ -238,7 +253,13 @@ def _select_target_sheets(workbook, target_path, opts):
 
 
 def _write_matched_times(ws, row, cols, on_text, off_text, opts, stats):
-    """写入系统打卡时间，并按设置生成实际时间。"""
+    """写入系统打卡时间，并按设置生成实际时间。
+
+    系统时间只在有值且不是 ``-``/``—`` 占位符时写入；自动生成实际时间时，
+    上班按半小时向上取整、下班按半小时向下取整，与考勤制度保持一致。写入计数
+    累加到 ``stats``，本函数不返回业务结果。
+    """
+    # 横线是模板占位符而非真实打卡，跳过以免把占位符当成有效时间写入。
     if cols["sys_on"] and on_text and on_text not in ("-", "—"):
         ws.cell(row, cols["sys_on"]).value = on_text
         stats.filled_time += 1
@@ -246,6 +267,7 @@ def _write_matched_times(ws, row, cols, on_text, off_text, opts, stats):
         ws.cell(row, cols["sys_off"]).value = off_text
     if not opts.auto_actual:
         return
+    # 自动生成实际时间时按半小时整段取整：上班向上、下班向下，统一双端展示口径。
     if cols["act_on"]:
         rounded_on = cc.round_half_hour(parse_time(on_text), "up")
         if rounded_on is not None:
@@ -268,7 +290,12 @@ def _compute_row_work(
     anomalies,
     log,
 ):
-    """根据实际上下班时间计算工时；返回该行是否具备完整可计算时间。"""
+    """根据实际上下班时间计算工时；返回该行是否具备完整可计算时间。
+
+    工时写入“实际工作时间”列；无异常且开启加班时才写“加班”列，异常行只标黄
+    并进入核对报告，不生成加班值，避免把可疑数据直接当成有效结果。休息时间列
+    缺失时按 0 处理。
+    """
     if not (cols["work"] and cols["act_on"] and cols["act_off"]):
         return False
     actual_on = parse_time(ws.cell(row, cols["act_on"]).value)
@@ -285,6 +312,7 @@ def _compute_row_work(
             rest, hours, shift, reason, stats, anomalies, log,
         )
     elif opts.overtime and cols["ot"]:
+        # 仅无异常时进入此分支；异常行不生成加班值，避免把待核对数据直接当有效结果。
         overtime = round(hours - base, 2)
         ws.cell(row, cols["ot"]).value = overtime if overtime > 0 else 0
     return True
@@ -306,7 +334,11 @@ def _record_shift_anomaly(
     anomalies,
     log,
 ):
-    """标记工时异常并添加到跨页签核对报告。"""
+    """标记工时异常并添加到跨页签核对报告。
+
+    异常行会在原表标黄，并把工作簿、行号、姓名、日期及计算结果写入统一报告，
+    供人工从报告页快速定位复核；本函数只记录和提示，不修正任何数据。
+    """
     _highlight_row(ws, row, cols)
     stats.anomalies += 1
     anomalies.append({
@@ -338,7 +370,10 @@ def _record_missing_punch_anomaly(
     anomalies,
     log,
 ):
-    """源数据未命中且无完整人工实际时间时，记录缺卡异常。"""
+    """源数据未命中且无完整人工实际时间时，记录缺卡异常。
+
+    “假、休、调休”等非工时标记视为合理缺卡，不误报；其余行标黄并写入核对报告。
+    """
     if _row_rest_mark(ws, row, cols, skip):
         return
     _highlight_row(ws, row, cols)
@@ -368,11 +403,16 @@ def _fill_attendance_sheet(
     anomalies,
     log,
 ):
-    """处理一个有效数据页签，返回该页签独立统计。"""
+    """处理一个有效数据页签，返回该页签独立统计。
+
+    从 ``start`` 起逐行扫描到工作表末尾；姓名或日期为空的行跳过，避免把表尾
+    说明文字误当业务行。匹配、写入、工时计算和缺卡异常全部累加到本页签统计中。
+    """
     stats = _SheetFillStats()
     for row in range(start, ws.max_row + 1):
         name = norm_name(ws.cell(row, cols["name"]).value)
         day = norm_date(ws.cell(row, cols["date"]).value)
+        # 姓名或日期为空的行不是业务行，跳过可避免把表尾说明误配为缺卡。
         if not name or day is None:
             continue
         key = (name, day)
@@ -419,7 +459,8 @@ def fill_workbook(target_path, source_data, out_path, opts=None, log=None):
     """将合并后的打卡数据写入一个考勤模板，并保存独立输出文件。
 
     页签选择、单行写入、工时计算和异常记录已拆成独立步骤；所有步骤仍共用同一个打开
-    的工作簿，保持原模板样式、计数口径和异常报告结构不变。
+    的工作簿，保持原模板样式、计数口径和异常报告结构不变。无论写入是否成功，
+    工作簿都会在 finally 中关闭；异常不在本层吞掉，由统一入口向调用方抛出。
     """
     opts = opts or cc.DEFAULTS
     log = log or (lambda *a, **k: None)
@@ -442,6 +483,7 @@ def fill_workbook(target_path, source_data, out_path, opts=None, log=None):
             if not cols["name"] or not cols["date"]:
                 log("跳过工作表 '%s'（未找到姓名/日期列）" % ws.title)
                 continue
+            # 数据起始行未配置时按“表头行 + 1”处理，确保表头本身不会进入业务行。
             sheet_stats = _fill_attendance_sheet(
                 ws,
                 data_start if data_start else header_row + 1,

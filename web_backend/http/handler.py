@@ -90,6 +90,7 @@ class ApiHandler(BaseHTTPRequestHandler):
     """峰运通 Web API 与静态前端的同源请求处理器。"""
 
     server_version = "FYTWeb/1.0"
+    # 单个请求的套接字超时；长任务在后台线程运行，不在 HTTP 请求线程中等待。
     timeout = 60
     bindings: HandlerBindings
 

@@ -10,7 +10,9 @@ import Button from "./ui/Button";
 import FormField from "./ui/FormField";
 import "./workflows.css";
 
+/** 支持人工复核的业务功能键，与工作区 SPECS 中的 reviewAction 类型保持一致。 */
 type ReviewKind = "reconcile" | "pivot" | "invoice" | "compare" | "supplier_batch";
+/** 复核面板公共入参：功能类型、只读分析计划、确认回调和提交锁。 */
 type ReviewPanelProps = {
   kind: ReviewKind;
   result: unknown;
@@ -47,6 +49,7 @@ function ReviewShell({ title, description, onConfirm, busy, confirmDisabled, chi
   </section>;
 }
 
+/** 工时对账只读分析计划：目标表结构与两侧姓名匹配候选。 */
 type ReconcilePlan = { target: { file: string; sheet: string; sheets?: string[]; name_col?: number; comp_col?: number; work_col?: number }; only_labor?: string[]; only_zong?: string[]; sources?: Array<Record<string, unknown>>; labor?: Array<Record<string, unknown>> };
 
 /** 复核目标表工作表、列角色和两侧姓名配对，只提交相对分析默认值发生变化的覆盖项。 */
@@ -71,6 +74,7 @@ function ReconcileReview({ plan, onConfirm, busy }: { plan: ReconcilePlan; onCon
   </ReviewShell>;
 }
 
+/** 销售透视只读分析计划：工作表纳入范围、疑似误删行和单位/规格归并候选。 */
 type PivotPlan = { sheets?: Array<{ id: number | string; file: string; sheet: string; use: boolean; kind: string; confidence: number; reason?: string }>; held_index?: Array<{ sid: number | string; ridx: number; file?: string; sheet?: string; rec?: unknown }>; unit_conflicts?: Array<{ gk: unknown; default?: string; dist?: Record<string, number>; name?: string; code?: string; spec?: string }>; spec_merges?: Array<{ gk: unknown; default?: string; variants?: Record<string, number>; name?: string; code?: string }> };
 
 /** 复核透视表纳入范围、疑似误删行以及单位和规格冲突。 */
@@ -102,7 +106,9 @@ function PivotReview({ plan, onConfirm, busy }: { plan: PivotPlan; onConfirm: (c
   </ReviewShell>;
 }
 
+/** 发票分析计划中的单张识别结果；`item_seed` 与 `note_seed` 是可编辑字段的识别种子。 */
 type InvoiceItem = { num?: string; date?: string; seller?: string; item_seed?: string; amount?: number; tax?: number; total?: number; rate?: number | string; note_seed?: string; special?: boolean };
+/** 发票复核界面中的可编辑行，额外包含勾选状态。 */
 type InvoiceRow = { selected: boolean; num: string; date: string; seller: string; item: string; amount?: number; tax?: number; total?: number; rate?: number | string; note: string; special: boolean };
 
 /** 按月份和发票类型筛选识别结果，允许逐张修正可编辑字段后生成台账。 */
@@ -147,6 +153,7 @@ function CompareReview({ plan, onConfirm, busy }: { plan: { headers1?: string[];
   </ReviewShell>;
 }
 
+/** 供应商批次表分析计划：供应商范围、批次行数、未匹配和排除原厂记录数。 */
 type SupplierBatchPlan = {
   suppliers?: Array<{ name: string; rows: number; batches?: Array<{ batch: string; rows: number }> }>;
   batches?: Array<{ batch: string; file: string; sheet: string; rows: number }>;

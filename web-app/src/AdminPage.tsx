@@ -1,3 +1,10 @@
+/**
+ * 系统管理页面。
+ *
+ * 管理员中心统一处理账号审核与权限、任务/上传数据、备份与回收站、消息公告、
+ * 审计记录和主数据维护；界面只做二次确认与状态互斥，实际鉴权和数据操作
+ * 全部由服务端执行。
+ */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { CatalogPanel } from "./CatalogPanel";
 import {
@@ -35,7 +42,9 @@ import {
 import { Icon } from "./icons";
 import PageHeader from "./ui/PageHeader";
 
+/** 管理中心的六个选项卡；`catalog` 复用独立的主数据面板组件。 */
 type AdminTab = "users" | "data" | "safety" | "messages" | "audit" | "catalog";
+/** 管理员视角下的账号扩展记录，包含任务数、会话数和内置管理员标记。 */
 type AdminUser = AdminData["users"][number];
 
 /** 把字节数转换成管理页使用的四级文件大小标签。 */

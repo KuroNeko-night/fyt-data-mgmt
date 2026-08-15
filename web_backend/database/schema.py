@@ -335,6 +335,7 @@ CREATE TABLE IF NOT EXISTS daily_source_uploads (
 """
 
 
+# 索引只依赖当前完整结构，必须在迁移补列完成后执行；全部 IF NOT EXISTS 保证重复启动幂等。
 INDEX_STATEMENTS = (
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_id ON sessions(id)",
     "CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)",

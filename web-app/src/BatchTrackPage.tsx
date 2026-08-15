@@ -1,8 +1,15 @@
+/**
+ * 批次跟踪页面。
+ *
+ * 通过服务端跨任务检索同一批次号在考勤、到料、对账、采购等环节的处理记录，
+ * 前端只负责展示动作中文名与状态，不参与批次解析或结果文件内容读取。
+ */
 import { FormEvent, useState } from "react";
 import { batchTrack, type BatchTrackItem } from "./api";
 import { Icon } from "./icons";
 import PageHeader from "./ui/PageHeader";
 
+// 服务端动作键到客户界面业务名称的映射；未知动作由调用方回退为“业务处理”。
 const ACTION_LABELS: Record<string, string> = {
   "attendance.run": "考勤填报", "reconcile.run": "工时对账", "web.reconcile.review": "工时对账复核",
   "web.arrival": "到料明细", "pivot.run": "销售透视", "web.pivot.review": "销售透视复核",

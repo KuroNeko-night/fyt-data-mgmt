@@ -1,4 +1,8 @@
-"""工作台概览与个人任务看板聚合服务。"""
+"""工作台概览与个人任务看板聚合服务。
+
+本模块为所有角色提供启动数据，但任务查询严格按当前 user_id 隔离；待审核账号数等
+管理指标只作为聚合值下发，前端按角色决定是否展示，隐藏导航不能替代后端鉴权。
+"""
 
 from __future__ import annotations
 
@@ -11,6 +15,7 @@ from typing import Any, Callable
 class DashboardDependencies:
     """工作台聚合所需的运行时依赖。"""
 
+    # 数据库与时间依赖由组合根注入；时间统一用业务时区口径。
     db_lock: Any
     db: Callable[[], Any]
     now_iso: Callable[[], str]
@@ -18,6 +23,7 @@ class DashboardDependencies:
     business_date: Callable[[str], str]
     is_review_pending: Callable[[Any], bool]
     feature_key_for_action: Callable[[object], str]
+    # 功能目录来自配置；任务文件 JSON 使用兼容解析器，脏项不会阻断工作台。
     features: list[dict[str, object]]
     json_list: Callable[..., list[Any]]
     user_public: Callable[[Any], dict[str, object]]
@@ -29,7 +35,7 @@ def overview(handler: Any, deps: DashboardDependencies) -> None:
     user = handler.require_user()
     with deps.db_lock, deps.db() as connection:
         pending = connection.execute(
-            "SELECT COUNT(*) AS n FROM users WHERE status = 'pending'",
+            "SELECT COUNT(*) AS n FROM users WHERE status = 'pending'",  # 全局待审核数，所有角色都会收到但前端按角色展示。
         ).fetchone()["n"]
         total_users = connection.execute(
             "SELECT COUNT(*) AS n FROM users WHERE status = 'approved'",
@@ -170,7 +176,7 @@ def dashboard(handler: Any, deps: DashboardDependencies) -> None:
             (user["id"],),
         ).fetchall()
         pending_users = connection.execute(
-            "SELECT COUNT(*) AS n FROM users WHERE status = 'pending'",
+            "SELECT COUNT(*) AS n FROM users WHERE status = 'pending'",  # 全局待审核数，所有角色都会收到但前端按角色展示。
         ).fetchone()["n"]
         approved_users = connection.execute(
             "SELECT COUNT(*) AS n FROM users WHERE status = 'approved'",
