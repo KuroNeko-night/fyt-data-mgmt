@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "峰运通数据管理系统 · 运行时架构",
+    "quality_profile": "showcase"
+  },
+  "components": [
+    { "id": "browser", "type": "external", "label": "用户浏览器", "sublabel": "Web 端入口", "pos": [60, 80], "size": [150, 64] },
+    { "id": "web-react", "type": "frontend", "label": "Web React", "sublabel": "同源 /api", "pos": [60, 200], "size": [150, 64] },
+    { "id": "tauri-react", "type": "frontend", "label": "Tauri 桌面端", "sublabel": "React 19 + Vite", "pos": [60, 360], "size": [150, 64] },
+    { "id": "rust-layer", "type": "backend", "label": "Rust 命令层", "sublabel": "白名单命令 + sidecar", "pos": [60, 480], "size": [150, 64] },
+    { "id": "cloudflared", "type": "external", "label": "Cloudflare Tunnel", "sublabel": "cloudflared 客户端", "pos": [300, 60], "size": [180, 64] },
+    { "id": "http", "type": "backend", "label": "Web HTTP 层", "sublabel": "routes / handler", "pos": [300, 200], "size": [170, 70] },
+    { "id": "services", "type": "backend", "label": "Web 领域服务", "sublabel": "权限 / 上传 / 任务", "pos": [540, 200], "size": [170, 70] },
+    { "id": "task-runner", "type": "backend", "label": "Web 任务运行器", "sublabel": "持久化任务 + 子进程", "pos": [780, 200], "size": [180, 70] },
+    { "id": "bridge", "type": "backend", "label": "core.tauri_bridge", "sublabel": "动作白名单 + stdio", "pos": [1020, 200], "size": [180, 70] },
+    { "id": "core", "type": "backend", "label": "core/ 业务核心", "sublabel": "考勤 / 到料 / 采购 / 日清", "pos": [1260, 200], "size": [180, 70] },
+    { "id": "sqlite", "type": "database", "label": "SQLite", "sublabel": "账号 / 任务 / 审计", "pos": [540, 420], "size": [170, 70] },
+    { "id": "data-root", "type": "database", "label": "用户数据根", "sublabel": "FYT_WEB_DATA · 按用户隔离", "pos": [780, 420], "size": [190, 70] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "用户浏览器端", "wraps": ["browser", "web-react"] },
+    { "kind": "region", "label": "Tauri 桌面端", "wraps": ["tauri-react", "rust-layer"] },
+    { "kind": "security-group", "label": "Web 服务端信任域", "wraps": ["http", "services", "task-runner", "sqlite", "data-root"] },
+    { "kind": "security-group", "label": "桥接子进程信任域", "wraps": ["bridge", "core"] }
+  ],
+  "connections": [
+    { "id": "open-app", "from": "browser", "to": "web-react", "fromSide": "bottom", "toSide": "top", "label": "打开应用", "labelAt": [175, 158] },
+    { "id": "web-request", "from": "web-react", "to": "http", "label": "同源 /api", "variant": "emphasis" },
+    { "id": "http-route", "from": "http", "to": "services", "label": "路由到服务", "labelDy": 44 },
+    { "id": "create-job", "from": "services", "to": "task-runner", "label": "持久化任务", "labelDy": -73 },
+    { "id": "spawn-bridge", "from": "task-runner", "to": "bridge", "label": "子进程 stdio", "variant": "emphasis", "labelDy": -73 },
+    { "id": "dispatch-action", "from": "bridge", "to": "core", "label": "白名单动作", "labelDy": 44 },
+    { "id": "service-sql", "from": "services", "to": "sqlite", "fromSide": "bottom", "toSide": "top", "label": "SQL", "labelDy": 60 },
+    { "id": "service-files", "from": "services", "to": "data-root", "fromSide": "right", "toSide": "top", "label": "上传 / 下载", "via": [[760, 235], [760, 320], [875, 320]], "labelAt": [760, 340] },
+    { "id": "tauri-request", "from": "tauri-react", "to": "rust-layer", "fromSide": "bottom", "toSide": "top", "label": "bridge_request", "labelAt": [175, 438] },
+    { "id": "tauri-stdio", "from": "rust-layer", "to": "bridge", "fromSide": "bottom", "toSide": "left", "label": "sidecar stdio", "via": [[135, 560], [1005, 560], [1005, 235]] },
+    { "id": "tunnel", "from": "cloudflared", "to": "http", "fromSide": "bottom", "toSide": "top", "label": "127.0.0.1:8787", "labelDx": 135 }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "主路径：Web 任务请求", "items": ["浏览器打开 Web React，前端只调用同源 /api", "HTTP 层校验会话与角色后路由到领域服务", "服务把长任务保存为持久化任务 ID 并交给任务运行器", "任务运行器在独立 Python 子进程里通过 stdio 调用同一桥接层"] },
+    { "dot": "violet", "title": "桌面端侧路径", "items": ["Tauri React 通过 Rust 白名单命令发起 bridge_request", "Rust 使用 sidecar 子进程调用 core.tauri_bridge，请求带 request_id", "stderr 传递日志与进度，Rust 按请求精确取消子进程"] },
+    { "dot": "rose", "title": "信任边界", "items": ["Web 服务端使用 HttpOnly + SameSite=Strict 会话 Cookie，角色矩阵同时约束前端入口与后端鉴权", "桥接子进程只暴露动作白名单，路径参数先校验归属与目录穿越", "上传、缓存、输出、运行目录和任务历史按用户 ID 隔离"] },
+    { "dot": "emerald", "title": "持久化与外部依赖", "items": ["SQLite 保存账号、会话、任务、审计、日清、现场问题与回收站记录", "用户数据根保存上传、下载、缓存与回收站文件；业务核心在任务工作目录生成产物并写入同一数据根", "Cloudflare Tunnel 只转发到本机 127.0.0.1:8787，证书与令牌不进入应用镜像"] }
+  ]
+}

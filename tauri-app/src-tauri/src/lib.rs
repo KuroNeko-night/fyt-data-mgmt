@@ -89,7 +89,7 @@ fn python_executable(root: &Path) -> Result<PathBuf, String> {
     if cfg!(debug_assertions) && development.is_file() { // 发布构建禁止静默依赖用户机器上的开发虚拟环境。
         return Ok(development);
     }
-    Err("未找到 Python 核心运行时；开发环境请先运行 setup-modern.ps1".into())
+    Err("未找到 Python 核心运行时；开发环境请先运行 scripts\\setup-modern.ps1".into())
 }
 
 /// 构造 UTF-8、无控制台窗口且兼容 sidecar 与开发 Python 的子进程命令。

@@ -155,6 +155,21 @@ def _header_cells(ws, row, start_column=1, end_column=None):
     ]
 
 
+def _classify_supplier_column(text, column, columns, fallback):
+    """识别供应商列，返回未决的普通供应商备选列。
+
+    “供应商信息”属于明确字段，优先于普通“供应商”；供应商代码、编号和代号不能作为
+    供应商列，只能等待后续真正的供应商文字。
+    """
+    if "供应商" not in text:
+        return fallback
+    if "信息" in text and not columns["supplier"]:
+        columns["supplier"] = column
+    elif not any(word in text for word in ("代码", "编号", "代号")):
+        fallback = fallback or column
+    return fallback
+
+
 def _classify_header_cells(cells):
     """把一行表头归类为到料业务字段列。
 
@@ -174,12 +189,7 @@ def _classify_header_cells(cells):
             columns["demand"] = column
         if not columns["remain"] and _match(text, ALIAS_REMAIN):
             columns["remain"] = column
-        if "供应商" not in text:
-            continue
-        if "信息" in text and not columns["supplier"]:
-            columns["supplier"] = column
-        elif not any(word in text for word in ("代码", "编号", "代号")):
-            supplier_fallback = supplier_fallback or column
+        supplier_fallback = _classify_supplier_column(text, column, columns, supplier_fallback)
     columns["supplier"] = columns["supplier"] or supplier_fallback
     return columns
 

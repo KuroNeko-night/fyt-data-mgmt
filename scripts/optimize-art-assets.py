@@ -174,6 +174,71 @@ def save_primary(source: Path, target: Path, chroma_key: bool) -> None:
         prepared.save(target, target.suffix.lstrip(".").upper(), optimize=True)
 
 
+def _process_asset(asset_id: str, asset: dict, prompt_manifest: dict) -> dict:
+    """处理单个美术资源并返回清单记录。"""
+    if not asset or not asset_id.startswith("A0") or int(asset_id[1:]) > 7:
+        raise RuntimeError(f"本阶段不处理资源 {asset_id}")
+    source_path = CACHE_ROOT / f"{asset_id}-{asset['name']}.png"
+    if not source_path.exists():
+        # 允许原图文件名的中文说明发生变化，但编号必须保持稳定且唯一。
+        source_path = next(CACHE_ROOT.glob(f"{asset_id}-*.png"), None)
+    if not source_path or not source_path.exists():
+        raise RuntimeError(f"缺少 {asset_id} 的对话生成图片，请先复制到 {CACHE_ROOT}")
+    with Image.open(source_path) as source_image:
+        source_size = f"{source_image.width}x{source_image.height}"
+    generated_at = datetime.fromtimestamp(source_path.stat().st_mtime, timezone.utc).isoformat()
+    base_name = asset["name"]
+    clear_old_outputs(base_name)  # 在写新格式前清理旧后缀，保证清单只列出当前有效版本。
+    if asset["chromaKey"]:
+        prepared = CACHE_ROOT / f"{asset_id}-{base_name}-alpha.png"
+        remove_chroma_key(source_path, prepared)
+        validate_transparency(prepared)
+    else:
+        prepared = source_path
+    for target in output_targets(asset, base_name):
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.suffix.lower() == ".png":
+            save_primary(prepared, target, asset["chromaKey"])
+        else:
+            write_webp(prepared, target)
+    if str(asset.get("output", "png")).lower() == "png":
+        # PNG 作为无损主文件时额外生成 WebP，让不同前端可按体积与兼容性选择。
+        for directory in (OUTPUT_ROOT / "web", OUTPUT_ROOT / "tauri"):
+            if directory.exists() and (directory / f"{base_name}.png").exists():
+                write_webp(prepared, directory / f"{base_name}.webp")
+    # 清单统一使用正斜杠，确保在 Windows 生成后仍可被 Linux 和前端工具稳定解析。
+    final_files = [str(path.relative_to(OUTPUT_ROOT)).replace("\\", "/") for path in sorted(OUTPUT_ROOT.rglob(f"{base_name}.*"))]
+    return {
+        "id": asset_id,
+        "version": prompt_manifest["version"],
+        "prompt_file": f"scripts/art-prompts/{asset['promptFile']}",
+        "source_size": source_size,
+        "final_files": final_files,
+        "background": "chroma-key-removed" if asset["chromaKey"] else "opaque",
+        "usage": asset["usage"],
+        "alt": asset["alt"],
+        "generated_at": generated_at,
+    }
+
+
+def _write_manifest(records: list[dict]) -> None:
+    """把本批处理结果写入输出根目录的清单文件。"""
+    OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
+    # 每次只记录本次实际处理的资源，避免把磁盘上无法追溯来源的旧文件伪装成已验收资产。
+    (OUTPUT_ROOT / "manifest.json").write_text(
+        json.dumps(
+            {
+                "version": "v1",
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "assets": records,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ) + "\n",
+        encoding="utf-8",
+    )
+
+
 def main() -> None:
     """按资源清单完成筛选、抠图、格式转换并重建本批资源记录。
 
@@ -194,55 +259,11 @@ def main() -> None:
     # 资源清单是本脚本唯一事实源；读取失败会直接抛出 JSON/OSError，不进入半处理状态。
     prompt_manifest = json.loads((ROOT / "scripts" / "art-prompts" / "manifest.json").read_text(encoding="utf-8"))
     assets = {item["id"]: item for item in prompt_manifest["assets"]}
-    records = []
-    for asset_id in sorted(selected_ids(args.assets)):
-        asset = assets.get(asset_id)
-        if not asset or not asset_id.startswith("A0") or int(asset_id[1:]) > 7:
-            raise RuntimeError(f"本阶段不处理资源 {asset_id}")
-        source_path = CACHE_ROOT / f"{asset_id}-{asset['name']}.png"
-        if not source_path.exists():
-            # 允许原图文件名的中文说明发生变化，但编号必须保持稳定且唯一。
-            source_path = next(CACHE_ROOT.glob(f"{asset_id}-*.png"), None)
-        if not source_path or not source_path.exists():
-            raise RuntimeError(f"缺少 {asset_id} 的对话生成图片，请先复制到 {CACHE_ROOT}")
-        with Image.open(source_path) as source_image:
-            source_size = f"{source_image.width}x{source_image.height}"
-        generated_at = datetime.fromtimestamp(source_path.stat().st_mtime, timezone.utc).isoformat()
-        base_name = asset["name"]
-        clear_old_outputs(base_name)  # 在写新格式前清理旧后缀，保证清单只列出当前有效版本。
-        if asset["chromaKey"]:
-            prepared = CACHE_ROOT / f"{asset_id}-{base_name}-alpha.png"
-            remove_chroma_key(source_path, prepared)
-            validate_transparency(prepared)
-        else:
-            prepared = source_path
-        for target in output_targets(asset, base_name):
-            target.parent.mkdir(parents=True, exist_ok=True)
-            if target.suffix.lower() == ".png":
-                save_primary(prepared, target, asset["chromaKey"])
-            else:
-                write_webp(prepared, target)
-        if str(asset.get("output", "png")).lower() == "png":
-            # PNG 作为无损主文件时额外生成 WebP，让不同前端可按体积与兼容性选择。
-            for directory in (OUTPUT_ROOT / "web", OUTPUT_ROOT / "tauri"):
-                if directory.exists() and (directory / f"{base_name}.png").exists():
-                    write_webp(prepared, directory / f"{base_name}.webp")
-        # 清单统一使用正斜杠，确保在 Windows 生成后仍可被 Linux 和前端工具稳定解析。
-        final_files = [str(path.relative_to(OUTPUT_ROOT)).replace("\\", "/") for path in sorted(OUTPUT_ROOT.rglob(f"{base_name}.*"))]
-        records.append({
-            "id": asset_id,
-            "version": prompt_manifest["version"],
-            "prompt_file": f"scripts/art-prompts/{asset['promptFile']}",
-            "source_size": source_size,
-            "final_files": final_files,
-            "background": "chroma-key-removed" if asset["chromaKey"] else "opaque",
-            "usage": asset["usage"],
-            "alt": asset["alt"],
-            "generated_at": generated_at,
-        })
-    OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
-    # 每次只记录本次实际处理的资源，避免把磁盘上无法追溯来源的旧文件伪装成已验收资产。
-    (OUTPUT_ROOT / "manifest.json").write_text(json.dumps({"version": "v1", "generated_at": datetime.now(timezone.utc).isoformat(), "assets": records}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    records = [
+        _process_asset(asset_id, assets.get(asset_id), prompt_manifest)
+        for asset_id in sorted(selected_ids(args.assets))
+    ]
+    _write_manifest(records)
     print(f"已优化 {len(records)} 个资源，并写入 {OUTPUT_ROOT / 'manifest.json'}")
 
 

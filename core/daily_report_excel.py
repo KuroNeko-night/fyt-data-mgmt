@@ -373,66 +373,75 @@ def _write_brief_and_plan_sheets(workbook, snapshot: Mapping[str, Any]) -> None:
         _finish_table_sheet(plan_sheet, plan_headers, [14, 36, 16, 24, 14, 14])
 
 
+def _write_formal_ledger_sheet(workbook, rows: list) -> None:
+    """写入正式订单台账工作表。"""
+    headers = ["月份", "订单号", "国家", "类型", "数量", "发运完成时间", "状态", "未完成缺件", "未完成危包", "备注"]
+    sheet = _create_table_sheet(workbook, "月度生产订单台账", headers)
+    for order in rows:
+        if not isinstance(order, Mapping):
+            continue
+        sheet.append([
+            order.get("month"), order.get("order_no"), order.get("country"), order.get("order_type"),
+            order.get("quantity"), order.get("shipment_date"), order.get("status"),
+            order.get("outstanding_missing_count", 0), order.get("outstanding_hazardous_count", 0), order.get("note"),
+        ])
+    if sheet.max_row == 1:
+        sheet.append(["本月没有生产订单台账数据"])
+    _finish_table_sheet(sheet, headers, [12, 22, 16, 14, 12, 18, 16, 14, 14, 42])
+
+
+def _write_ledger_detail_sheet(workbook, sheet_name: str, key: str, label: str, rows: list) -> None:
+    """写入缺件或危包明细工作表；两类结构一致，按 ``label`` 区分。"""
+    headers = ["订单号", "类别", "物料号", "零件名称", "数量", "发运订单号", "发运完成时间", "是否完成"]
+    sheet = _create_table_sheet(workbook, sheet_name, headers)
+    for item in rows:
+        if not isinstance(item, Mapping):
+            continue
+        sheet.append([
+            item.get("order_no"), label, item.get("material_code"), item.get("material_name"),
+            item.get("quantity"), item.get("shipment_order_no"), item.get("shipment_date"),
+            "已完成" if item.get("completed") else "未完成",
+        ])
+    if sheet.max_row == 1:
+        sheet.append([f"本月没有{label}记录"])
+    _finish_table_sheet(sheet, headers, [22, 12, 18, 30, 12, 24, 18, 12])
+
+
+def _write_sporadic_ledger_sheet(workbook, rows: list) -> None:
+    """写入零星订单明细工作表。"""
+    headers = ["月份", "订单号", "运输方式", "国家", "订单类型", "托数", "体积(CBM)", "发运时间", "司机车牌", "司机姓名", "司机电话", "状态", "备注"]
+    sheet = _create_table_sheet(workbook, "零星订单明细", headers)
+    for order in rows:
+        if not isinstance(order, Mapping):
+            continue
+        sheet.append([
+            order.get("month"), order.get("order_no"), order.get("transport_mode"), order.get("country"),
+            order.get("order_type"), order.get("pallet_count"), order.get("volume_cbm"),
+            "、".join(order.get("shipment_dates") or []), order.get("driver_plate"), order.get("driver_name"),
+            order.get("driver_phone"), order.get("status"), order.get("note"),
+        ])
+    if sheet.max_row == 1:
+        sheet.append(["本月没有零星订单数据"])
+    _finish_table_sheet(sheet, headers, [12, 22, 14, 14, 14, 10, 14, 22, 16, 14, 20, 14, 38])
+
+
 def _write_production_ledger_sheets(workbook, production_ledger: Mapping[str, Any]) -> None:
     """写入正式订单、缺件/危包和零星订单明细。
 
     正式订单与零星订单字段差异较大，分别建表；订单内嵌的缺件、危包也拆为独立明细，
     使管理人员可以直接筛选未完成项，而不必再次打开原始生产计划。
     """
-    formal_headers = ["月份", "订单号", "国家", "类型", "数量", "发运完成时间", "状态", "未完成缺件", "未完成危包", "备注"]
-    formal_sheet = _create_table_sheet(workbook, "月度生产订单台账", formal_headers)
     formal_orders = production_ledger.get("formal_orders") if isinstance(production_ledger.get("formal_orders"), list) else []
-    for order in formal_orders:
-        if not isinstance(order, Mapping):
-            continue
-        formal_sheet.append([
-            order.get("month"), order.get("order_no"), order.get("country"), order.get("order_type"),
-            order.get("quantity"), order.get("shipment_date"), order.get("status"),
-            order.get("outstanding_missing_count", 0), order.get("outstanding_hazardous_count", 0), order.get("note"),
-        ])
-    if formal_sheet.max_row == 1:
-        formal_sheet.append(["本月没有生产订单台账数据"])
-    _finish_table_sheet(formal_sheet, formal_headers, [12, 22, 16, 14, 12, 18, 16, 14, 14, 42])
-
-    detail_headers = ["订单号", "类别", "物料号", "零件名称", "数量", "发运订单号", "发运完成时间", "是否完成"]
+    _write_formal_ledger_sheet(workbook, formal_orders)
     # 缺件与危包结构一致，复用同一段写入逻辑，同时保留独立工作表便于业务筛选。
     for sheet_name, key, label in (
         ("订单缺件明细", "missing_parts", "缺件"),
         ("订单危包明细", "hazardous_packages", "危包"),
     ):
-        detail_sheet = _create_table_sheet(workbook, sheet_name, detail_headers)
         rows = production_ledger.get(key) if isinstance(production_ledger.get(key), list) else []
-        for item in rows:
-            if not isinstance(item, Mapping):
-                continue
-            detail_sheet.append([
-                item.get("order_no"), label, item.get("material_code"), item.get("material_name"),
-                item.get("quantity"), item.get("shipment_order_no"), item.get("shipment_date"),
-                "已完成" if item.get("completed") else "未完成",
-            ])
-        if detail_sheet.max_row == 1:
-            detail_sheet.append([f"本月没有{label}记录"])
-        _finish_table_sheet(detail_sheet, detail_headers, [22, 12, 18, 30, 12, 24, 18, 12])
-
-    sporadic_headers = ["月份", "订单号", "运输方式", "国家", "订单类型", "托数", "体积(CBM)", "发运时间", "司机车牌", "司机姓名", "司机电话", "状态", "备注"]
-    sporadic_sheet = _create_table_sheet(workbook, "零星订单明细", sporadic_headers)
+        _write_ledger_detail_sheet(workbook, sheet_name, key, label, rows)
     sporadic_orders = production_ledger.get("sporadic_orders") if isinstance(production_ledger.get("sporadic_orders"), list) else []
-    for order in sporadic_orders:
-        if not isinstance(order, Mapping):
-            continue
-        sporadic_sheet.append([
-            order.get("month"), order.get("order_no"), order.get("transport_mode"), order.get("country"),
-            order.get("order_type"), order.get("pallet_count"), order.get("volume_cbm"),
-            "、".join(order.get("shipment_dates") or []), order.get("driver_plate"), order.get("driver_name"),
-            order.get("driver_phone"), order.get("status"), order.get("note"),
-        ])
-    if sporadic_sheet.max_row == 1:
-        sporadic_sheet.append(["本月没有零星订单数据"])
-    _finish_table_sheet(
-        sporadic_sheet,
-        sporadic_headers,
-        [12, 22, 14, 14, 14, 10, 14, 22, 16, 14, 20, 14, 38],
-    )
+    _write_sporadic_ledger_sheet(workbook, sporadic_orders)
 
 
 def run(snapshot: Mapping[str, Any], out_dir: str | None = None, log=None) -> dict[str, object]:

@@ -10,7 +10,7 @@ $sourcePath = Join-Path $buildRoot "dist\FYTCoreBridge.exe"
 $binaryDir = Join-Path $projectRoot "tauri-app\src-tauri\binaries"
 
 if (-not (Test-Path -LiteralPath $pythonPath -PathType Leaf)) {
-    throw "Project virtual environment not found. Run setup-modern.ps1 first."
+    throw "Project virtual environment not found. Run scripts\setup-modern.ps1 first."
 }
 
 # 优先使用 PATH 中的 Rust；rustup 默认目录作为 Windows 新安装环境的兼容回退。

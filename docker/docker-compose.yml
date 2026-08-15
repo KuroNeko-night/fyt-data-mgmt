@@ -3,8 +3,8 @@ name: fyt-data-mgmt
 services:
   fyt-web:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: docker/Dockerfile
       args:
         NODE_IMAGE: "${FYT_DOCKER_NODE_IMAGE:-public.ecr.aws/docker/library/node:22-bookworm-slim}"
         PYTHON_IMAGE: "${FYT_DOCKER_PYTHON_IMAGE:-public.ecr.aws/docker/library/python:3.13-slim-bookworm}"
@@ -60,4 +60,4 @@ volumes:
 secrets:
   fyt_admin_password:
     # 空示例文件允许已有数据库在删除首次密码后继续启动；新数据库仍会因空密码拒绝初始化。
-    file: "${FYT_ADMIN_PASSWORD_FILE:-./secrets/admin-password.example.txt}"
+    file: "${FYT_ADMIN_PASSWORD_FILE:-../secrets/admin-password.example.txt}"

@@ -31,7 +31,8 @@
 ├─ design-system/      双端设计令牌
 ├─ assets/             品牌与已验收美术资源
 ├─ packaging/          Tauri sidecar、Windows/Linux 部署和升级脚本
-├─ scripts/            构建、发布、同步、打包和质量检查
+├─ scripts/            构建、发布、同步、打包、质量检查和 Windows PowerShell 入口
+├─ docker/             Dockerfile 与 Compose 运行编排
 ├─ tests/              unittest 合成数据回归
 └─ docs/               当前实现与维护文档
 ```
@@ -167,6 +168,7 @@ cargo test
 ## 文档与仓库安全
 
 - 行为、接口、权限、模块、输出格式、打包或部署变化都同步 `峰运通数据管理系统/docs/项目全景-模块与实现.md`；本文和 `README.md` 只描述当前实现。
+- 注释质量、文件规模、函数复杂度和嵌套深度等编码约束以 `docs/源码注释与编码风格规范.md` 为长期基线；阶段性计划文档只在仍有维护价值时保留，不得把历史实施状态当作当前约束。
 - 不提交 `.venv`、`node_modules`、`dist`、`target`、`web-data`、可执行 sidecar、生成 schema、日志、缓存、备份、证书、私钥、Token 和真实业务数据。
 - 源码包由 `scripts/build_deploy.py` 的根文件与目录白名单生成；本文件位于仓库根，并随源码包一起交付。
 - 不提交或推送 Git，不发布 Release，不删除文件，不修改生产环境，除非用户明确授权。

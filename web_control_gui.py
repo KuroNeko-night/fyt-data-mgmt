@@ -310,108 +310,10 @@ def _admin_account_exists(path: Path = DB_PATH) -> bool:
             connection.close()  # 只读查询也显式关闭，避免 Windows 上短暂占用数据库文件句柄。
 
 
-def _windows_process_image(pid: int) -> str:
-    """尽力读取 Windows 进程完整路径；权限不足时返回空字符串。
-
-    读取映像名用于验证 PID 文件没有因系统重用 PID 而指向无关进程，不能单靠“PID 存在”
-    就允许控制台终止它。
-    """
-    if not sys.platform.startswith("win") or pid <= 0:
-        return ""
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel32.OpenProcess.restype = ctypes.c_void_p
-    handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION 足够读取映像路径。
-    if not handle:
-        return ""
-    try:
-        size = ctypes.c_ulong(32768)
-        buffer = ctypes.create_unicode_buffer(size.value)
-        if kernel32.QueryFullProcessImageNameW(handle, 0, buffer, ctypes.byref(size)):
-            return buffer.value
-        return ""
-    finally:
-        kernel32.CloseHandle(handle)
-
-
-def _process_exists(pid: int) -> bool:
-    """判断进程是否仍存在；权限不足时按“可能仍运行”处理。
-
-    保守判断可以避免误删仍有效的 PID 文件，真正终止时仍会执行权限和映像名校验。
-    """
-    if pid <= 0:
-        return False
-    if _windows_process_image(pid):
-        return True
-    try:
-        os.kill(pid, 0)
-        return True
-    except PermissionError:
-        return True  # 无权发送信号不等于进程不存在。
-    except (OSError, ProcessLookupError):
-        return False
-
-
-def _read_live_pid(path: Path, expected_names: tuple[str, ...]) -> int | None:
-    """读取 PID 文件并校验进程名称，过期或已被重用的记录会被清理。
-
-    必须先验证映像名才能返回 PID：系统会重用 PID，文件里记录的旧号可能已指向无关进程，
-    直接交给调用方终止会误杀其他程序。
-    """
-    try:
-        value = path.read_text(encoding="ascii", errors="ignore").strip().splitlines()[0]
-        pid = int(value)
-    except (FileNotFoundError, IndexError, ValueError):
-        return None
-    if not _process_exists(pid):
-        path.unlink(missing_ok=True)
-        return None
-    image = Path(_windows_process_image(pid)).name.lower()
-    if image and image not in expected_names:
-        path.unlink(missing_ok=True)
-        return None
-    return pid
-
-
-def _terminate_pid(pid: int) -> None:
-    """直接终止已验证的进程，不启动 taskkill 等可见命令窗口。
-
-    Windows 使用最小的 ``PROCESS_TERMINATE`` 权限打开进程；非 Windows 路径主要服务测试，
-    发送 SIGTERM 让目标有机会自行退出。
-    """
-    if not sys.platform.startswith("win"):
-        os.kill(pid, signal.SIGTERM)
-        return
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel32.OpenProcess.restype = ctypes.c_void_p
-    handle = kernel32.OpenProcess(0x0001, False, pid)  # PROCESS_TERMINATE。
-    if not handle:
-        raise OSError(ctypes.get_last_error(), "没有权限关闭该进程")
-    try:
-        if not kernel32.TerminateProcess(handle, 0):
-            raise OSError(ctypes.get_last_error(), "关闭进程失败")
-    finally:
-        kernel32.CloseHandle(handle)
-
-
-def _write_pid(path: Path, pid: int) -> None:
-    """把控制台拥有的进程号写入 ASCII PID 文件，供重启后的控制台重新发现。
-
-    PID 文件只写 ASCII，避免 Windows 默认代码页把内容写成 GBK；读取方也按 ASCII 容错。
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f"{pid}\n", encoding="ascii")
-
-
-def _remove_owned_pid(path: Path, pid: int) -> None:
-    """仅当 PID 文件仍指向本进程时删除，避免覆盖后误删新进程的所有权记录。"""
-    try:
-        recorded = int(path.read_text(encoding="ascii").strip())
-    except (FileNotFoundError, ValueError):
-        return
-    if recorded == pid:
-        path.unlink(missing_ok=True)
-
-
+from web_control_gui_process import (
+    _process_exists, _read_live_pid, _remove_owned_pid, _terminate_pid,
+    _windows_process_image, _write_pid,
+)
 class _TextValue:
     """给 Tk 标签提供与历史调用方相同的最小文本接口。
 
@@ -733,7 +635,7 @@ class WebControlWindow(tk.Tk):
             "Muted.TLabel",
         )
         cloudflared = _find_cloudflared()
-        self._client_state = _TextValue(settings, "客户端已就绪" if cloudflared else "未找到客户端，请运行 install-cloudflared.ps1")
+        self._client_state = _TextValue(settings, "客户端已就绪" if cloudflared else "未找到客户端，请运行 scripts\\install-cloudflared.ps1")
         for row, (label, value) in enumerate(
             (
                 ("监听地址", self._host),
@@ -930,6 +832,40 @@ class WebControlWindow(tk.Tk):
         """切换状态标签的 ttk 样式。"""
         label.widget.configure(style=style)
 
+    def _apply_runtime_controls(self, web_running: bool, tunnel_running: bool, named: bool) -> None:
+        """按运行状态启停控件，运行期间锁定监听地址和端口。"""
+        any_running = web_running or tunnel_running
+        self._start.setEnabled(not web_running)
+        self._tunnel_start.setEnabled(not tunnel_running)
+        self._tunnel_stop.setEnabled(tunnel_running)
+        self._stop.setEnabled(any_running)
+        self._host.setEnabled(not any_running)
+        self._port.setEnabled(not any_running)
+        self._tunnel_mode.setEnabled(not tunnel_running)
+        self._tunnel_token.setEnabled(not tunnel_running and named)
+        self._save_token_button.setEnabled(not tunnel_running and named)
+        self._clear_token_button.setEnabled(
+            not tunnel_running and self._tunnel_token_configured
+        )
+        self._copy_public.setEnabled(bool(self._public_url))
+
+    def _apply_status_labels(self, web_running: bool, tunnel_running: bool) -> None:
+        """刷新运行状态与公网连接状态两处文本和样式。"""
+        status = "公网运行中" if tunnel_running else "局域网运行中" if web_running else "已停止"
+        self._status.setText(status)
+        self._set_label_style(
+            self._status,
+            "Running.TLabel" if web_running or tunnel_running else "Status.TLabel",
+        )
+        tunnel_connected = tunnel_running and (self._public_url or self._tunnel_connected_logged)  # 命名隧道可能没有可解析的 Quick URL。
+        self._tunnel_status.setText(
+            "已连接" if tunnel_connected else "连接中" if tunnel_running else "未连接"
+        )
+        self._set_label_style(
+            self._tunnel_status,
+            "TunnelRunning.TLabel" if tunnel_connected else "TunnelStatus.TLabel",
+        )
+
     def _refresh_ui(self) -> None:
         """根据两个进程和连接确认状态统一刷新全部控件。
 
@@ -938,26 +874,9 @@ class WebControlWindow(tk.Tk):
         """
         web_running = self._web_running()
         tunnel_running = self._tunnel_running()
-        self._start.setEnabled(not web_running)
-        self._tunnel_start.setEnabled(not tunnel_running)
-        self._tunnel_stop.setEnabled(tunnel_running)
-        self._stop.setEnabled(web_running or tunnel_running)
-        self._host.setEnabled(not web_running and not tunnel_running)
-        self._port.setEnabled(not web_running and not tunnel_running)
-        self._tunnel_mode.setEnabled(not tunnel_running)
         named = self._using_named_tunnel()
-        self._tunnel_token.setEnabled(not tunnel_running and named)
-        self._save_token_button.setEnabled(not tunnel_running and named)
-        self._clear_token_button.setEnabled(
-            not tunnel_running and self._tunnel_token_configured
-        )
-        self._copy_public.setEnabled(bool(self._public_url))
-        status = "公网运行中" if tunnel_running else "局域网运行中" if web_running else "已停止"
-        self._status.setText(status)
-        self._set_label_style(self._status, "Running.TLabel" if web_running or tunnel_running else "Status.TLabel")
-        tunnel_connected = tunnel_running and (self._public_url or self._tunnel_connected_logged)  # 命名隧道可能没有可解析的 Quick URL。
-        self._tunnel_status.setText("已连接" if tunnel_connected else "连接中" if tunnel_running else "未连接")
-        self._set_label_style(self._tunnel_status, "TunnelRunning.TLabel" if tunnel_connected else "TunnelStatus.TLabel")
+        self._apply_runtime_controls(web_running, tunnel_running, named)
+        self._apply_status_labels(web_running, tunnel_running)
         self._last_running_state = (web_running, tunnel_running)
 
     def _drain_web_output(self) -> None:
@@ -1138,17 +1057,17 @@ class WebControlWindow(tk.Tk):
             return
         cloudflared = _find_cloudflared()
         if cloudflared is None:
-            self._client_state.setText("未找到客户端，请运行 install-cloudflared.ps1")
+            self._client_state.setText("未找到客户端，请运行 scripts\\install-cloudflared.ps1")
             messagebox.showwarning(
                 "缺少 Cloudflare 客户端",
-                "请运行 install-cloudflared.ps1 自动安装；\n"
+                "请运行 scripts\\install-cloudflared.ps1 自动安装；\n"
                 "或手动把 cloudflared.exe 放到：\n%s" % (ROOT / "tools"),
                 parent=self,
             )
             return
         self._client_state.setText("客户端已就绪")
         if not _admin_account_exists() and not os.environ.get("FYT_ADMIN_PASSWORD"):
-            messagebox.showwarning("需要设置管理员密码", "首次开放公网访问前，请先运行 reset-web-admin-password.ps1 设置管理员密码。", parent=self)
+            messagebox.showwarning("需要设置管理员密码", "首次开放公网访问前，请先运行 scripts\\reset-web-admin-password.ps1 设置管理员密码。", parent=self)
             self._append_log("[提示] 已取消公网连接：首次启动需要先设置管理员密码。")
             return
         named = self._using_named_tunnel()

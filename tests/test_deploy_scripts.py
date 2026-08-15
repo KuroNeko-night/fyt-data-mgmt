@@ -115,7 +115,7 @@ class DeployScriptTests(unittest.TestCase):
     def test_dockerfile_keeps_portable_defaults_and_non_root_runtime(self):
         """标准 Dockerfile 应使用通用默认源，并以固定低权限用户运行最终镜像。"""
 
-        source = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+        source = (ROOT / "docker" / "Dockerfile").read_text(encoding="utf-8")
         self.assertIn("ARG NODE_IMAGE=node:22-bookworm-slim", source)
         self.assertIn("ARG PYTHON_IMAGE=python:3.13-slim-bookworm", source)
         self.assertIn("ARG NPM_REGISTRY=https://registry.npmjs.org", source)
@@ -128,7 +128,7 @@ class DeployScriptTests(unittest.TestCase):
     def test_compose_preserves_data_and_hardens_runtime(self):
         """Compose 必须把运行数据留在卷中，并保持只读、降权和日志限制。"""
 
-        source = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+        source = (ROOT / "docker" / "docker-compose.yml").read_text(encoding="utf-8")
         self.assertIn('FYT_ADMIN_PASSWORD_FILE: "/run/secrets/fyt_admin_password"', source)
         self.assertIn('${FYT_DATA_DIR:-fyt-data}:/data', source)
         self.assertIn("read_only: true", source)
@@ -143,7 +143,7 @@ class DeployScriptTests(unittest.TestCase):
     def test_docker_build_sources_are_configurable_without_credentials(self):
         """受限网络可覆盖公开镜像地址，但示例不能携带用户名、密码或 Token。"""
 
-        compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+        compose = (ROOT / "docker" / "docker-compose.yml").read_text(encoding="utf-8")
         example = (ROOT / ".env.example").read_text(encoding="utf-8")
         for name in (
             "FYT_DOCKER_NODE_IMAGE",

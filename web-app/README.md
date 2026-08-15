@@ -1,4 +1,4 @@
-# 峰运通 Web 入口
+﻿# 峰运通 Web 入口
 
 这是面向局域网的浏览器入口，前端由 Vite 构建，服务端使用 Python 标准库托管静态文件并提供 SQLite 账号服务。
 
@@ -9,13 +9,13 @@
 ```powershell
 npm --prefix web-app install
 npm --prefix web-app run build
-.\run-web.ps1
+.\scripts\run-web.ps1
 ```
 
 也可以直接启动图形控制台，快速设置端口并启动/关闭服务：
 
 ```powershell
-.\run-web-gui.ps1
+.\scripts\run-web-gui.ps1
 ```
 
 控制台关闭窗口时会询问是否同时停止由它启动的服务；选择“否”可让 Web 服务继续在后台运行。
@@ -24,7 +24,7 @@ npm --prefix web-app run build
 
 ## 账号规则
 
-- 首次启动自动创建管理员账号 `admin`：未设置密码时生成随机密码且不显示在日志中，请使用 `reset-web-admin-password.ps1` 设置已知密码。
+- 首次启动自动创建管理员账号 `admin`：未设置密码时生成随机密码且不显示在日志中，请使用 `scripts\reset-web-admin-password.ps1` 设置已知密码。
 - 可通过 `$env:FYT_ADMIN_PASSWORD` 或 `-AdminPassword` 在首次初始化前指定管理员密码。
 - 新用户注册后状态为“待审核”，管理员在“账号审核”页面通过或拒绝。
 - 密码使用 PBKDF2-HMAC-SHA256 加盐保存，会话令牌保存于 SQLite，默认有效期 7 天。

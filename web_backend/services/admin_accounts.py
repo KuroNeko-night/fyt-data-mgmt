@@ -108,6 +108,36 @@ def update_user(handler: Any, path: str, body: dict[str, object], deps: AdminAcc
         connection.execute("INSERT INTO audit_log(actor_id, action, target_user_id, created_at) VALUES (?, ?, ?, ?)", (actor["id"], "update_user", user_id, deps.now_iso()))
     handler.send_json({"message": "账号资料已更新"})
 
+def _validate_role_change(target: Any, actor: Any, role: str) -> None:
+    """校验角色变更的保护规则，全部通过才允许继续写库。"""
+    if target["id"] == actor["id"]:  # 防止管理员误降权自己后失去系统管理入口。
+        raise ApiError(HTTPStatus.BAD_REQUEST, "不能修改当前账号的管理员权限")
+    if target["username"] == "admin" and role != "admin":  # 内置账号作为恢复入口，永远不能撤销管理员权限。
+        raise ApiError(HTTPStatus.BAD_REQUEST, "不能撤销内置管理员权限")
+    if role == "admin" and target["status"] != "approved":
+        raise ApiError(HTTPStatus.BAD_REQUEST, "只有已通过审核且正常使用的账号可以设为管理员")
+
+
+def _ensure_admin_remains(connection: Any) -> None:
+    """降权前确认系统仍至少保留一名管理员。"""
+    admin_count = connection.execute("SELECT COUNT(*) AS n FROM users WHERE role = 'admin'").fetchone()["n"]
+    if admin_count <= 1:
+        raise ApiError(HTTPStatus.BAD_REQUEST, "系统至少需要保留一名管理员")
+
+
+def _role_audit_action(previous_role: str, role: str) -> str:
+    """返回角色变更的精确审计动作，便于回溯“授予”和“撤销”方向。"""
+    if role == "admin":
+        return "grant_admin"
+    if previous_role == "admin":
+        return "revoke_admin"
+    if role == "team_leader":
+        return "grant_team_leader"
+    if previous_role == "team_leader":
+        return "revoke_team_leader"
+    return "revoke_privileged_role"
+
+
 def update_user_role(handler: Any, path: str, body: dict[str, object], deps: AdminAccountDependencies) -> None:
     """调整账号角色，并保护当前管理员、内置管理员和最后一名管理员。
 
@@ -124,35 +154,17 @@ def update_user_role(handler: Any, path: str, body: dict[str, object], deps: Adm
         target = connection.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
         if target is None:
             raise ApiError(HTTPStatus.NOT_FOUND, "用户不存在")
-        if target["id"] == actor["id"]:  # 防止管理员误降权自己后失去系统管理入口。
-            raise ApiError(HTTPStatus.BAD_REQUEST, "不能修改当前账号的管理员权限")
-        if target["username"] == "admin" and role != "admin":  # 内置账号作为恢复入口，永远不能撤销管理员权限。
-            raise ApiError(HTTPStatus.BAD_REQUEST, "不能撤销内置管理员权限")
-        if role == "admin" and target["status"] != "approved":
-            raise ApiError(HTTPStatus.BAD_REQUEST, "只有已通过审核且正常使用的账号可以设为管理员")
+        _validate_role_change(target, actor, role)
         if target["role"] == role:
             handler.send_json({"message": "账号权限未发生变化"})
             return
         if role == "user":
-            admin_count = connection.execute("SELECT COUNT(*) AS n FROM users WHERE role = 'admin'").fetchone()["n"]  # 降权前确认系统仍保留管理员。
-            if admin_count <= 1:
-                raise ApiError(HTTPStatus.BAD_REQUEST, "系统至少需要保留一名管理员")
+            _ensure_admin_remains(connection)
         previous_role = str(target["role"] or "user")  # 审计动作需要知道角色变更方向，而不只是最终值。
         connection.execute("UPDATE users SET role = ? WHERE id = ?", (role, user_id))
-        # 审计记录保留角色变更的实际方向，便于管理员回溯“授予”和“撤销”操作。
-        if role == "admin":
-            action = "grant_admin"
-        elif previous_role == "admin":
-            action = "revoke_admin"
-        elif role == "team_leader":
-            action = "grant_team_leader"
-        elif previous_role == "team_leader":
-            action = "revoke_team_leader"
-        else:
-            action = "revoke_privileged_role"
         connection.execute(
             "INSERT INTO audit_log(actor_id, action, target_user_id, created_at) VALUES (?, ?, ?, ?)",
-            (actor["id"], action, user_id, deps.now_iso()),
+            (actor["id"], _role_audit_action(previous_role, role), user_id, deps.now_iso()),
         )
     messages = {
         "admin": "已授予管理员权限",

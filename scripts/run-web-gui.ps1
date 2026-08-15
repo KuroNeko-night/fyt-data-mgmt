@@ -6,15 +6,16 @@
 # 默认立即返回，让用户可以关闭当前 PowerShell 窗口而不影响控制台进程。
 $ErrorActionPreference = "Stop"
 $env:PYTHONIOENCODING = "utf-8"
+$ProjectRoot = Split-Path $PSScriptRoot -Parent  # 脚本位于 scripts/，仓库根目录在上一级。
 
-$python = Join-Path $PSScriptRoot ".venv\Scripts\pythonw.exe"  # GUI 必须使用 pythonw，避免额外命令窗口。
+$python = Join-Path $ProjectRoot ".venv\Scripts\pythonw.exe"  # GUI 必须使用 pythonw，避免额外命令窗口。
 if (-not (Test-Path -LiteralPath $python)) {
-  throw "尚未安装现代环境，请先运行 setup-modern.ps1"
+  throw "尚未安装现代环境，请先运行 scripts\setup-modern.ps1"
 }
-$script = Join-Path $PSScriptRoot "web_control_gui.py"
+$script = Join-Path $ProjectRoot "web_control_gui.py"
 $process = Start-Process -FilePath $python `
   -ArgumentList ('"{0}"' -f $script) `
-  -WorkingDirectory $PSScriptRoot `
+  -WorkingDirectory $ProjectRoot `
   -WindowStyle Hidden `
   -PassThru
 if ($NoExit) { $process.WaitForExit(); exit $process.ExitCode }  # 显式等待只影响调用脚本，不改变 GUI 生命周期。

@@ -3,9 +3,10 @@
 # 在本机停止服务后重置 Web 数据库中的 admin 密码。
 # 密码通过 SecureString 读取，只在当前进程内短暂转换为明文并经环境变量传给 Python；finally
 # 会清零非托管内存并移除环境变量。脚本复用服务端哈希和建库实现，不自行复制密码算法。
-$python = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"  # 必须使用项目环境以加载同版本 web_server。
+$ProjectRoot = Split-Path $PSScriptRoot -Parent  # 脚本位于 scripts/，仓库根目录在上一级。
+$python = Join-Path $ProjectRoot ".venv\Scripts\python.exe"  # 必须使用项目环境以加载同版本 web_server。
 if (-not (Test-Path -LiteralPath $python)) {
-  throw "尚未安装现代环境，请先运行 setup-modern.ps1。"
+  throw "尚未安装现代环境，请先运行 scripts\setup-modern.ps1。"
 }
 
 $secure = Read-Host "请输入新的管理员密码（至少 10 位，且包含字母和数字）" -AsSecureString

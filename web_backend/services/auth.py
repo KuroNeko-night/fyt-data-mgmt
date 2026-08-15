@@ -79,6 +79,52 @@ def register(handler: Any, body: dict[str, object], deps: AuthDependencies) -> N
     handler.send_json({"message": "注册申请已提交，请等待管理员审核"}, HTTPStatus.CREATED)
 
 
+def _login_attempt_key(address: str, username: str) -> str:
+    """生成按“来源地址+账号”隔离的失败计数键，避免一个账号拖累全体用户。"""
+    return hashlib.sha256(f"{address}\0{username}".encode("utf-8")).hexdigest()
+
+
+def _check_login_lockout(attempt: Any, now: int) -> None:
+    """已有锁定且未过期时，按剩余分钟数拒绝本次登录。"""
+    if attempt and int(attempt["locked_until"] or 0) > now:
+        minutes = max(1, (int(attempt["locked_until"]) - now + 59) // 60)
+        raise ApiError(HTTPStatus.TOO_MANY_REQUESTS, f"登录尝试次数过多，请在 {minutes} 分钟后重试")
+
+
+def _record_failed_login(
+    connection: Any, attempt_key: str, now: int, deps: AuthDependencies,
+) -> int:
+    """累加失败窗口并写回登录尝试表，返回更新后的失败次数。"""
+    attempt = connection.execute(
+        "SELECT * FROM login_attempts WHERE attempt_key = ?", (attempt_key,)
+    ).fetchone()
+    if attempt is None or now - int(attempt["window_started"]) > deps.login_window_seconds:  # 窗口过期后重新计数，而不是沿用历史失败次数。
+        failures = 1
+        window_started = now
+    else:
+        failures = int(attempt["failures"]) + 1
+        window_started = int(attempt["window_started"])
+    locked_until = now + deps.login_lock_seconds if failures >= deps.login_failure_limit else 0  # 达到阈值才锁定，普通失败不会持续延长锁定。
+    connection.execute(
+        "INSERT INTO login_attempts(attempt_key, failures, window_started, locked_until, last_failed_at) "
+        "VALUES (?, ?, ?, ?, ?) ON CONFLICT(attempt_key) DO UPDATE SET "
+        "failures = excluded.failures, window_started = excluded.window_started, "
+        "locked_until = excluded.locked_until, last_failed_at = excluded.last_failed_at",
+        (attempt_key, failures, window_started, locked_until, now),
+    )
+    return failures
+
+
+def _reject_inactive_account(row: Any) -> None:
+    """密码正确后仍按账号状态拒绝待审核、拒绝和暂停账号。"""
+    if row["status"] == "pending":
+        raise ApiError(HTTPStatus.FORBIDDEN, "账号正在等待管理员审核")
+    if row["status"] == "rejected":
+        raise ApiError(HTTPStatus.FORBIDDEN, "注册申请未通过，请联系管理员")
+    if row["status"] == "disabled":
+        raise ApiError(HTTPStatus.FORBIDDEN, "账号已暂停使用，请联系管理员")
+
+
 def login(handler: Any, body: dict[str, object], deps: AuthDependencies) -> None:
     """执行账号状态、失败限流、密码校验并创建新会话。
 
@@ -91,45 +137,22 @@ def login(handler: Any, body: dict[str, object], deps: AuthDependencies) -> None
     password = str(body.get("password", ""))
     now = int(time.time())
     address = str(handler.client_address[0] if handler.client_address else "")[:64]
-    attempt_key = hashlib.sha256(f"{address}\0{username}".encode("utf-8")).hexdigest()  # 失败计数按“来源地址+账号”隔离，避免一个账号拖累全体用户。
+    attempt_key = _login_attempt_key(address, username)
     with deps.db_lock, deps.db() as connection:
         attempt = connection.execute(
             "SELECT * FROM login_attempts WHERE attempt_key = ?", (attempt_key,)
         ).fetchone()
-        if attempt and int(attempt["locked_until"] or 0) > now:
-            minutes = max(1, (int(attempt["locked_until"]) - now + 59) // 60)
-            raise ApiError(HTTPStatus.TOO_MANY_REQUESTS, f"登录尝试次数过多，请在 {minutes} 分钟后重试")
+        _check_login_lockout(attempt, now)
         # 查询在锁内完成，慢速密码校验放在锁外，避免 bcrypt/argon2 占用 SQLite 写锁。
         row = connection.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
     valid = bool(row and deps.verify_password(password, row["salt"], row["password_hash"]))  # 不存在的账号也走统一失败响应，避免通过接口枚举账号。
     if not valid:
         with deps.db_lock, deps.db() as connection:
-            attempt = connection.execute(
-                "SELECT * FROM login_attempts WHERE attempt_key = ?", (attempt_key,)
-            ).fetchone()
-            if attempt is None or now - int(attempt["window_started"]) > deps.login_window_seconds:  # 窗口过期后重新计数，而不是沿用历史失败次数。
-                failures = 1
-                window_started = now
-            else:
-                failures = int(attempt["failures"]) + 1
-                window_started = int(attempt["window_started"])
-            locked_until = now + deps.login_lock_seconds if failures >= deps.login_failure_limit else 0  # 达到阈值才锁定，普通失败不会持续延长锁定。
-            connection.execute(
-                "INSERT INTO login_attempts(attempt_key, failures, window_started, locked_until, last_failed_at) "
-                "VALUES (?, ?, ?, ?, ?) ON CONFLICT(attempt_key) DO UPDATE SET "
-                "failures = excluded.failures, window_started = excluded.window_started, "
-                "locked_until = excluded.locked_until, last_failed_at = excluded.last_failed_at",
-                (attempt_key, failures, window_started, locked_until, now),
-            )
+            failures = _record_failed_login(connection, attempt_key, now, deps)
         if failures >= deps.login_failure_limit:
             raise ApiError(HTTPStatus.TOO_MANY_REQUESTS, "登录尝试次数过多，请在 15 分钟后重试")
         raise ApiError(HTTPStatus.UNAUTHORIZED, "账号或密码不正确")
-    if row["status"] == "pending":
-        raise ApiError(HTTPStatus.FORBIDDEN, "账号正在等待管理员审核")
-    if row["status"] == "rejected":
-        raise ApiError(HTTPStatus.FORBIDDEN, "注册申请未通过，请联系管理员")
-    if row["status"] == "disabled":
-        raise ApiError(HTTPStatus.FORBIDDEN, "账号已暂停使用，请联系管理员")
+    _reject_inactive_account(row)
     token = secrets.token_urlsafe(36)  # 高熵令牌只放在 Cookie/请求头中，数据库用于精确撤销会话。
     session_id = uuid.uuid4().hex  # 对外设备编号与秘密令牌分离，删除设备时不暴露令牌。
     timestamp = deps.now_iso()

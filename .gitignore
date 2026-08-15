@@ -74,6 +74,10 @@ docker-compose.override.yml
 *.token
 *.zip
 
+# 编排运行期工件
+.vibeskills/
+outputs/
+
 # 操作系统、编辑器与本地工具
 .DS_Store
 Thumbs.db

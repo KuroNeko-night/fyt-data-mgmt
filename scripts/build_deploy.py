@@ -185,22 +185,13 @@ SOURCE_ROOT_FILES = (
     ".gitignore",
     "AGENTS.md",
     "CLAUDE.md",
-    "Dockerfile",
-    "install-cloudflared.ps1",
     "LICENSE",
     "README.md",
     "pyproject.toml",
     "requirements.txt",
     "requirements-runtime.txt",
-    "reset-web-admin-password.ps1",
-    "run-web-gui.ps1",
-    "run-web-tunnel.ps1",
-    "run-web.ps1",
-    "setup-modern.ps1",
-    "stop-web-tunnel.ps1",
     "web_control_gui.py",
     "web_server.py",
-    "docker-compose.yml",
 )
 
 # 这里只列出项目维护源码和文档目录；web-data、dist 与依赖目录不在候选范围内。
@@ -209,6 +200,7 @@ SOURCE_DIRS = (
     "assets",
     "core",
     "design-system",
+    "docker",
     "docs",
     "packaging",
     "scripts",
@@ -494,11 +486,11 @@ def build_windows_bundle(version: str) -> str:
     with open(os.path.join(staging, "使用说明.txt"), "w", encoding="utf-8") as handle:
         handle.write(WINDOWS_README)
     shutil.copy2(
-        os.path.join(ROOT, "reset-web-admin-password.ps1"),
+        os.path.join(ROOT, "scripts", "reset-web-admin-password.ps1"),
         os.path.join(staging, "重置管理员密码.ps1"),
     )
     shutil.copy2(
-        os.path.join(ROOT, "install-cloudflared.ps1"),
+        os.path.join(ROOT, "scripts", "install-cloudflared.ps1"),
         os.path.join(staging, "重新安装Cloudflare客户端.ps1"),
     )
     bundle_windows_cloudflared(staging, work)

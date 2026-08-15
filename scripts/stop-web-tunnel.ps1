@@ -2,7 +2,8 @@
 # 停止由项目脚本记录的 Web 与 Tunnel 后台进程。
 # 脚本只读取数据目录 logs 下的数字 PID，不按进程名批量结束其他 Python 或 cloudflared 实例；
 # 无论进程是否仍存在，都会清理陈旧 PID 和临时公网地址文件。
-$dataRoot = if ($env:FYT_WEB_DATA) { $env:FYT_WEB_DATA } else { Join-Path $PSScriptRoot "web-data" }  # 与 run-web.ps1 保持同一数据根解析。
+$ProjectRoot = Split-Path $PSScriptRoot -Parent  # 脚本位于 scripts/，仓库根目录在上一级。
+$dataRoot = if ($env:FYT_WEB_DATA) { $env:FYT_WEB_DATA } else { Join-Path $ProjectRoot "web-data" }  # 与 run-web.ps1 保持同一数据根解析。
 $logDir = Join-Path $dataRoot "logs"
 $stopped = $false
 

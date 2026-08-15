@@ -5,7 +5,7 @@
 # 才从 Cloudflare 官方发行地址下载。-ForceDownload 会跳过复用与 winget，便于修复损坏文件。
 $ErrorActionPreference = "Stop"
 
-$root = $PSScriptRoot  # tools 始终位于脚本所在项目目录，不受当前 PowerShell 路径影响。
+$root = Split-Path $PSScriptRoot -Parent  # 脚本位于 scripts/，tools 位于仓库根目录，不受当前 PowerShell 路径影响。
 $toolsDir = Join-Path $root "tools"
 
 # 1. 先检查命令搜索路径和项目已知目录，避免每次运行都下载 latest。

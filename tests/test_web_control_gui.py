@@ -1,4 +1,4 @@
-"""Web 服务控制台的标准库界面与运行逻辑测试。"""
+﻿"""Web 服务控制台的标准库界面与运行逻辑测试。"""
 
 from __future__ import annotations
 
@@ -144,7 +144,7 @@ class WebControlGuiTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         source = "\n".join(
             (root / name).read_text(encoding="utf-8")
-            for name in ("requirements.txt", "pyproject.toml", "run-web-gui.ps1")
+            for name in ("requirements.txt", "pyproject.toml", "scripts/run-web-gui.ps1")
         ).lower()
         self.assertNotIn("py" + "side", source)
         self.assertNotIn("qt" + "py", source)

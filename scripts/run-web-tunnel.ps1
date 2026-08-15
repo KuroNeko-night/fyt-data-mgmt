@@ -8,7 +8,7 @@
 # Web 仅监听 127.0.0.1，公网流量只能经 Tunnel 进入。未指定 TunnelName 时使用地址会变化的
 # Quick Tunnel；指定名称时由 cloudflared 读取用户已有的固定隧道配置。
 $ErrorActionPreference = "Stop"
-$root = $PSScriptRoot
+$root = Split-Path $PSScriptRoot -Parent  # 脚本位于 scripts/，仓库根目录在上一级。
 # 查找顺序与安装脚本一致：PATH 优先，其次项目 tools 和系统标准安装目录。
 $cloudflaredCommand = Get-Command cloudflared -ErrorAction SilentlyContinue
 if (-not $cloudflaredCommand) {
@@ -19,7 +19,7 @@ if (-not $cloudflaredCommand) {
   )
   $cloudflaredPath = $candidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
   if (-not $cloudflaredPath) {
-    throw "未找到 cloudflared。请先运行 install-cloudflared.ps1。"
+    throw "未找到 cloudflared。请先运行 scripts\install-cloudflared.ps1。"
   }
 } else {
   $cloudflaredPath = $cloudflaredCommand.Source
@@ -28,7 +28,7 @@ if (-not $cloudflaredCommand) {
 $pythonw = Join-Path $root ".venv\Scripts\pythonw.exe"
 $server = Join-Path $root "web_server.py"
 if (-not (Test-Path -LiteralPath $pythonw) -or -not (Test-Path -LiteralPath $server)) {
-  throw "尚未安装现代环境，请先运行 setup-modern.ps1。"
+  throw "尚未安装现代环境，请先运行 scripts\setup-modern.ps1。"
 }
 
 # 本入口沿用项目默认数据根；运行状态文件与业务日志分目录存放，不进入发布源码包。

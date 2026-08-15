@@ -112,6 +112,34 @@ def fingerprint(sheet_name, rows, role_kind="", header_row=1):
     return hashlib.sha256(raw).hexdigest()[:24]
 
 
+def _build_mapping_record(name, role_kind, sheet_name, header_row, roles, rows, fp):
+    """组装一条待保存的映射记录，不执行任何文件操作。"""
+    header_index = max(1, int(header_row or 1)) - 1
+    headers = []
+    if len(rows or []) > header_index:
+        headers = _header_tokens(rows[header_index])
+    return {
+        "id": fp,
+        "name": name or (sheet_name or "未命名模板"),
+        "role_kind": role_kind,
+        "fingerprint": fp,
+        "sheet": sheet_name or "",
+        "header": int(header_row or 1),
+        "roles": {str(k): int(v) for k, v in (roles or {}).items()},
+        # 保存规范化表头既便于诊断，也避免后续查看记录时需要重新访问原文件。
+        "headers": headers,
+        "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+    }
+
+
+def _replace_mapping(data, record, fp):
+    """在已读取的存储数据中按指纹替换并置顶映射，截取最近 200 条。"""
+    mappings = [m for m in data["mappings"]
+                if not isinstance(m, dict) or m.get("id") != fp]
+    mappings.insert(0, record)
+    data["mappings"] = mappings[:200]
+
+
 def save_mapping(name, role_kind, sheet_name, header_row, roles, rows=None,
                  fingerprint_value=None, path=None):
     """新增或覆盖一条人工确认映射，并返回保存记录。
@@ -123,29 +151,12 @@ def save_mapping(name, role_kind, sheet_name, header_row, roles, rows=None,
     role_kind = role_kind or "custom"
     fp = fingerprint_value or fingerprint(
         sheet_name, rows or [], role_kind, header_row=header_row)
-    now = time.strftime("%Y-%m-%d %H:%M:%S")
-    record = {
-        "id": fp,
-        "name": name or (sheet_name or "未命名模板"),
-        "role_kind": role_kind,
-        "fingerprint": fp,
-        "sheet": sheet_name or "",
-        "header": int(header_row or 1),
-        "roles": {str(k): int(v) for k, v in (roles or {}).items()},
-        # 保存规范化表头既便于诊断，也避免后续查看记录时需要重新访问原文件。
-        "headers": _header_tokens(
-            (rows or [])[max(1, int(header_row or 1)) - 1]
-            if len(rows or []) >= max(1, int(header_row or 1)) else []),
-        "updated_at": now,
-    }
+    record = _build_mapping_record(name, role_kind, sheet_name, header_row, roles, rows, fp)
     target = path or _store_path()
     with file_lock(target):
         # 锁覆盖完整的“读、过滤、插入、写”事务，避免并发保存互相覆盖。
         data = _read_all(path)
-        mappings = [m for m in data["mappings"]
-                    if not isinstance(m, dict) or m.get("id") != fp]
-        mappings.insert(0, record)
-        data["mappings"] = mappings[:200]
+        _replace_mapping(data, record, fp)
         _write_all(data, path)
     return record
 

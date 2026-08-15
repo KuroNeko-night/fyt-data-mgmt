@@ -74,7 +74,8 @@ Web React ────> 同源 /api ────────> web_server.py + we
 ├─ design-system/      双端设计令牌
 ├─ assets/             品牌和已验收美术资源
 ├─ packaging/          Tauri sidecar、Windows/Linux 部署脚本
-├─ scripts/            构建、打包、升级补丁和质量检查
+├─ scripts/            构建、打包、升级补丁、质量检查和 Windows PowerShell 入口
+├─ docker/             Dockerfile 与 Compose 运行编排
 ├─ tests/              unittest 合成数据回归
 └─ docs/               当前实现与维护文档
 ```
@@ -102,12 +103,12 @@ Web React ────> 同源 /api ────────> web_server.py + we
 ### 安装依赖
 
 ```powershell
-.\setup-modern.ps1
+.\scripts\setup-modern.ps1
 npm --prefix web-app ci
 npm --prefix tauri-app ci
 ```
 
-`setup-modern.ps1` 只安装 `requirements.txt` 中锁定的 Python 依赖，不修改系统 Python。中文控制台建议先设置：
+`scripts\setup-modern.ps1` 只安装 `requirements.txt` 中锁定的 Python 依赖，不修改系统 Python。中文控制台建议先设置：
 
 ```powershell
 $env:PYTHONIOENCODING = "utf-8"
@@ -119,7 +120,7 @@ $env:PYTHONIOENCODING = "utf-8"
 
 ```powershell
 npm --prefix web-app run build
-.\run-web-gui.ps1
+.\scripts\run-web-gui.ps1
 ```
 
 图形控制台可以设置端口、启动或关闭 Web 服务、启动或关闭 Cloudflare Tunnel，并显示局域网地址和公网地址。首次创建数据库时，密码通过控制台安全输入；管理员凭据不会写入登录页、帮助文案或普通运行日志。
@@ -127,13 +128,13 @@ npm --prefix web-app run build
 需要前台查看服务日志时使用：
 
 ```powershell
-.\run-web.ps1 -Foreground
+.\scripts\run-web.ps1 -Foreground
 ```
 
 默认监听 `0.0.0.0:8787`，本机地址为 `http://127.0.0.1:8787/`，局域网用户访问 `http://本机IPv4地址:8787/`。首次访问前请在 Windows 防火墙放行对应 TCP 端口。常规启停优先使用图形控制台；由隧道脚本启动的 Web 服务和隧道可用以下入口一起关闭：
 
 ```powershell
-.\stop-web-tunnel.ps1
+.\scripts\stop-web-tunnel.ps1
 ```
 
 ### 管理员密码
@@ -143,7 +144,7 @@ npm --prefix web-app run build
 忘记密码时先停止服务，再运行：
 
 ```powershell
-.\reset-web-admin-password.ps1
+.\scripts\reset-web-admin-password.ps1
 ```
 
 脚本会以安全输入读取新密码，复用服务端的哈希实现，不把密码写入脚本或配置文件。
@@ -227,7 +228,7 @@ Linux 包随附：
 
 ## Docker 运行与 GitHub 同步
 
-项目提供多阶段 `Dockerfile` 和 `docker-compose.yml`。容器只运行 Web 服务，业务数据通过 `FYT_DATA_DIR` 挂载到 `/data`，不会写入镜像层。
+Docker 构建与 Compose 编排文件统一放在 `docker/`：`docker/Dockerfile` 为多阶段构建，`docker/docker-compose.yml` 为运行编排。容器只运行 Web 服务，业务数据通过 `FYT_DATA_DIR` 挂载到 `/data`，不会写入镜像层。构建上下文仍是仓库根目录，`.dockerignore` 保留在根目录。
 
 Dockerfile 默认使用官方源；Compose 示例为国内网络覆盖使用 AWS Public ECR、npmmirror
 和清华 PyPI 镜像。可通过 `.env` 中的 `FYT_DOCKER_NODE_IMAGE`、
@@ -242,8 +243,8 @@ New-Item -ItemType Directory secrets -Force
   "请替换为至少10位且包含字母和数字的强密码",
   [System.Text.UTF8Encoding]::new($false)
 )
-docker compose up -d --build
-docker compose ps
+docker compose -f docker/docker-compose.yml up -d --build
+docker compose -f docker/docker-compose.yml ps
 ```
 
 默认端口只绑定本机 `127.0.0.1:8787`，适合放在 Caddy/Nginx 或 Cloudflare Tunnel 后面。局域网直连时把 `.env` 中的 `FYT_WEB_BIND` 改为 `0.0.0.0`。详细说明见 `docs/docker与github同步.md`。
@@ -364,7 +365,9 @@ npm --prefix web-app run build
 ## 相关文档
 
 - [项目全景：模块与实现](docs/项目全景-模块与实现.md)
+- [源码注释与编码风格规范](docs/源码注释与编码风格规范.md)
 - [仓库维护与目录规范](docs/仓库维护与目录规范.md)
+- [Docker 运行与 GitHub 同步](docs/docker与github同步.md)
 - [Web 前端说明](web-app/README.md)
 - [设计令牌说明](design-system/README.md)
 - [MIT License](LICENSE)

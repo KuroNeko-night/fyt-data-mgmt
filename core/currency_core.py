@@ -71,6 +71,22 @@ def _integer(n):
     return "".join(parts)
 
 
+def _fraction_cn(yuan, jiao, fen):
+    """生成金额的小数部分中文写法；无角分时返回“整”或空串。"""
+    if jiao == 0 and fen == 0:
+        return "整" if yuan > 0 else ""      # 纯 0 元由调用方兜底为零元整
+    out = ""
+    # 元为0时不写"元";元>0但角为0而分不为0,补"零"
+    if jiao > 0:
+        out += _DIGITS[jiao] + "角"
+    if fen > 0:
+        if yuan > 0 and jiao == 0:
+            out += _DIGITS[0]
+        out += _DIGITS[fen] + "分"
+    # 只有角、无分时按习惯不加“整”。
+    return out
+
+
 def to_capital(amount):
     """把金额（数字或字符串）转成中文大写人民币。
 
@@ -98,19 +114,7 @@ def to_capital(amount):
     out = ""
     if yuan > 0:
         out += int_cn + "元"
-    # 小数部分
-    if jiao == 0 and fen == 0:
-        out += "整" if yuan > 0 else ""     # 纯 0 元在下方兜底
-    else:
-        # 元为0时不写"元";元>0但角为0而分不为0,补"零"
-        if jiao > 0:
-            out += _DIGITS[jiao] + "角"
-        if fen > 0:
-            if yuan > 0 and jiao == 0:
-                out += _DIGITS[0]
-            out += _DIGITS[fen] + "分"
-        elif jiao > 0:
-            pass                            # 只有角、无分,不加"整"(角分习惯不加)
+    out += _fraction_cn(yuan, jiao, fen)
     if not out:
         out = "零元整"                       # 金额为 0
     return True, ("负" + out if neg else out)

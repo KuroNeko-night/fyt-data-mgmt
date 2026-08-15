@@ -2,10 +2,12 @@
 
 ## Docker 运行
 
-项目使用多阶段 Dockerfile：Node.js 阶段只构建 `web-app/dist`，Python 阶段运行 Web 服务。运行镜像不包含 Node.js、前端依赖、测试数据或开发打包工具。
+项目使用多阶段 Dockerfile：Node.js 阶段只构建 `web-app/dist`，Python 阶段运行 Web 服务。运行镜像不包含 Node.js、前端依赖、测试数据或开发打包工具。`docker/Dockerfile` 和
+`docker/docker-compose.yml` 是容器部署的唯二入口，构建上下文为仓库根目录，因此
+`.dockerignore` 保留在根目录并对构建生效。
 
 基础镜像地址通过 `FYT_DOCKER_NODE_IMAGE` 和 `FYT_DOCKER_PYTHON_IMAGE` 配置。
-`Dockerfile` 的标准默认值使用 Docker Hub；Compose 示例默认覆盖为 AWS Public ECR 上的
+`docker/Dockerfile` 的标准默认值使用 Docker Hub；Compose 示例默认覆盖为 AWS Public ECR 上的
 Docker 官方镜像副本，适合无法稳定访问 Docker Hub 的网络。若所在环境可直连 Docker
 Hub，可在 `.env` 中改为 `node:22-bookworm-slim` 和 `python:3.13-slim-bookworm`；企业
 环境也可替换为内部镜像仓库。
@@ -26,14 +28,15 @@ New-Item -ItemType Directory secrets -Force
   "请替换为至少10位且包含字母和数字的强密码",
   [System.Text.UTF8Encoding]::new($false)
 )
-docker compose up -d --build
-docker compose ps
-docker compose logs -f fyt-web
+docker compose -f docker/docker-compose.yml up -d --build
+docker compose -f docker/docker-compose.yml ps
+docker compose -f docker/docker-compose.yml logs -f fyt-web
 ```
 
 若首次构建失败，先执行 `docker desktop status` 和 `docker version` 确认 Linux 引擎已经
-运行，再用 `docker compose --progress plain build` 查看具体是基础镜像、npm 还是 pip
-网络阶段失败。不要因为镜像网络故障删除命名卷，构建过程不会修改业务数据卷。
+运行，再用 `docker compose -f docker/docker-compose.yml --progress plain build` 查看具体
+是基础镜像、npm 还是 pip 网络阶段失败。不要因为镜像网络故障删除命名卷，构建过程不会
+修改业务数据卷。
 
 默认只把容器端口绑定到 `127.0.0.1:8787`，适合由 Caddy、Nginx 或 Cloudflare Tunnel 反向代理。需要局域网直连时，把 `.env` 中的 `FYT_WEB_BIND` 改为 `0.0.0.0`。
 
@@ -73,7 +76,7 @@ bash scripts/sync-github.sh --message "说明本次修改"
 bash scripts/sync-github.sh --message "说明本次修改" --push
 ```
 
-首次管理员密码通过只读 Docker secret 挂载到 `/run/secrets/fyt_admin_password`，不会进入镜像或容器环境变量。`secrets/admin-password.txt` 已被 Git 和 Docker 构建上下文排除。首次建库成功后，可把 `.env` 中的路径改回 `./secrets/admin-password.example.txt`，再删除真实密码文件；已有数据库的后续启动不会读取空示例文件。
+首次管理员密码通过只读 Docker secret 挂载到 `/run/secrets/fyt_admin_password`，不会进入镜像或容器环境变量。`secrets/admin-password.txt` 已被 Git 和 Docker 构建上下文排除。首次建库成功后，可把 `.env` 中的路径改回 `../secrets/admin-password.example.txt`，再删除真实密码文件；已有数据库的后续启动不会读取空示例文件。
 
 首次推送前需要配置 GitHub SSH 或 Personal Access Token。不要把 token 写进脚本、`.env`、Dockerfile 或日志。
 

@@ -12,11 +12,8 @@
 from __future__ import annotations
 
 import contextlib
-import hashlib
-import hmac
 import json
 import os
-import secrets
 import sqlite3
 import subprocess
 import threading
@@ -53,7 +50,7 @@ from web_backend.http.handler import ApiHandler, HandlerBindings
 from web_backend.serializers import json_list as _json_list_from_backend
 from web_backend.serializers import json_object as _json_object_from_backend
 from web_backend.serializers import json_value as _json_value_from_backend
-from web_backend.passwords import password_policy_error
+from web_backend.passwords import hash_password, password_policy_error, verify_password
 from web_backend.services import auth as auth_service
 from web_backend.services import maintenance as maintenance_service
 from web_backend.services import daily_report as daily_report_service
@@ -88,7 +85,6 @@ HOST = server_config.HOST
 PORT = server_config.PORT
 SESSION_DAYS = server_config.SESSION_DAYS
 SESSION_TOUCH_INTERVAL_SECONDS = server_config.SESSION_TOUCH_INTERVAL_SECONDS
-PBKDF2_ROUNDS = server_config.PBKDF2_ROUNDS
 MAX_UPLOAD_BYTES = server_config.MAX_UPLOAD_BYTES
 MAX_MASTER_DATA_UPLOAD_BYTES = server_config.MAX_MASTER_DATA_UPLOAD_BYTES
 MAX_JSON_BODY_BYTES = server_config.MAX_JSON_BODY_BYTES
@@ -322,23 +318,6 @@ def auto_weekly_report_if_due() -> str:
 def auto_monthly_report_if_due() -> str:
     """保留原公开入口，执行每月业务报表任务。"""
     return report_service.auto_monthly_report_if_due(_report_dependencies())
-
-
-def hash_password(password: str, salt: bytes | None = None) -> tuple[str, str]:
-    """使用 PBKDF2 生成密码盐值和摘要，二者均以十六进制持久化。
-
-    新密码默认生成 16 字节随机盐；校验旧密码时显式传入数据库盐。迭代轮数来自统一配置，
-    便于未来提升强度而不在认证服务中散落常量。
-    """
-    salt = salt or secrets.token_bytes(16)
-    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, PBKDF2_ROUNDS)  # 密码始终按 UTF-8 编码，支持中文但不依赖系统代码页。
-    return salt.hex(), digest.hex()
-
-
-def verify_password(password: str, salt_hex: str, digest_hex: str) -> bool:
-    """以恒定时间比较校验登录密码，避免摘要比较泄漏信息。"""
-    _, candidate = hash_password(password, bytes.fromhex(salt_hex))
-    return hmac.compare_digest(candidate, digest_hex)
 
 
 def _daily_management_dependencies() -> daily_management_service.DailyManagementDependencies:

@@ -638,6 +638,62 @@ def _mutate_batch(
         return batch, result
 
 
+def _select_conflict_value(target: dict, decision: str, value: str) -> str:
+    """按管理员决策从冲突候选中选择确定值，并拒绝表外注入。"""
+    if decision == "keep_current":
+        selected = _text(target.get("current_value"))
+        if not selected:
+            raise ValueError("正式主数据库当前没有可保留的值")
+        return selected
+    if decision == "use_candidate":
+        allowed_values = [_text(item.get("value")) for item in target.get("values", []) if isinstance(item, dict)]
+        # 单一候选可省略 value；多个候选必须显式选择其中一个，不能注入表外内容。
+        selected = _text(value) or (allowed_values[0] if len(allowed_values) == 1 else "")
+        if selected not in allowed_values:
+            raise ValueError("请选择上传表格中提供的候选值")
+        return selected
+    selected = _text(value)
+    if not selected:
+        raise ValueError("手动规范值不能为空")
+    return selected
+
+
+def _apply_conflict_decision(
+    batch: dict[str, object],
+    candidate_id: str,
+    decision: str,
+    value: str,
+    actor_id: int,
+    actor_name: str,
+) -> None:
+    """在锁内校验批次状态、写入审计信息并重新计算未决冲突数。"""
+    if batch.get("status") in {"ready", "merged", "rejected"}:
+        raise ValueError("当前批次状态不允许修改冲突")
+    candidates = batch.get("candidates")
+    if not isinstance(candidates, list):
+        raise ValueError("导入批次候选关系无效")
+    target = next((item for item in candidates if isinstance(item, dict) and item.get("id") == candidate_id), None)
+    if not target or not target.get("conflict"):
+        raise ValueError("没有找到需要处理的冲突")
+    selected = _select_conflict_value(target, decision, value)
+    target["selected_value"] = selected
+    target["decision"] = {
+        "type": decision,
+        "value": selected,
+        "actor_id": int(actor_id),
+        "actor_name": _text(actor_name) or "管理员",
+        "decided_at": _now_iso(),
+    }
+    # 决策时重新固定期望旧值，供最终合并执行乐观并发检查。
+    target["expected_current_value"] = _text(target.get("current_value"))
+    unresolved = any(
+        isinstance(item, dict) and item.get("conflict") and not item.get("decision")
+        for item in candidates
+    )
+    batch["status"] = "needs_review" if unresolved else "ready_to_confirm"
+    batch["last_error"] = ""
+
+
 def resolve_conflict(
     batch_id: str,
     candidate_id: str,
@@ -659,45 +715,9 @@ def resolve_conflict(
 
     def mutate(batch: dict[str, object]) -> None:
         """在锁内校验状态、写入审计信息并重新计算未决冲突数。"""
-        if batch.get("status") in {"ready", "merged", "rejected"}:
-            raise ValueError("当前批次状态不允许修改冲突")
-        candidates = batch.get("candidates")
-        if not isinstance(candidates, list):
-            raise ValueError("导入批次候选关系无效")
-        target = next((item for item in candidates if isinstance(item, dict) and item.get("id") == candidate_id), None)
-        if not target or not target.get("conflict"):
-            raise ValueError("没有找到需要处理的冲突")
-        selected = ""
-        if decision == "keep_current":
-            selected = _text(target.get("current_value"))
-            if not selected:
-                raise ValueError("正式主数据库当前没有可保留的值")
-        elif decision == "use_candidate":
-            allowed_values = [_text(item.get("value")) for item in target.get("values", []) if isinstance(item, dict)]
-            # 单一候选可省略 value；多个候选必须显式选择其中一个，不能注入表外内容。
-            selected = _text(value) or (allowed_values[0] if len(allowed_values) == 1 else "")
-            if selected not in allowed_values:
-                raise ValueError("请选择上传表格中提供的候选值")
-        elif decision == "manual":
-            selected = _text(value)
-            if not selected:
-                raise ValueError("手动规范值不能为空")
-        target["selected_value"] = selected
-        target["decision"] = {
-            "type": decision,
-            "value": selected,
-            "actor_id": int(actor_id),
-            "actor_name": _text(actor_name) or "管理员",
-            "decided_at": _now_iso(),
-        }
-        # 决策时重新固定期望旧值，供最终合并执行乐观并发检查。
-        target["expected_current_value"] = _text(target.get("current_value"))
-        unresolved = any(
-            isinstance(item, dict) and item.get("conflict") and not item.get("decision")
-            for item in candidates
+        _apply_conflict_decision(
+            batch, candidate_id, decision, value, actor_id, actor_name,
         )
-        batch["status"] = "needs_review" if unresolved else "ready_to_confirm"
-        batch["last_error"] = ""
 
     batch, _ = _mutate_batch(batch_id, mutate, root)
     return _public(batch, detail=True)

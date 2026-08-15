@@ -337,6 +337,67 @@ def _restore_target(item: Any, deps: TrashDependencies) -> Path:
     return target
 
 
+def _prepare_restore(item: Any, deps: TrashDependencies) -> tuple[Callable, dict, list[dict], list[dict], Path, Path]:
+    """解析回收站条目并准备恢复所需的数据、恢复器和路径。
+
+    恢复器必须来自显式注册表；未知类型不做猜测。跨部署恢复时记录里的旧绝对路径已经
+    失效，统一改写为本次恢复目标，保证恢复后的下载与预览仍通过当前数据根校验。
+    """
+    restorer = RESTORERS.get(str(item["kind"]))
+    if restorer is None:
+        raise ApiError(HTTPStatus.BAD_REQUEST, "回收站数据类型无效")
+    record, versions, images = _stored_parts(item, deps)
+    target = _restore_target(item, deps)
+    if "path" in record:
+        record["path"] = str(target)
+    for image in images:
+        if isinstance(image, dict) and "path" in image:
+            image["path"] = str(target / Path(str(image.get("name") or "")).name)
+    payload = deps.data_root / "trash" / str(item["id"]) / "payload"
+    return restorer, record, versions, images, target, payload
+
+
+def _move_payload_to_target(payload: Path, target: Path) -> bool:
+    """把回收站文件载荷移回恢复目标，返回是否实际移动了文件。"""
+    if not payload.exists():
+        return False
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(payload), str(target))
+    return True
+
+
+def _restore_database(
+    restorer: Callable,
+    record: dict,
+    versions: list[dict],
+    images: list[dict],
+    kind: str,
+    target: Path,
+    payload: Path,
+    moved: bool,
+    trash_id: str,
+    actor: Any,
+    deps: TrashDependencies,
+) -> None:
+    """在数据库事务中重建记录，并在失败时把文件退回回收站。"""
+    try:
+        with deps.db_lock, deps.db() as connection:
+            owner_id = _owner_id(kind, record)  # 所属账号是强关联，账号已删除时不能恢复孤儿数据。
+            if owner_id is not None and not _user_exists(connection, owner_id):
+                raise ApiError(HTTPStatus.CONFLICT, "所属账号已不存在，无法恢复")
+            restorer(connection, record, versions, images, deps)
+            connection.execute("DELETE FROM trash_items WHERE id = ?", (trash_id,))
+            connection.execute(
+                "INSERT INTO audit_log(actor_id, action, created_at) VALUES (?, ?, ?)",
+                (actor["id"], f"restore_trash:{trash_id}", deps.now_iso()),
+            )
+    except Exception:  # 数据库恢复失败时把文件移回回收站，保持两部分状态一致。
+        if moved and target.exists() and not payload.exists():
+            payload.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(target), str(payload))
+        raise
+
+
 def restore_trash(handler: Any, path: str, deps: TrashDependencies) -> None:
     """根据回收站数据类型恢复数据库记录、子记录和所属文件。
 
@@ -353,40 +414,14 @@ def restore_trash(handler: Any, path: str, deps: TrashDependencies) -> None:
             ).fetchone()
         if item is None:
             raise ApiError(HTTPStatus.NOT_FOUND, "回收站记录不存在")
-        restorer = RESTORERS.get(str(item["kind"]))  # 只调用显式注册的恢复器，未知 kind 不做猜测。
-        if restorer is None:
-            raise ApiError(HTTPStatus.BAD_REQUEST, "回收站数据类型无效")
-        record, versions, images = _stored_parts(item, deps)
-        target = _restore_target(item, deps)
-        # 跨部署恢复时 record_json 里的旧绝对路径已失效；用本次恢复目标重写 path，
-        # 保证恢复出的记录在后续下载时仍能通过当前数据根下的路径校验，而不是指向旧目录。
-        if "path" in record:
-            record["path"] = str(target)
-        for image in images:
-            if isinstance(image, dict) and "path" in image:
-                image["path"] = str(target / Path(str(image.get("name") or "")).name)
-        payload = deps.data_root / "trash" / trash_id / "payload"
+        restorer, record, versions, images, target, payload = _prepare_restore(item, deps)
         if item["kind"] == "workshop_issue" and not payload.exists():  # 现场问题图片是报告的一部分，缺失时拒绝半恢复。
             raise ApiError(HTTPStatus.CONFLICT, "现场图片已不存在，无法恢复这条问题")
-        if payload.exists():
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(payload), str(target))
-        try:
-            with deps.db_lock, deps.db() as connection:
-                owner_id = _owner_id(str(item["kind"]), record)  # 所属账号是强关联，账号已删除时不能恢复孤儿数据。
-                if owner_id is not None and not _user_exists(connection, owner_id):
-                    raise ApiError(HTTPStatus.CONFLICT, "所属账号已不存在，无法恢复")
-                restorer(connection, record, versions, images, deps)
-                connection.execute("DELETE FROM trash_items WHERE id = ?", (trash_id,))
-                connection.execute(
-                    "INSERT INTO audit_log(actor_id, action, created_at) VALUES (?, ?, ?)",
-                    (actor["id"], f"restore_trash:{trash_id}", deps.now_iso()),
-                )
-        except Exception:  # 数据库恢复失败时把文件移回回收站，保持两部分状态一致。
-            if target.exists() and not payload.exists():
-                payload.parent.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(target), str(payload))
-            raise
+        moved = _move_payload_to_target(payload, target)
+        _restore_database(
+            restorer, record, versions, images, str(item["kind"]),
+            target, payload, moved, trash_id, actor, deps,
+        )
         shutil.rmtree(deps.data_root / "trash" / trash_id, ignore_errors=True)
     handler.send_json({"message": "数据已恢复到原位置"})
 
