@@ -48,6 +48,37 @@ jobs:
           PYTHONIOENCODING: utf-8
         run: python -m unittest discover -s tests -p "test_*.py"
 
+  complexity-check:
+    name: 圈复杂度评级
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: 获取 PR 基线分支
+        if: github.event_name == 'pull_request'
+        run: git fetch --no-tags --depth=1 origin "refs/heads/${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}"
+      - name: 配置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: 安装圈复杂度工具
+        run: python -m pip install --upgrade pip && python -m pip install radon==6.0.1
+      - name: 确定比较基线
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "COMPLEXITY_BASE=origin/${{ github.base_ref }}" >> "$GITHUB_ENV"
+          elif git rev-parse --verify --quiet HEAD^ >/dev/null 2>&1; then
+            echo "COMPLEXITY_BASE=HEAD^" >> "$GITHUB_ENV"
+          else
+            echo "COMPLEXITY_BASE=HEAD" >> "$GITHUB_ENV"
+          fi
+      - name: 分析圈复杂度与评级
+        env:
+          PYTHONIOENCODING: utf-8
+        run: python scripts/check_complexity.py --base "$COMPLEXITY_BASE" --github
+
   web-build:
     name: Web 前端构建
     runs-on: ubuntu-latest
@@ -67,7 +98,7 @@ jobs:
 
   docker-build:
     name: Docker 镜像构建
-    needs: [repository-hygiene, python-tests, web-build]
+    needs: [repository-hygiene, complexity-check, python-tests, web-build]
     runs-on: ubuntu-latest
     steps:
       - name: 检出源码

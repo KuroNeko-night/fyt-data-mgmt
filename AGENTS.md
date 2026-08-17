@@ -420,6 +420,7 @@ def run(inputs, out_dir=None, log=None) -> dict:
 ```powershell
 $env:PYTHONIOENCODING = "utf-8"
 .\.venv\Scripts\python.exe scripts\check_repository_hygiene.py
+.\.venv\Scripts\python.exe scripts\check_complexity.py --base HEAD
 .\.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"
 npm --prefix web-app run build
 npm --prefix tauri-app run build

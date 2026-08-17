@@ -177,6 +177,32 @@ def delete_job(handler: Any, path: str, deps: AdminDataDependencies) -> None:
     handler.send_json({"message": "任务及结果文件已移入回收站"})
 
 
+def _stage_upload_for_trash(
+    deps: AdminDataDependencies,
+    row: Any,
+) -> tuple[Path, str, str, Path, int]:
+    """校验上传路径归属并把文件移动到回收站载荷位置。"""
+    target = Path(row["path"]).resolve()
+    upload_root = (deps.data_root / "users" / str(row["user_id"]) / "uploads").resolve()
+    if target == upload_root or upload_root not in target.parents:
+        raise ApiError(HTTPStatus.BAD_REQUEST, "上传资料路径无效")
+    trash_id = uuid.uuid4().hex
+    relative = target.relative_to(deps.data_root.resolve()).as_posix()
+    payload = deps.data_root / "trash" / trash_id / "payload"
+    size = target.stat().st_size if target.is_file() else int(row["size"] or 0)
+    if target.is_file():
+        payload.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(target), str(payload))
+    return target, trash_id, relative, payload, size
+
+
+def _restore_upload_payload(payload: Path, target: Path) -> None:
+    """数据库事务失败时把暂移的回收站载荷放回原位。"""
+    if payload.exists() and not target.exists():
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(payload), str(target))
+
+
 def delete_upload(handler: Any, path: str, deps: AdminDataDependencies) -> None:
     """把一条临时上传记录及文件移动到可恢复回收站。
 
@@ -193,17 +219,7 @@ def delete_upload(handler: Any, path: str, deps: AdminDataDependencies) -> None:
             ).fetchone()
         if row is None:
             raise ApiError(HTTPStatus.NOT_FOUND, "上传资料不存在")
-        target = Path(row["path"]).resolve()
-        upload_root = (deps.data_root / "users" / str(row["user_id"]) / "uploads").resolve()
-        if target == upload_root or upload_root not in target.parents:
-            raise ApiError(HTTPStatus.BAD_REQUEST, "上传资料路径无效")
-        trash_id = uuid.uuid4().hex
-        relative = target.relative_to(deps.data_root.resolve()).as_posix()
-        payload = deps.data_root / "trash" / trash_id / "payload"
-        size = target.stat().st_size if target.is_file() else int(row["size"] or 0)
-        if target.is_file():
-            payload.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(target), str(payload))
+        target, trash_id, relative, payload, size = _stage_upload_for_trash(deps, row)
         try:
             with deps.db_lock, deps.db() as connection:
                 changed = connection.execute(
@@ -229,8 +245,6 @@ def delete_upload(handler: Any, path: str, deps: AdminDataDependencies) -> None:
                     (actor["id"], f"trash_upload:{handle}", deps.now_iso()),
                 )
         except Exception:
-            if payload.exists() and not target.exists():
-                target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(payload), str(target))
+            _restore_upload_payload(payload, target)
             raise
     handler.send_json({"message": "上传资料已移入回收站"})

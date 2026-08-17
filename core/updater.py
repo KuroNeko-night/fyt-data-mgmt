@@ -191,6 +191,27 @@ def _download_response(url, part, timeout, log):
         raise
 
 
+def _download_log_point(done: int) -> bool:
+    """判断当前累计字节是否到达约 2 MiB 的日志采样点。"""
+    return done % (2 * 1024 * 1024) < 65536
+
+
+def _report_download_progress(total: int, done: int, progress, log, indeterminate_notified: bool) -> bool:
+    """按确定/不确定两种长度模式报告进度，返回不确定提示是否已发送。"""
+    if total > 0:
+        if progress:
+            progress(min(99, done * 100 // total))  # 哈希和原子替换完成前最多 99%。
+        if log and _download_log_point(done):
+            log("已下载 %.1f / %.1f MB" % (done / 1048576.0, total / 1048576.0))
+        return indeterminate_notified
+    if progress and not indeterminate_notified:
+        progress(-1)  # -1 只发送一次，通知界面切换不确定进度样式。
+        indeterminate_notified = True
+    if log and _download_log_point(done):
+        log("已下载 %.1f MB…" % (done / 1048576.0))
+    return indeterminate_notified
+
+
 def _stream_download(resp, part, progress, log):
     """将响应流写入半包，返回服务器声明长度与实际字节数。"""
     total = int(resp.headers.get("Content-Length", 0) or 0)  # 缺失时采用不确定进度模式。
@@ -203,17 +224,9 @@ def _stream_download(resp, part, progress, log):
                 break  # EOF 表示响应正常结束，长度一致性稍后单独检查。
             file_obj.write(chunk)  # 顺序写入可避免大文件一次性占用内存。
             done += len(chunk)  # 进度和完整性检查都以实际收到的字节为准。
-            if total > 0:
-                if progress:
-                    progress(min(99, done * 100 // total))  # 哈希和原子替换完成前最多 99%。
-                if log and done % (2 * 1024 * 1024) < 65536:
-                    log("已下载 %.1f / %.1f MB" % (done / 1048576.0, total / 1048576.0))
-            else:
-                if progress and not indeterminate_notified:
-                    progress(-1)  # -1 只发送一次，通知界面切换不确定进度样式。
-                    indeterminate_notified = True
-                if log and done % (2 * 1024 * 1024) < 65536:
-                    log("已下载 %.1f MB…" % (done / 1048576.0))
+            indeterminate_notified = _report_download_progress(
+                total, done, progress, log, indeterminate_notified,
+            )
     return total, done
 
 

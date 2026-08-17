@@ -432,6 +432,42 @@ def _pivot_analyze(payload):
                      paths, log=log, progress=progress))
 
 
+def _pivot_sheet_choices(raw):
+    """还原工作表选择：JSON 对象键统一为字符串，数值键恢复为整数。"""
+    sheets = {}
+    for key, value in dict(raw.get("sheets") or {}).items():
+        try:
+            key = int(key)
+        except (TypeError, ValueError):
+            pass  # 非数字工作表标识保留原字符串，兼容按名称索引的分析结果。
+        sheets[key] = bool(value)
+    return sheets
+
+
+def _pivot_held_choices(raw):
+    """还原 ``(sheet_id, row_index)`` 暂存键。"""
+    held = {}
+    for item in raw.get("held") or []:
+        sid = item.get("sid")
+        try:
+            sid = int(sid)
+        except (TypeError, ValueError):
+            sid = str(sid)
+        held[(sid, int(item.get("ridx", 0)))] = bool(item.get("keep"))
+    return held
+
+
+def _pivot_override_choices(raw, name):
+    """还原 JSON 数组编码的分组覆盖键。"""
+    overrides = {}
+    for item in raw.get(name) or []:
+        key = item.get("gk")
+        if isinstance(key, list):
+            key = tuple(key)  # 列表只因 JSON 传输产生，Core 继续使用可哈希元组键。
+        overrides[key] = str(item.get("value") or "")
+    return overrides
+
+
 def _pivot_choices(raw):
     """把 JSON 可表示的复核选择还原为 Core 所需的元组键字典。
 
@@ -440,30 +476,12 @@ def _pivot_choices(raw):
     """
     if not isinstance(raw, dict):
         return None
-    sheets = {}
-    for key, value in dict(raw.get("sheets") or {}).items():
-        try:
-            key = int(key)
-        except (TypeError, ValueError):
-            pass  # 非数字工作表标识保留原字符串，兼容按名称索引的分析结果。
-        sheets[key] = bool(value)
-    choices = {"sheets": sheets, "held": {},
-               "unit_overrides": {}, "spec_overrides": {}}
-    for item in raw.get("held") or []:
-        sid = item.get("sid")
-        try:
-            sid = int(sid)
-        except (TypeError, ValueError):
-            sid = str(sid)
-        choices["held"][(sid, int(item.get("ridx", 0)))] = bool(
-            item.get("keep"))
-    for name in ("unit_overrides", "spec_overrides"):
-        for item in raw.get(name) or []:
-            key = item.get("gk")
-            if isinstance(key, list):
-                key = tuple(key)  # 列表只因 JSON 传输产生，Core 继续使用可哈希元组键。
-            choices[name][key] = str(item.get("value") or "")
-    return choices
+    return {
+        "sheets": _pivot_sheet_choices(raw),
+        "held": _pivot_held_choices(raw),
+        "unit_overrides": _pivot_override_choices(raw, "unit_overrides"),
+        "spec_overrides": _pivot_override_choices(raw, "spec_overrides"),
+    }
 
 
 def _pivot_run(payload):

@@ -71,6 +71,56 @@ def _validate_arrival(value):
     return {"top_label": top_label, "last_total": int(last_total), "batches": clean_batches}
 
 
+def _validate_choice_setting(value, choices, message):
+    """校验设置值必须来自固定枚举。"""
+    if value not in choices:
+        raise ValueError(message)
+    return value
+
+
+def _validate_output_mode(value):
+    """输出目录策略必须来自固定枚举。"""
+    return _validate_choice_setting(value, ("unified", "beside", "custom"), "输出模式无效")
+
+
+def _validate_theme_mode(value):
+    """主题枚举与双端设计令牌保持一致。"""
+    return _validate_choice_setting(value, ("auto", "light", "dark"), "主题模式无效")
+
+
+def _validate_custom_output_root(value):
+    """路径允许为空，但不能接受数组、数字等 JSON 类型。"""
+    if not isinstance(value, str):
+        raise ValueError("路径设置必须是文本")
+    return value
+
+
+def _validate_boolean_setting(value):
+    """Python 中 bool 是 int 子类，必须显式按布尔校验。"""
+    if not isinstance(value, bool):
+        raise ValueError("布尔设置类型无效")
+    return value
+
+
+def _validate_right_panel_width(value):
+    """侧栏宽度限制在合理像素区间，并按整数保存避免渲染抖动。"""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not 240 <= value <= 1200:
+        raise ValueError("侧栏宽度无效")
+    return int(value)
+
+
+# 键 -> 校验器分发表：新增设置时在 DEFAULTS 登记后同步挂入对应校验器。
+_VALUE_VALIDATORS = {
+    "output_mode": _validate_output_mode,
+    "theme_mode": _validate_theme_mode,
+    "custom_output_root": _validate_custom_output_root,
+    "right_panel_w": _validate_right_panel_width,
+    "arrival": _validate_arrival,
+}
+for _boolean_key in _BOOLEAN_KEYS:
+    _VALUE_VALIDATORS[_boolean_key] = _validate_boolean_setting
+
+
 def _valid_value(key, value):
     """校验并规范化单个设置值，失败时抛出可记录的 ``ValueError``。
 
@@ -78,29 +128,10 @@ def _valid_value(key, value):
     设置必须显式排除 bool。函数对无需转换的字段返回原值，对宽度和到料嵌套设置返回
     清洗后的副本，防止脏数据进入进程内状态。
     """
-    if key == "output_mode":
-        if value not in ("unified", "beside", "custom"):  # 输出目录策略必须来自固定枚举。
-            raise ValueError("输出模式无效")
-        return value
-    if key == "theme_mode":
-        if value not in ("auto", "light", "dark"):  # 主题枚举与双端设计令牌保持一致。
-            raise ValueError("主题模式无效")
-        return value
-    if key == "custom_output_root":
-        if not isinstance(value, str):  # 路径允许为空，但不能接受数组、数字等 JSON 类型。
-            raise ValueError("路径设置必须是文本")
-        return value
-    if key in _BOOLEAN_KEYS:
-        if not isinstance(value, bool):  # Python 中 bool 是 int 子类，必须显式按布尔校验。
-            raise ValueError("布尔设置类型无效")
-        return value
-    if key == "right_panel_w":
-        if isinstance(value, bool) or not isinstance(value, (int, float)) or not 240 <= value <= 1200:
-            raise ValueError("侧栏宽度无效")
-        return int(value)  # 页面布局按整数像素保存，避免浮点配置造成渲染抖动。
-    if key == "arrival":
-        return _validate_arrival(value)  # 嵌套配置交给独立校验器，主函数保持扁平。
-    raise ValueError("未知设置")
+    validator = _VALUE_VALIDATORS.get(key)
+    if validator is None:
+        raise ValueError("未知设置")
+    return validator(value)
 
 
 class Settings(object):

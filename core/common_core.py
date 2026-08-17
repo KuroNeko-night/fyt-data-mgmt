@@ -256,23 +256,30 @@ def preview_rows(path, sheet=None, limit=8):
     return name, [list(row) for row in rows[:limit]]
 
 
+def _merge_saved_mapping(current, mapping):
+    """把保存映射合并进文件已有列映射，显式人工设置始终优先。"""
+    merged = dict(current or {})
+    for key in ("sheet", "header"):
+        value = mapping.get(key)
+        if value and not merged.get(key):
+            merged[key] = int(value) if key == "header" else value
+    saved_roles = mapping.get("roles") or {}
+    if saved_roles:
+        merged_roles = dict(merged.get("roles") or {})
+        for key, value in saved_roles.items():
+            # 映射存储和 Options 均使用 0 基列号，此处只规范类型，不转换列基数。
+            merged_roles.setdefault(str(key), int(value))
+        merged["roles"] = merged_roles
+    return merged
+
+
 def apply_saved_mapping(opts, path, mapping):
     """把字段映射中心命中的配置合并进 Options，显式人工设置始终优先。"""
 
     if opts is None or not path or not mapping:
         return False
     base_name = portable_basename(path)
-    file_mapping = dict(opts.columns.get(base_name) or {})
-    for key in ("sheet", "header"):
-        if mapping.get(key) and not file_mapping.get(key):
-            file_mapping[key] = int(mapping[key]) if key == "header" else mapping[key]
-    saved_roles = mapping.get("roles") or {}
-    if saved_roles:
-        merged_roles = dict(file_mapping.get("roles") or {})
-        for key, value in saved_roles.items():
-            # 映射存储和 Options 均使用 0 基列号，此处只规范类型，不转换列基数。
-            merged_roles.setdefault(str(key), int(value))
-        file_mapping["roles"] = merged_roles
+    file_mapping = _merge_saved_mapping(opts.columns.get(base_name), mapping)
     if not file_mapping:
         return False
     opts.columns[base_name] = file_mapping

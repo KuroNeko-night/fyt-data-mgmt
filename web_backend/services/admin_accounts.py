@@ -173,6 +173,16 @@ def update_user_role(handler: Any, path: str, body: dict[str, object], deps: Adm
     }
     handler.send_json({"message": messages[role]})
 
+def _user_access_transition_error(target: Any, actor: Any, enabled: bool) -> str | None:
+    """返回暂停/恢复转换的拦截原因；允许转换时返回 ``None``。"""
+    if target["id"] == actor["id"] or target["role"] == "admin":
+        return "不能暂停当前账号或管理员账号"
+    if enabled:
+        # 恢复只接受明确暂停的账号，重复调用不会伪装成功。
+        return None if target["status"] == "disabled" else "只有已暂停的账号可以恢复使用"
+    return None if target["status"] == "approved" else "只有正常使用的账号可以暂停"
+
+
 def update_user_access(handler: Any, path: str, body: dict[str, object], deps: AdminAccountDependencies) -> None:
     """在正常使用与暂停使用之间切换非管理员账号。
 
@@ -188,12 +198,9 @@ def update_user_access(handler: Any, path: str, body: dict[str, object], deps: A
         target = connection.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
         if target is None:
             raise ApiError(HTTPStatus.NOT_FOUND, "用户不存在")
-        if target["id"] == actor["id"] or target["role"] == "admin":
-            raise ApiError(HTTPStatus.BAD_REQUEST, "不能暂停当前账号或管理员账号")
-        if enabled and target["status"] != "disabled":  # 恢复只接受明确暂停的账号，重复调用不会伪装成功。
-            raise ApiError(HTTPStatus.BAD_REQUEST, "只有已暂停的账号可以恢复使用")
-        if not enabled and target["status"] != "approved":
-            raise ApiError(HTTPStatus.BAD_REQUEST, "只有正常使用的账号可以暂停")
+        transition_error = _user_access_transition_error(target, actor, enabled)
+        if transition_error:
+            raise ApiError(HTTPStatus.BAD_REQUEST, transition_error)
         status = "approved" if enabled else "disabled"
         connection.execute(
             "UPDATE users SET status = ?, approved_at = ? WHERE id = ?",
@@ -261,6 +268,37 @@ def reset_user_password(handler: Any, path: str, body: dict[str, object], deps: 
         )
     handler.send_json({"message": f"密码已重置，并退出该账号的 {revoked} 个登录会话"})
 
+def _precheck_deletable_user(target: Any, actor: Any) -> None:
+    """备份前先校验目标账号存在且不属于保护范围。"""
+    if target is None:
+        raise ApiError(HTTPStatus.NOT_FOUND, "用户不存在")
+    if target["role"] == "admin" or target["id"] == actor["id"]:
+        raise ApiError(HTTPStatus.BAD_REQUEST, "不能删除管理员账号或当前账号")
+
+
+def _delete_user_record(connection: Any, actor: Any, user_id: int, deps: AdminAccountDependencies) -> list[str]:
+    """在事务内重新校验账号状态、级联删除记录，并返回待终止的任务编号。"""
+    target = connection.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+    if target is None or target["role"] == "admin" or target["id"] == actor["id"]:
+        raise ApiError(HTTPStatus.CONFLICT, "账号状态已变化，请刷新后重试")
+    job_ids = [row["id"] for row in connection.execute("SELECT id FROM web_jobs WHERE user_id = ?", (user_id,)).fetchall()]  # 删除前保存任务编号，提交后再终止运行进程。
+    connection.execute("DELETE FROM users WHERE id = ?", (user_id,))
+    connection.execute(
+        "INSERT INTO audit_log(actor_id, action, target_user_id, created_at) VALUES (?, ?, NULL, ?)",
+        (actor["id"], f"delete_user:{user_id}", deps.now_iso()),
+    )
+    return job_ids
+
+
+def _terminate_user_job_processes(deps: AdminAccountDependencies, job_ids: list[str]) -> None:
+    """摘除并终止已删除账号的运行任务进程。"""
+    with deps.job_lock:  # 先从共享进程表摘除句柄，避免其他请求继续操作已删除账号的任务。
+        processes = [deps.job_processes.pop(job_id, None) for job_id in job_ids]
+    for process in processes:  # 进程终止放在数据库提交之后，避免长时间等待子进程占用数据库锁。
+        if process and process.poll() is None:
+            process.terminate()
+
+
 def delete_user(handler: Any, path: str, deps: AdminAccountDependencies) -> None:
     """备份后删除非管理员账号、关联记录、运行进程和用户目录。
 
@@ -275,22 +313,10 @@ def delete_user(handler: Any, path: str, deps: AdminAccountDependencies) -> None
         raise ApiError(HTTPStatus.BAD_REQUEST, "用户编号无效") from exc
     with deps.db_lock, deps.db() as connection:
         target = connection.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
-        if target is None:
-            raise ApiError(HTTPStatus.NOT_FOUND, "用户不存在")
-        if target["role"] == "admin" or target["id"] == actor["id"]:
-            raise ApiError(HTTPStatus.BAD_REQUEST, "不能删除管理员账号或当前账号")
+        _precheck_deletable_user(target, actor)
     safety = deps.create_web_backup(actor["id"])  # 删除账号前先生成完整备份，为误操作保留恢复入口。
     with deps.db_lock, deps.db() as connection:
-        target = connection.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
-        if target is None or target["role"] == "admin" or target["id"] == actor["id"]:
-            raise ApiError(HTTPStatus.CONFLICT, "账号状态已变化，请刷新后重试")
-        job_ids = [row["id"] for row in connection.execute("SELECT id FROM web_jobs WHERE user_id = ?", (user_id,)).fetchall()]  # 删除前保存任务编号，提交后再终止运行进程。
-        connection.execute("DELETE FROM users WHERE id = ?", (user_id,))
-        connection.execute("INSERT INTO audit_log(actor_id, action, target_user_id, created_at) VALUES (?, ?, NULL, ?)", (actor["id"], f"delete_user:{user_id}", deps.now_iso()))
-    with deps.job_lock:  # 先从共享进程表摘除句柄，避免其他请求继续操作已删除账号的任务。
-        processes = [deps.job_processes.pop(job_id, None) for job_id in job_ids]
-    for process in processes:  # 进程终止放在数据库提交之后，避免长时间等待子进程占用数据库锁。
-        if process and process.poll() is None:
-            process.terminate()
+        job_ids = _delete_user_record(connection, actor, user_id, deps)
+    _terminate_user_job_processes(deps, job_ids)
     shutil.rmtree(deps.data_root / "users" / str(user_id), ignore_errors=True)  # 每个账号目录独立，删除范围不会越出用户根目录。
     handler.send_json({"message": f"账号及其资料已删除，删除前备份：{safety['id']}"})

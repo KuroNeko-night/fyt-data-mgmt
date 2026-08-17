@@ -107,6 +107,48 @@ def header_fingerprint(headers):
     return hashlib.sha256(raw).hexdigest()[:24]
 
 
+def _header_positions(headers):
+    """建立非空表头到 1 基列号的映射；重复名称只保留最后位置。"""
+    return {value: index + 1 for index, value in enumerate(headers) if value}
+
+
+def _header_added_and_removed(old, new, old_pos, new_pos):
+    """按名称集合计算新增和移除的表头。"""
+    added = [value for value in new if value and value not in old_pos]
+    removed = [value for value in old if value and value not in new_pos]
+    return added, removed
+
+
+def _header_moved(new, old_pos, new_pos):
+    """记录同名字段的位置变化。"""
+    return [{"header": value, "from": old_pos[value], "to": new_pos[value]}
+            for value in new if value in old_pos and old_pos[value] != new_pos[value]]
+
+
+def _header_changed(old, new):
+    """记录同一位置上的不同非空名称。"""
+    changed = []
+    for index in range(min(len(old), len(new))):
+        if old[index] and new[index] and old[index] != new[index]:
+            changed.append({"column": index + 1, "from": old[index], "to": new[index]})
+    return changed
+
+
+def _header_diff_summary(added, removed, moved, changed):
+    """生成结构变化的中文摘要；无变化时返回 ``(提示, False)``。"""
+    parts = []
+    # 摘要只呈现数量，详细字段仍保留在返回对象中供管理界面展开查看。
+    if added:
+        parts.append("新增 %d 列" % len(added))
+    if removed:
+        parts.append("移除 %d 列" % len(removed))
+    if moved:
+        parts.append("调整 %d 列位置" % len(moved))
+    if changed:
+        parts.append("修改 %d 个列名" % len(changed))
+    return ("结构未变化" if not parts else "、".join(parts), not parts)
+
+
 def diff_headers(old_headers, new_headers):
     """比较两个表头版本并返回机器明细和中文摘要。
 
@@ -119,29 +161,14 @@ def diff_headers(old_headers, new_headers):
     """
     old = normalize_headers(old_headers)
     new = normalize_headers(new_headers)
-    old_pos = {value: index + 1 for index, value in enumerate(old) if value}
-    new_pos = {value: index + 1 for index, value in enumerate(new) if value}
-    added = [value for value in new if value and value not in old_pos]
-    removed = [value for value in old if value and value not in new_pos]
-    moved = [{"header": value, "from": old_pos[value], "to": new_pos[value]}
-             for value in new if value in old_pos and old_pos[value] != new_pos[value]]
-    changed = []
-    for index in range(min(len(old), len(new))):
-        if old[index] and new[index] and old[index] != new[index]:
-            changed.append({"column": index + 1, "from": old[index], "to": new[index]})
-    parts = []
-    # 摘要只呈现数量，详细字段仍保留在返回对象中供管理界面展开查看。
-    if added:
-        parts.append("新增 %d 列" % len(added))
-    if removed:
-        parts.append("移除 %d 列" % len(removed))
-    if moved:
-        parts.append("调整 %d 列位置" % len(moved))
-    if changed:
-        parts.append("修改 %d 个列名" % len(changed))
+    old_pos = _header_positions(old)
+    new_pos = _header_positions(new)
+    added, removed = _header_added_and_removed(old, new, old_pos, new_pos)
+    moved = _header_moved(new, old_pos, new_pos)
+    changed = _header_changed(old, new)
+    summary, same = _header_diff_summary(added, removed, moved, changed)
     return {"added": added, "removed": removed, "moved": moved,
-            "changed": changed, "same": not parts,
-            "summary": "结构未变化" if not parts else "、".join(parts)}
+            "changed": changed, "same": same, "summary": summary}
 
 
 def _template_id(name, role_kind, sheet_name):

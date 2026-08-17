@@ -681,6 +681,81 @@ def download_workshop_issue_image(handler: Any, path: str, deps: WorkshopDepende
         cache_control="private, max-age=300",
     )
 
+def _workshop_image_for_delete(
+    connection: Any,
+    issue_id: str,
+    image_id: str,
+    row: Any,
+    deps: WorkshopDependencies,
+) -> Any:
+    """读取待删除图片，并校验问题类型的最少图片保留规则。"""
+    image = connection.execute(
+        "SELECT i.*, w.user_id FROM workshop_issue_images i "
+        "JOIN workshop_issues w ON w.id = i.issue_id "
+        "WHERE i.id = ? AND i.issue_id = ?",
+        (image_id, issue_id),
+    ).fetchone()
+    if image is None:
+        raise ApiError(HTTPStatus.NOT_FOUND, "现场图片不存在")
+    image_count = _issue_image_count(connection, issue_id)
+    if row["status"] == "published":
+        category = _normalized_issue_category(deps, row)
+        if (
+            category in deps.workshop_core.WORKSHOP_ISSUE_IMAGE_REQUIRED_CATEGORIES
+            and image_count <= 1
+        ):
+            raise ApiError(HTTPStatus.BAD_REQUEST, "该问题类型至少需要保留一张现场图片")
+    return image
+
+
+def _stage_workshop_image(target: Path) -> Path:
+    """把图片原子改名到同目录 ``.deleting`` 暂存名。"""
+    staging = target.with_name(f".{target.name}.{uuid.uuid4().hex}.deleting")  # 同目录暂存确保 ``os.replace`` 原子执行。
+    if target.is_file():
+        os.replace(target, staging)
+    return staging
+
+
+def _restore_staged_workshop_image(staging: Path, target: Path) -> None:
+    """数据库失败时把暂存文件移回原处。"""
+    if staging.is_file() and not target.exists():
+        os.replace(staging, target)
+
+
+def _delete_workshop_image_record(
+    deps: WorkshopDependencies,
+    user: Any,
+    issue_id: str,
+    image_id: str,
+    row: Any,
+    target: Path,
+) -> None:
+    """暂存文件后删除图片记录，数据库失败时恢复文件并原样抛出。"""
+    staging = _stage_workshop_image(target)
+    try:
+        updated = deps.now_iso()
+        with deps.db_lock, deps.db() as connection:
+            changed = connection.execute(
+                "DELETE FROM workshop_issue_images WHERE id = ? AND issue_id = ?",
+                (image_id, issue_id),
+            ).rowcount
+            if not changed:
+                raise ApiError(HTTPStatus.CONFLICT, "图片状态已经发生变化")
+            connection.execute(
+                "UPDATE workshop_issues SET updated_at = ? WHERE id = ?",
+                (updated, issue_id),
+            )
+            _insert_audit(
+                connection, user["id"],
+                f"workshop_image_delete:{issue_id}:{image_id}",
+                row["user_id"], updated,
+            )
+    except Exception:
+        _restore_staged_workshop_image(staging, target)
+        raise
+    staging.unlink(missing_ok=True)  # 数据库事务成功后才真正清除文件。
+
+
 def delete_workshop_issue_image(handler: Any, path: str, deps: WorkshopDependencies) -> None:
     """删除指定图片，并在失败时恢复暂存文件。
 
@@ -694,49 +769,9 @@ def delete_workshop_issue_image(handler: Any, path: str, deps: WorkshopDependenc
         raise ApiError(HTTPStatus.FORBIDDEN, "只有班组长本人或管理员可以编辑已发布问题")
     with deps.storage_lock:
         with deps.db_lock, deps.db() as connection:
-            image = connection.execute(
-                "SELECT i.*, w.user_id FROM workshop_issue_images i "
-                "JOIN workshop_issues w ON w.id = i.issue_id "
-                "WHERE i.id = ? AND i.issue_id = ?",
-                (image_id, issue_id),
-            ).fetchone()
-            if image is None:
-                raise ApiError(HTTPStatus.NOT_FOUND, "现场图片不存在")
-            image_count = _issue_image_count(connection, issue_id)
-            if row["status"] == "published":
-                category = _normalized_issue_category(deps, row)
-                if (
-                    category in deps.workshop_core.WORKSHOP_ISSUE_IMAGE_REQUIRED_CATEGORIES
-                    and image_count <= 1
-                ):
-                    raise ApiError(HTTPStatus.BAD_REQUEST, "该问题类型至少需要保留一张现场图片")
+            image = _workshop_image_for_delete(connection, issue_id, image_id, row, deps)
         target = deps.resolve_image_path(image)
-        staging = target.with_name(f".{target.name}.{uuid.uuid4().hex}.deleting")  # 同目录暂存确保 ``os.replace`` 原子执行。
-        if target.is_file():
-            os.replace(target, staging)
-        try:
-            updated = deps.now_iso()
-            with deps.db_lock, deps.db() as connection:
-                changed = connection.execute(
-                    "DELETE FROM workshop_issue_images WHERE id = ? AND issue_id = ?",
-                    (image_id, issue_id),
-                ).rowcount
-                if not changed:
-                    raise ApiError(HTTPStatus.CONFLICT, "图片状态已经发生变化")
-                connection.execute(
-                    "UPDATE workshop_issues SET updated_at = ? WHERE id = ?",
-                    (updated, issue_id),
-                )
-                _insert_audit(
-                    connection, user["id"],
-                    f"workshop_image_delete:{issue_id}:{image_id}",
-                    row["user_id"], updated,
-                )
-        except Exception:
-            if staging.is_file() and not target.exists():
-                os.replace(staging, target)
-            raise
-        staging.unlink(missing_ok=True)  # 数据库事务成功后才真正清除文件。
+        _delete_workshop_image_record(deps, user, issue_id, image_id, row, target)
     _send_workshop_issue(handler, deps, user, issue_id, "现场图片已删除")
 
 def export_workshop_issues(handler: Any, deps: WorkshopDependencies) -> None:

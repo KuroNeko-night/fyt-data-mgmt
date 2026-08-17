@@ -195,6 +195,30 @@ LEGACY_WORKSHOP_CATEGORY_NAMES = {
 }
 
 
+def _workshop_issue_looks_overseas(item: Mapping[str, object]) -> bool:
+    """国家与记录次数是海外问题模板辨识度最高的字段，优先于旧分类名。"""
+    return bool(
+        str(item.get("country") or "").strip() or str(item.get("record_count") or "").strip()
+    )
+
+
+def _workshop_issue_looks_error_proofing(item: Mapping[str, object]) -> bool:
+    """发生时间、处理时间和更新人只存在于防错异常规范中。"""
+    return any(
+        str(item.get(field) or "").strip()
+        for field in ("happened_at", "handling_time", "updated_by_name")
+    )
+
+
+def _workshop_category_from_source(raw: str, source: str) -> str | None:
+    """按问题源关键字推断分类；无法从问题源判断时返回 ``None``。"""
+    if "辅料" in source:
+        return "auxiliary_material"
+    if raw == "packaging" or "包装" in source:
+        return "packaging"
+    return None
+
+
 def normalize_workshop_category(value: object, issue: Mapping[str, object] | None = None) -> str:
     """将旧版分类和历史记录转换成正式五类模板之一。
 
@@ -207,16 +231,13 @@ def normalize_workshop_category(value: object, issue: Mapping[str, object] | Non
         return raw
     item = issue or {}
     source = str(item.get("issue_source") or "")
-    if str(item.get("country") or "").strip() or str(item.get("record_count") or "").strip():
-        # 国家和记录次数是海外问题模板的辨识度最高字段，优先于旧分类名。
+    if _workshop_issue_looks_overseas(item):
         return "overseas"
-    if any(str(item.get(field) or "").strip() for field in ("happened_at", "handling_time", "updated_by_name")):
-        # 发生时间、处理时间和更新人只存在于防错异常规范中。
+    if _workshop_issue_looks_error_proofing(item):
         return "error_proofing"
-    if "辅料" in source:
-        return "auxiliary_material"
-    if raw == "packaging" or "包装" in source:
-        return "packaging"
+    inferred = _workshop_category_from_source(raw, source)
+    if inferred:
+        return inferred
     return LEGACY_WORKSHOP_CATEGORY_NAMES.get(raw, "main_material")
 
 

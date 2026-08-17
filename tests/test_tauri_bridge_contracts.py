@@ -87,6 +87,18 @@ class TestTauriBridgeContracts(unittest.TestCase):
     def test_six_business_action_payloads(self):
         """六类核心业务的列表、选项、人工复核选择和进度回调应准确转发。"""
 
+        self._assert_attendance_contract()
+        self._assert_reconcile_contracts()
+        self._assert_arrival_contracts()
+        self._assert_pivot_contracts()
+        self._assert_purchase_run_contract()
+        self._assert_shipping_review_run_contract()
+        self._assert_delivery_contracts()
+        self._assert_supplier_batch_contracts()
+
+    def _assert_attendance_contract(self):
+        """考勤任务的目标、来源、选项和进度回调应准确转发。"""
+
         # mock 只替代耗时算法，断言重点是桥接参数形态而非各 core 已单测的业务结果。
         with mock.patch("core.attendance_core.run", return_value={"out_dir": self.temp.name}) as run:
             self.dispatch("attendance.run", {
@@ -95,6 +107,9 @@ class TestTauriBridgeContracts(unittest.TestCase):
             self.assertEqual(run.call_args.args[:2], ([self.file_a], [self.file_b]))  # 目标与来源透传
             self.assertEqual(run.call_args.kwargs["opts"].workday_hours, 8)  # 选项转为对象
             self.assertTrue(callable(run.call_args.kwargs["progress"]))  # 进度回调存在
+
+    def _assert_reconcile_contracts(self):
+        """对账目标单路径、来源列表和人工别名应准确转发。"""
 
         with mock.patch("core.reconcile_core.analyze", return_value={"target": {}}) as analyze:
             self.dispatch("reconcile.analyze", {
@@ -105,6 +120,9 @@ class TestTauriBridgeContracts(unittest.TestCase):
                 "target": [self.file_a], "sources": [self.file_b], "labor": [self.file_b],
                 "choices": {"aliases": {"甲": "乙"}}})
             self.assertEqual(run.call_args.kwargs["choices"]["aliases"], {"甲": "乙"})  # 人工别名透传
+
+    def _assert_arrival_contracts(self):
+        """到料准备结果经 run 转发时应保持已复核行的字段结构。"""
 
         with mock.patch("core.arrival_core.detect_batch", return_value="46A"), mock.patch(
             "core.arrival_core.inspect_plan",
@@ -124,6 +142,9 @@ class TestTauriBridgeContracts(unittest.TestCase):
             self.dispatch("arrival.run", {"rows": prepared["rows"], "top_label": "截止 16 点"})
             self.assertEqual(run.call_args.args[0][0]["path"], self.file_a)
 
+    def _assert_pivot_contracts(self):
+        """透视分析路径与人工复核选择应还原为 core 期望的键结构。"""
+
         with mock.patch("core.pivot_core.analyze", return_value={"sources": []}) as analyze:
             self.dispatch("pivot.analyze", {"paths": [self.file_a]})
             self.assertEqual(analyze.call_args.args[0], [self.file_a])
@@ -139,12 +160,18 @@ class TestTauriBridgeContracts(unittest.TestCase):
             self.assertTrue(restored["held"][("A.xlsx", 3)])
             self.assertEqual(restored["unit_overrides"][("A", "甲")], "件")
 
+    def _assert_purchase_run_contract(self):
+        """采购任务的两份文件和供应商名称应准确转发。"""
+
         with mock.patch("core.purchase_core.run", return_value={"out_dir": self.temp.name}) as run:
             self.dispatch("purchase.run", {
                 "file1": [self.file_a], "file2": [self.file_b],
                 "sheet1": "数据", "sheet2": "数据", "name1": "我方", "name2": "供应商"})
             self.assertEqual(run.call_args.kwargs["name2"], "供应商")
             self.assertTrue(callable(run.call_args.kwargs["progress"]))
+
+    def _assert_shipping_review_run_contract(self):
+        """发运评审的文件、工作表与进度回调应准确转发。"""
 
         with mock.patch("core.shipping_review_core.run", return_value={"out_dir": self.temp.name}) as run:
             self.dispatch("shipping_review.run", {
@@ -155,6 +182,9 @@ class TestTauriBridgeContracts(unittest.TestCase):
             self.assertEqual(run.call_args.kwargs["review_sheet"], "评审A")
             self.assertTrue(callable(run.call_args.kwargs["progress"]))
 
+    def _assert_delivery_contracts(self):
+        """送货分析返回与 run 的订单类型参数应准确转发。"""
+
         with mock.patch("core.delivery_core.analyze", return_value={"sheets": ["数据"]}):
             self.assertEqual(self.dispatch("delivery.analyze", {
                 "path": [self.file_a], "sheet": "数据"})["sheets"], ["数据"])
@@ -163,6 +193,9 @@ class TestTauriBridgeContracts(unittest.TestCase):
                 "file1": [self.file_a], "file2": [self.file_b],
                 "sheet1": "数据", "sheet2": "数据", "order_type": "KD"})
             self.assertEqual(run.call_args.kwargs["order_type"], "KD")
+
+    def _assert_supplier_batch_contracts(self):
+        """供应商批次的分析路径与人工复核选择应准确转发。"""
 
         with mock.patch("core.supplier_batch_core.analyze", return_value={"suppliers": []}) as analyze:
             self.dispatch("supplier_batch.analyze", {

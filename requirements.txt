@@ -3,3 +3,5 @@
 -r requirements-runtime.txt
 # 打包工具（仅开发机需要，运行时不依赖）
 pyinstaller==6.21.0
+# 圈复杂度检查（本地提交前与 CI 质量门禁）
+radon==6.0.1

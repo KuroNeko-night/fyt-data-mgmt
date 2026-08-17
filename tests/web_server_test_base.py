@@ -51,11 +51,29 @@ class WebServerTestBase(unittest.TestCase):
         web_server.DATA_ROOT, web_server.DB_PATH, web_server.STATIC_ROOT = self.original  # 恢复模块路径
         self.temp.cleanup()
 
+    def _encode_payload(self, raw, payload):
+        """raw 用于文件上传等二进制请求；payload 按服务端默认 UTF-8 JSON 编码。"""
+        if raw is not None:
+            return raw
+        if payload is None:
+            return None
+        return json.dumps(payload, ensure_ascii=False).encode()
+
+    def _decode_response(self, response):
+        """把正常响应按 Content-Type 解析为 JSON 或原始字节。"""
+        body = response.read()
+        if "json" in (response.headers.get("Content-Type") or ""):
+            return json.loads(body)
+        return body
+
+    def _decode_error(self, error):
+        """权限拒绝和参数错误是待断言的正常测试结果，统一解析错误正文。"""
+        return error.code, json.loads(error.read())
+
     def call(self, path, payload=None, token="", raw=None, headers=None, method=None):
         """发送测试 API 请求，并把正常及 HTTP 错误响应统一解析为状态码和正文。"""
 
-        # raw 用于文件上传等二进制请求；payload 则按服务端默认 UTF-8 JSON 编码。
-        data = raw if raw is not None else None if payload is None else json.dumps(payload, ensure_ascii=False).encode()
+        data = self._encode_payload(raw, payload)
         request = urllib.request.Request(self.base + path, data=data, method=method or ("POST" if data is not None else "GET"))
         request.add_header("Content-Type", "application/json" if raw is None else "application/octet-stream")
         if token:
@@ -64,12 +82,9 @@ class WebServerTestBase(unittest.TestCase):
             request.add_header(key, value)
         try:
             with urllib.request.urlopen(request, timeout=10) as response:
-                body = response.read()
-                return response.status, json.loads(body) if "json" in (response.headers.get("Content-Type") or "") else body
+                return response.status, self._decode_response(response)
         except urllib.error.HTTPError as error:
-            # 权限拒绝和参数错误是待断言的正常测试结果，不应由 urllib 提前中断用例。
-            body = error.read()
-            return error.code, json.loads(body)  # 错误响应也解析返回
+            return self._decode_error(error)
 
     def wait_job(self, job_id):
         """短间隔轮询持久化任务，超时意味着后台任务生命周期发生回归。"""

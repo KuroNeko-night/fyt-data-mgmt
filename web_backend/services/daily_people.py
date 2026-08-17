@@ -491,33 +491,56 @@ def list_daily_attendance(handler: Any, deps: DailyManagementDependencies) -> No
         "production_groups": [deps.production_attendance_public(row) for row in production_rows],
     })
 
+def _normalize_attendance_record(item: object) -> tuple[int, bool, str, str]:
+    """校验单条参会人员考勤，并返回可直接入库的字段。"""
+    if not isinstance(item, dict):
+        raise ApiError(HTTPStatus.BAD_REQUEST, "考勤记录格式无效")
+    try:
+        person_id = int(item.get("person_id"))
+    except (TypeError, ValueError) as exc:
+        raise ApiError(HTTPStatus.BAD_REQUEST, "人员编号无效") from exc
+    present = item.get("present")
+    if not isinstance(present, bool):
+        raise ApiError(HTTPStatus.BAD_REQUEST, "出勤状态无效")
+    reason = str(item.get("reason") or "").strip()
+    status = str(item.get("status") or ("present" if present else "absent")).strip()
+    if len(reason) > 500 or len(status) > 32:
+        raise ApiError(HTTPStatus.BAD_REQUEST, "考勤原因或状态内容过长")
+    if present:
+        status = "present"
+    elif status == "present":
+        status = "absent"
+    return person_id, present, status, reason
+
+
 def _normalize_attendance_records(
     records: object,
 ) -> list[tuple[int, bool, str, str]]:
     """校验并规范化参会人员考勤，数据库事务外不保留原始请求对象。"""
     if not isinstance(records, list) or len(records) > 1000:
         raise ApiError(HTTPStatus.BAD_REQUEST, "考勤记录格式无效")
-    normalized: list[tuple[int, bool, str, str]] = []
-    for item in records:
-        if not isinstance(item, dict):
-            raise ApiError(HTTPStatus.BAD_REQUEST, "考勤记录格式无效")
-        try:
-            person_id = int(item.get("person_id"))
-        except (TypeError, ValueError) as exc:
-            raise ApiError(HTTPStatus.BAD_REQUEST, "人员编号无效") from exc
-        present = item.get("present")
-        if not isinstance(present, bool):
-            raise ApiError(HTTPStatus.BAD_REQUEST, "出勤状态无效")
-        reason = str(item.get("reason") or "").strip()
-        status = str(item.get("status") or ("present" if present else "absent")).strip()
-        if len(reason) > 500 or len(status) > 32:
-            raise ApiError(HTTPStatus.BAD_REQUEST, "考勤原因或状态内容过长")
-        if present:
-            status = "present"
-        elif status == "present":
-            status = "absent"
-        normalized.append((person_id, present, status, reason))
-    return normalized
+    return [_normalize_attendance_record(item) for item in records]
+
+
+def _normalize_production_attendance_record(item: object) -> tuple[int | None, int | None, int, str]:
+    """校验单条生产班次出勤；兼容旧客户端只提交班组编号的记录。"""
+    if not isinstance(item, dict):
+        raise ApiError(HTTPStatus.BAD_REQUEST, "生产班组出勤格式无效")
+    # shift_id 优先；旧客户端只提交 group_id 时由后续解析选择排序最前的班次。
+    try:
+        shift_id = int(item["shift_id"]) if item.get("shift_id") is not None else None
+        group_id = int(item["group_id"]) if item.get("group_id") is not None else None
+        attendance_count = int(item.get("attendance_count") or 0)
+    except (TypeError, ValueError) as exc:
+        raise ApiError(HTTPStatus.BAD_REQUEST, "生产班次或出勤人数无效") from exc
+    if shift_id is None and group_id is None:
+        raise ApiError(HTTPStatus.BAD_REQUEST, "生产班次编号缺失")
+    note = str(item.get("note") or "").strip()
+    if not 0 <= attendance_count <= 100000:
+        raise ApiError(HTTPStatus.BAD_REQUEST, "生产班组出勤人数超出合理范围")
+    if len(note) > 500:
+        raise ApiError(HTTPStatus.BAD_REQUEST, "生产班组备注不能超过 500 个字")
+    return shift_id, group_id, attendance_count, note
 
 
 def _normalize_production_attendance(
@@ -526,26 +549,7 @@ def _normalize_production_attendance(
     """校验生产考勤输入；兼容旧客户端只提交班组编号的记录。"""
     if not isinstance(records, list) or len(records) > 200:
         raise ApiError(HTTPStatus.BAD_REQUEST, "生产班组出勤格式无效")
-    normalized: list[tuple[int | None, int | None, int, str]] = []
-    for item in records:
-        if not isinstance(item, dict):
-            raise ApiError(HTTPStatus.BAD_REQUEST, "生产班组出勤格式无效")
-        # shift_id 优先；旧客户端只提交 group_id 时由后续解析选择排序最前的班次。
-        try:
-            shift_id = int(item["shift_id"]) if item.get("shift_id") is not None else None
-            group_id = int(item["group_id"]) if item.get("group_id") is not None else None
-            attendance_count = int(item.get("attendance_count") or 0)
-        except (TypeError, ValueError) as exc:
-            raise ApiError(HTTPStatus.BAD_REQUEST, "生产班次或出勤人数无效") from exc
-        if shift_id is None and group_id is None:
-            raise ApiError(HTTPStatus.BAD_REQUEST, "生产班次编号缺失")
-        note = str(item.get("note") or "").strip()
-        if not 0 <= attendance_count <= 100000:
-            raise ApiError(HTTPStatus.BAD_REQUEST, "生产班组出勤人数超出合理范围")
-        if len(note) > 500:
-            raise ApiError(HTTPStatus.BAD_REQUEST, "生产班组备注不能超过 500 个字")
-        normalized.append((shift_id, group_id, attendance_count, note))
-    return normalized
+    return [_normalize_production_attendance_record(item) for item in records]
 
 
 def _validate_participant_ids(

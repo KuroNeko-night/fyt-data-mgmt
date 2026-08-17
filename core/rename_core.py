@@ -127,6 +127,50 @@ class PlanItem(object):
         return self.status == "ok"
 
 
+def _plan_items(paths, rule):
+    """第一轮计算单项状态；序号严格使用原输入顺序，包括最终被阻止的项目。"""
+    items = []
+    for i, p in enumerate(paths):
+        old_name = os.path.basename(p)
+        new_name = _new_filename(old_name, rule, i)
+        if not new_name:
+            items.append(PlanItem(p, "", "empty", "新名为空"))
+        elif _name_invalid(new_name):
+            items.append(PlanItem(p, new_name, "invalid", "含非法字符或为系统保留名"))
+        elif new_name == old_name:
+            items.append(PlanItem(p, new_name, "same", "无变化"))
+        else:
+            items.append(PlanItem(p, new_name, "ok"))
+    return items
+
+
+def _mark_duplicate_targets(items):
+    """第二轮检查本批次目标碰撞；把整组都标记 dup，避免任意选择其中一个执行。"""
+    seen = {}
+    for it in items:
+        if it.status != "ok":
+            continue
+        key = it.new_path.lower()
+        seen.setdefault(key, []).append(it)
+    for group in seen.values():
+        if len(group) > 1:
+            for it in group:
+                it.status = "dup"
+                it.note = "与本批次其它文件重名"
+
+
+def _mark_existing_targets(items, paths):
+    """第三轮检查磁盘已有目标；本批源路径集合使用绝对规范路径消除写法差异。"""
+    sources = set(os.path.normcase(os.path.abspath(p)) for p in paths)
+    for it in items:
+        if it.status != "ok":
+            continue
+        tgt = os.path.normcase(os.path.abspath(it.new_path))
+        if os.path.exists(it.new_path) and tgt not in sources:
+            it.status = "exists"
+            it.note = "目标已存在于该文件夹"
+
+
 def build_plan(paths, rule):
     """根据输入顺序生成预览计划，并执行所有可提前判断的冲突检查。
 
@@ -139,42 +183,9 @@ def build_plan(paths, rule):
     源文件，因为两阶段执行会先把所有源移到临时名；其他已存在目标一律阻止。函数只
     查询文件是否存在，不执行写操作。
     """
-    items = []
-    # 第一轮只计算单项状态；序号严格使用原输入顺序，包括最终被阻止的项目。
-    for i, p in enumerate(paths):
-        old_name = os.path.basename(p)
-        new_name = _new_filename(old_name, rule, i)
-        if not new_name:
-            items.append(PlanItem(p, "", "empty", "新名为空"))
-        elif _name_invalid(new_name):
-            items.append(PlanItem(p, new_name, "invalid", "含非法字符或为系统保留名"))
-        elif new_name == old_name:
-            items.append(PlanItem(p, new_name, "same", "无变化"))
-        else:
-            items.append(PlanItem(p, new_name, "ok"))
-
-    # 第二轮检查本批次目标碰撞；把整组都标记 dup，避免任意选择其中一个执行。
-    seen = {}
-    for it in items:
-        if it.status != "ok":
-            continue
-        key = it.new_path.lower()
-        seen.setdefault(key, []).append(it)
-    for key, group in seen.items():
-        if len(group) > 1:
-            for it in group:
-                it.status = "dup"
-                it.note = "与本批次其它文件重名"
-
-    # 第三轮检查磁盘已有目标；本批源路径集合使用绝对规范路径消除写法差异。
-    sources = set(os.path.normcase(os.path.abspath(p)) for p in paths)
-    for it in items:
-        if it.status != "ok":
-            continue
-        tgt = os.path.normcase(os.path.abspath(it.new_path))
-        if os.path.exists(it.new_path) and tgt not in sources:
-            it.status = "exists"
-            it.note = "目标已存在于该文件夹"
+    items = _plan_items(paths, rule)
+    _mark_duplicate_targets(items)
+    _mark_existing_targets(items, paths)
     return items
 
 

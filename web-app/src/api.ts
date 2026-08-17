@@ -26,6 +26,67 @@ class ApiResponseError extends Error {}
 // localStorage 或通过 X-Session-Token 头回传，避免 XSS 通过读取 localStorage 窃取会话。
 // 以下三个函数保留为兼容旧调用方的空实现，登录/登出实际由 Set-Cookie 生效。
 
+/** 为一次请求准备统一的会话头与 JSON 内容类型头。 */
+function buildRequestHeaders(fetchOptions: RequestInit): Headers {
+  const headers = new Headers(fetchOptions.headers);  // 复制调用方头信息，后续统一叠加会话与内容类型
+  if (fetchOptions.body && typeof fetchOptions.body === "string") headers.set("Content-Type", "application/json"); // 文件与 FormData 不应被误标为 JSON。
+  const token = getToken();  // 兼容未来需要显式 X-Session-Token 的部署场景
+  if (token) headers.set("X-Session-Token", token);  // 仅在存在令牌时附加，避免发送空请求头
+  return headers;
+}
+
+/** 按幂等性计算重试次数：默认只重试 GET，普通 GET 最多三次。 */
+function retryPlan(fetchOptions: RequestInit, retryNetwork: boolean, retryAttempts?: number): number {
+  const retryable = retryNetwork || !fetchOptions.method || fetchOptions.method.toUpperCase() === "GET";  // 默认只重试幂等 GET，非幂等接口须服务端保证安全
+  return retryable ? Math.max(1, retryAttempts ?? (retryNetwork ? 2 : 3)) : 1;  // 计算尝试次数，普通 GET 最多三次
+}
+
+/** 是否还能继续重试：服务端明确返回的业务错误不属于瞬时网络故障。 */
+function canRetry(error: unknown, attempt: number, attempts: number): boolean {
+  return !(error instanceof ApiResponseError) && attempt + 1 < attempts;
+}
+
+/** 指数退避等待，避免瞬时故障期间密集重试。 */
+function waitForRetry(attempt: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, 450 * (attempt + 1)));
+}
+
+/** 把未知的最终失败值统一转换为 Error。 */
+function requestError(lastError: unknown): Error {
+  return lastError instanceof Error ? lastError : new Error("请求失败");
+}
+
+/** 执行一次带超时保护的 JSON 请求；内部超时转为明确错误，外部取消原样抛出。 */
+async function fetchJsonOnce<T>(
+  path: string,
+  fetchOptions: RequestInit,
+  headers: Headers,
+  timeoutMs: number,
+  timeoutMessage: string,
+): Promise<T> {
+  const controller = timeoutMs > 0 && !fetchOptions.signal ? new AbortController() : null; // 调用方信号优先，内部只补充缺失的超时能力。
+  const timeoutId = controller
+    ? window.setTimeout(() => controller.abort(), timeoutMs)
+    : 0;
+  try {
+    const response = await fetch(`${API_BASE}${path}`, {
+      ...fetchOptions,
+      headers,
+      cache: fetchOptions.cache || "no-store",
+      credentials: "same-origin",
+      signal: fetchOptions.signal || controller?.signal,
+    });
+    const data = await response.json().catch(() => ({})); // 兼容空响应或反向代理生成的非 JSON 错误页。
+    if (!response.ok) throw new ApiResponseError(data.error || "请求失败");  // 业务错误不重试，避免把权限或校验失败重复提交
+    return data as T;
+  } catch (error) {
+    if (Boolean(controller?.signal.aborted)) throw new Error(timeoutMessage);  // 内部超时控制器中断视为超时
+    throw error;
+  } finally {
+    if (timeoutId) window.clearTimeout(timeoutId);
+  }
+}
+
 /**
  * 发送 JSON API 请求并统一处理会话、超时、网络重试和错误消息。
  *
@@ -41,40 +102,19 @@ async function request<T>(path: string, options: ApiRequestOptions = {}): Promis
     retryAttempts,
     ...fetchOptions
   } = options;
-  const headers = new Headers(fetchOptions.headers);  // 复制调用方头信息，后续统一叠加会话与内容类型
-  if (fetchOptions.body && typeof fetchOptions.body === "string") headers.set("Content-Type", "application/json"); // 文件与 FormData 不应被误标为 JSON。
-  const token = getToken();  // 兼容未来需要显式 X-Session-Token 的部署场景
-  if (token) headers.set("X-Session-Token", token);  // 仅在存在令牌时附加，避免发送空请求头
-  const retryable = retryNetwork || !fetchOptions.method || fetchOptions.method.toUpperCase() === "GET";  // 默认只重试幂等 GET，非幂等接口须服务端保证安全
-  const attempts = retryable ? Math.max(1, retryAttempts ?? (retryNetwork ? 2 : 3)) : 1;  // 计算尝试次数，普通 GET 最多三次
+  const headers = buildRequestHeaders(fetchOptions);
+  const attempts = retryPlan(fetchOptions, retryNetwork, retryAttempts);
   let lastError: unknown;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
-    const controller = timeoutMs > 0 && !fetchOptions.signal ? new AbortController() : null; // 调用方信号优先，内部只补充缺失的超时能力。
-    const timeoutId = controller
-      ? window.setTimeout(() => controller.abort(), timeoutMs)
-      : 0;
     try {
-      const response = await fetch(`${API_BASE}${path}`, {
-        ...fetchOptions,
-        headers,
-        cache: fetchOptions.cache || "no-store",
-        credentials: "same-origin",
-        signal: fetchOptions.signal || controller?.signal,
-      });
-      const data = await response.json().catch(() => ({})); // 兼容空响应或反向代理生成的非 JSON 错误页。
-      if (!response.ok) throw new ApiResponseError(data.error || "请求失败");  // 业务错误不重试，避免把权限或校验失败重复提交
-      return data as T;
+      return await fetchJsonOnce<T>(path, fetchOptions, headers, timeoutMs, timeoutMessage);
     } catch (error) {
-      const timedOut = Boolean(controller?.signal.aborted);  // 内部超时控制器中断视为超时，外部取消原样抛出
-      lastError = timedOut ? new Error(timeoutMessage) : error;
-      const canRetry = !(error instanceof ApiResponseError) && attempt + 1 < attempts; // 服务端明确返回的业务错误不属于瞬时网络故障。
-      if (canRetry) await new Promise((resolve) => window.setTimeout(resolve, 450 * (attempt + 1)));  // 指数退避避免瞬时故障期间密集重试
+      lastError = error;
+      if (canRetry(error, attempt, attempts)) await waitForRetry(attempt);
       else break;
-    } finally {
-      if (timeoutId) window.clearTimeout(timeoutId);
     }
   }
-  throw lastError instanceof Error ? lastError : new Error("请求失败");  // 统一抛出 Error，调用方无需处理未知类型
+  throw requestError(lastError);  // 统一抛出 Error，调用方无需处理未知类型
 }
 
 // 认证、会话与工作台基础数据接口。

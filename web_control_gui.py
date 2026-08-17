@@ -1046,46 +1046,47 @@ class WebControlWindow(tk.Tk):
         self._append_log("[错误] Web 服务未能启动，已取消公网连接。")
         return False
 
-    def start_tunnel(self) -> None:
-        """启动临时或固定 Cloudflare Tunnel，并把输出写入诊断日志。
+    def _require_cloudflared(self, cloudflared) -> bool:
+        """确认 cloudflared 客户端存在；缺失时给出安装提示。"""
+        if cloudflared is not None:
+            self._client_state.setText("客户端已就绪")
+            return True
+        self._client_state.setText("未找到客户端，请运行 scripts\\install-cloudflared.ps1")
+        messagebox.showwarning(
+            "缺少 Cloudflare 客户端",
+            "请运行 scripts\\install-cloudflared.ps1 自动安装；\n"
+            "或手动把 cloudflared.exe 放到：\n%s" % (ROOT / "tools"),
+            parent=self,
+        )
+        return False
 
-        固定令牌仅放入专用子进程环境；启动前移除父环境可能遗留的令牌变量，避免临时
-        模式意外使用旧配置。公网地址只有在日志确认连接注册成功后才会开放复制。
-        """
-        if self._tunnel_running():
-            self._append_log("[提示] 公网隧道已经运行。")
-            return
-        cloudflared = _find_cloudflared()
-        if cloudflared is None:
-            self._client_state.setText("未找到客户端，请运行 scripts\\install-cloudflared.ps1")
-            messagebox.showwarning(
-                "缺少 Cloudflare 客户端",
-                "请运行 scripts\\install-cloudflared.ps1 自动安装；\n"
-                "或手动把 cloudflared.exe 放到：\n%s" % (ROOT / "tools"),
-                parent=self,
-            )
-            return
-        self._client_state.setText("客户端已就绪")
-        if not _admin_account_exists() and not os.environ.get("FYT_ADMIN_PASSWORD"):
-            messagebox.showwarning("需要设置管理员密码", "首次开放公网访问前，请先运行 scripts\\reset-web-admin-password.ps1 设置管理员密码。", parent=self)
-            self._append_log("[提示] 已取消公网连接：首次启动需要先设置管理员密码。")
-            return
-        named = self._using_named_tunnel()
+    def _require_admin_password_for_tunnel(self) -> bool:
+        """首次开放公网前确认管理员密码已经设置。"""
+        if _admin_account_exists() or os.environ.get("FYT_ADMIN_PASSWORD"):
+            return True
+        messagebox.showwarning("需要设置管理员密码", "首次开放公网访问前，请先运行 scripts\\reset-web-admin-password.ps1 设置管理员密码。", parent=self)
+        self._append_log("[提示] 已取消公网连接：首次启动需要先设置管理员密码。")
+        return False
+
+    def _load_tunnel_credential(self, named: bool) -> str | None:
+        """加载固定隧道令牌；未配置时更新界面并返回 ``None`` 表示取消。"""
         token = _load_tunnel_token() if named else ""
-        if named and not token:
-            self._tunnel_token_configured = False
-            self._token_state.setText("尚未配置")
-            self._public_address.setText(self._idle_public_text())
-            messagebox.showwarning(
-                "尚未配置固定隧道",
-                "请先粘贴并保存 Cloudflare 连接器令牌。",
-                parent=self,
-            )
-            self._append_log("[提示] 已取消固定隧道连接：尚未保存有效令牌。")
-            self._refresh_ui()
-            return
-        if not self._ensure_web_for_tunnel():
-            return
+        if not named or token:
+            return token
+        self._tunnel_token_configured = False
+        self._token_state.setText("尚未配置")
+        self._public_address.setText(self._idle_public_text())
+        messagebox.showwarning(
+            "尚未配置固定隧道",
+            "请先粘贴并保存 Cloudflare 连接器令牌。",
+            parent=self,
+        )
+        self._append_log("[提示] 已取消固定隧道连接：尚未保存有效令牌。")
+        self._refresh_ui()
+        return None
+
+    def _launch_tunnel_process(self, cloudflared, token: str, named: bool) -> None:
+        """准备日志、清理历史令牌并启动 cloudflared 子进程。"""
         LOG_DIR.mkdir(parents=True, exist_ok=True)
         self._close_tunnel_files()
         self._tunnel_stdout = TUNNEL_LOG_PATH.open("wb")  # 使用二进制流避免 cloudflared 输出编码影响父进程。
@@ -1117,6 +1118,28 @@ class WebControlWindow(tk.Tk):
         mode = "固定命名隧道" if named else "临时公网隧道"
         self._append_log(f"[启动] 正在连接{mode}。")
         self._refresh_ui()
+
+    def start_tunnel(self) -> None:
+        """启动临时或固定 Cloudflare Tunnel，并把输出写入诊断日志。
+
+        固定令牌仅放入专用子进程环境；启动前移除父环境可能遗留的令牌变量，避免临时
+        模式意外使用旧配置。公网地址只有在日志确认连接注册成功后才会开放复制。
+        """
+        if self._tunnel_running():
+            self._append_log("[提示] 公网隧道已经运行。")
+            return
+        cloudflared = _find_cloudflared()
+        if not self._require_cloudflared(cloudflared):
+            return
+        if not self._require_admin_password_for_tunnel():
+            return
+        named = self._using_named_tunnel()
+        token = self._load_tunnel_credential(named)
+        if token is None:
+            return
+        if not self._ensure_web_for_tunnel():
+            return
+        self._launch_tunnel_process(cloudflared, token, named)
 
     def _load_saved_public_url(self) -> None:
         """读取上次记录的临时地址，但必须重新扫描日志确认当前连接后才启用。
@@ -1184,6 +1207,50 @@ class WebControlWindow(tk.Tk):
             self._append_log("[提示] 公网连接中断，正在自动重连。")
             self._refresh_ui()
 
+    def _poll_web_process(self) -> None:
+        """轮询本窗口启动的 Web 进程，退出时执行最终清理。"""
+        if self._process is None:
+            return
+        if self._process.poll() is not None:
+            self._finalize_web_process()
+
+    def _poll_tunnel_process(self) -> bool:
+        """轮询本窗口启动的隧道进程；未托管自有进程时返回 ``False``。"""
+        if self._tunnel_process is None:
+            return False
+        exit_code = self._tunnel_process.poll()
+        if exit_code is None:
+            self._scan_tunnel_logs()
+            return True
+        pid = self._tunnel_process.pid
+        self._scan_tunnel_logs()
+        _remove_owned_pid(TUNNEL_PID_PATH, pid)
+        self._close_tunnel_files()
+        self._tunnel_process = None
+        if exit_code != 0:
+            self._append_log(f"[错误] 公网隧道已断开（代码 {exit_code}），请查看诊断日志。")
+        else:
+            self._append_log("[完成] 公网隧道已停止。")
+        self._clear_public_url()
+        return True
+
+    def _poll_external_tunnel(self) -> None:
+        """轮询已存在的系统服务隧道 PID。"""
+        if not self._manage_existing:
+            return
+        previous_pid = self._external_tunnel_pid
+        self._external_tunnel_pid = _read_live_pid(TUNNEL_PID_PATH, ("cloudflared.exe",))
+        if self._external_tunnel_pid:
+            self._load_saved_public_url()
+        elif previous_pid:
+            self._clear_public_url()
+            self._append_log("[提示] 公网隧道已断开。")
+
+    def _poll_external_web(self) -> None:
+        """管理模式且没有自有 Web 进程时，轮询系统服务 PID。"""
+        if self._manage_existing and self._process is None:
+            self._external_web_pid = _read_live_pid(WEB_PID_PATH, WEB_PROCESS_NAMES)
+
     def _poll_runtime(self) -> None:
         """每 600 毫秒轮询进程、日志和外部 PID，并安排下一次轮询。
 
@@ -1191,36 +1258,10 @@ class WebControlWindow(tk.Tk):
         停止调度即可。
         """
         self._drain_web_output()
-        if self._process is not None:
-            if self._process.poll() is None:
-                pass
-            else:
-                self._finalize_web_process()
-        if self._tunnel_process is not None:
-            exit_code = self._tunnel_process.poll()
-            if exit_code is None:
-                self._scan_tunnel_logs()
-            else:
-                pid = self._tunnel_process.pid
-                self._scan_tunnel_logs()
-                _remove_owned_pid(TUNNEL_PID_PATH, pid)
-                self._close_tunnel_files()
-                self._tunnel_process = None
-                if exit_code != 0:
-                    self._append_log(f"[错误] 公网隧道已断开（代码 {exit_code}），请查看诊断日志。")
-                else:
-                    self._append_log("[完成] 公网隧道已停止。")
-                self._clear_public_url()
-        elif self._manage_existing:
-            previous_pid = self._external_tunnel_pid
-            self._external_tunnel_pid = _read_live_pid(TUNNEL_PID_PATH, ("cloudflared.exe",))
-            if self._external_tunnel_pid:
-                self._load_saved_public_url()
-            elif previous_pid:
-                self._clear_public_url()
-                self._append_log("[提示] 公网隧道已断开。")
-        if self._manage_existing and self._process is None:
-            self._external_web_pid = _read_live_pid(WEB_PID_PATH, WEB_PROCESS_NAMES)
+        self._poll_web_process()
+        if not self._poll_tunnel_process():
+            self._poll_external_tunnel()
+        self._poll_external_web()
         state = (self._web_running(), self._tunnel_running())  # 仅状态变化时重绘，减少无意义控件配置。
         if state != self._last_running_state:
             self._refresh_ui()

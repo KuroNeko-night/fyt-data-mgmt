@@ -110,6 +110,97 @@ def _row_details(value: object) -> str:
     )
 
 
+def _mapping_rows(value: object) -> list[Mapping[str, object]]:
+    """读取结果明细并过滤掉非映射项。"""
+    return [item for item in _sequence(value) if isinstance(item, Mapping)]
+
+
+def _compare_only_rows(
+    only_a: list[Mapping[str, object]],
+    only_b: list[Mapping[str, object]],
+) -> list[dict[str, object]]:
+    """把两表单侧记录转换为带来源标记的统一明细。"""
+    return (
+        [{"side": "只在 A", "key": item.get("key"), "details": _row_details(item.get("row"))} for item in only_a]
+        + [{"side": "只在 B", "key": item.get("key"), "details": _row_details(item.get("row"))} for item in only_b]
+    )
+
+
+def _compare_sections(
+    diffs: list[Mapping[str, object]],
+    only_rows: list[dict[str, object]],
+    key_label: str,
+    limit: int,
+) -> list[dict[str, object]]:
+    """生成值差异与单侧记录两个可选明细区块。"""
+    sections = []
+    if diffs:
+        sections.append(_section(
+            "diffs", "值差异明细",
+            [("key", key_label), ("column", "列名"), ("a", "A 值"), ("b", "B 值")],
+            diffs,
+            limit=limit,
+        ))
+    if only_rows:
+        sections.append(_section(
+            "only", "单侧记录",
+            [("side", "来源"), ("key", key_label), ("details", "记录摘要")],
+            only_rows,
+            limit=limit,
+        ))
+    return sections
+
+
+def _compare_metrics(
+    matched: int,
+    diffs: list[Mapping[str, object]],
+    only_a: list[Mapping[str, object]],
+    only_b: list[Mapping[str, object]],
+    skipped: int,
+) -> list[dict[str, object]]:
+    """生成表格比对的五项前端指标。"""
+    return [
+        _metric("matched", "成功配对", matched, tone="success"),
+        _metric("diffs", "值差异", len(diffs), tone="warning" if diffs else "success"),
+        _metric("only_a", "只在 A", len(only_a), tone="danger" if only_a else "success"),
+        _metric("only_b", "只在 B", len(only_b), tone="danger" if only_b else "success"),
+        _metric("skipped", "重复/空关键值", skipped, tone="warning" if skipped else "success"),
+    ]
+
+
+def _compare_quality(score: int, duplicate_count: int, blank_count: int) -> dict[str, object]:
+    """生成只衡量关键列稳定配对能力的质量评分。"""
+    return _quality(
+        score,
+        "评分只衡量关键列能否稳定配对；业务差异本身不会降低这项评分。",
+        [
+            _quality_check(
+                "success" if duplicate_count == 0 else "warning",
+                "关键值唯一性",
+                f"A、B 两表共发现 {duplicate_count} 个重复关键值。",
+            ),
+            _quality_check(
+                "success" if blank_count == 0 else "warning",
+                "关键值完整性",
+                f"有 {blank_count} 行关键值为空，未参与比对。",
+            ),
+        ],
+    )
+
+
+def _compare_parameters(key_value: object, columns: list[str]) -> list[dict[str, object]]:
+    """生成关键列与比较列的人工参数。"""
+    return [
+        _parameter("key", "关键列", key_value),
+        _parameter("columns", "比较列", "、".join(columns) if columns else "未选择"),
+    ]
+
+
+def _compare_column_texts(result: Mapping[str, object]) -> list[str]:
+    """读取比较列名称，并过滤空文本。"""
+    return [_text(item) for item in _sequence(result.get("columns")) if _text(item)]
+
+
 def _present_compare(value: object, limit: int) -> dict[str, object] | None:
     """生成通用表格比对投影，区分值差异、单侧行和关键值质量。
 
@@ -121,64 +212,26 @@ def _present_compare(value: object, limit: int) -> dict[str, object] | None:
     if not counts and "diffs" not in result:
         return None
     matched = _integer(counts.get("matched"))
-    diffs = [item for item in _sequence(result.get("diffs")) if isinstance(item, Mapping)]
-    only_a = [item for item in _sequence(result.get("only_a")) if isinstance(item, Mapping)]
-    only_b = [item for item in _sequence(result.get("only_b")) if isinstance(item, Mapping)]
+    diffs = _mapping_rows(result.get("diffs"))
+    only_a = _mapping_rows(result.get("only_a"))
+    only_b = _mapping_rows(result.get("only_b"))
     duplicate_count = _integer(counts.get("dup_a")) + _integer(counts.get("dup_b"))
     blank_count = _integer(counts.get("blank_a")) + _integer(counts.get("blank_b"))
     reliability_base = max(matched + len(only_a) + len(only_b) + blank_count, 1)
     score = round(100 - _ratio(duplicate_count + blank_count, reliability_base) * 70)  # 单侧业务记录不属于关键列质量缺陷。
-    sections = []
-    if diffs:
-        sections.append(_section(
-            "diffs", "值差异明细",
-            [("key", _text(result.get("key")) or "关键值"), ("column", "列名"),
-             ("a", "A 值"), ("b", "B 值")],
-            diffs,
-            limit=limit,
-        ))
-    only_rows = ([{"side": "只在 A", "key": item.get("key"), "details": _row_details(item.get("row"))} for item in only_a]
-                 + [{"side": "只在 B", "key": item.get("key"), "details": _row_details(item.get("row"))} for item in only_b])
-    if only_rows:
-        sections.append(_section(
-            "only", "单侧记录",
-            [("side", "来源"), ("key", _text(result.get("key")) or "关键值"), ("details", "记录摘要")],
-            only_rows,
-            limit=limit,
-        ))
-    columns = [_text(item) for item in _sequence(result.get("columns")) if _text(item)]
+    only_rows = _compare_only_rows(only_a, only_b)
+    key_text = _text(result.get("key"))
+    key_label = key_text or "关键值"  # 明细表头有兜底名称；摘要保留原结果的空关键列语义。
+    columns = _compare_column_texts(result)
+    skipped = duplicate_count + blank_count
     return {
         "kind": "compare",
         "title": "表格比对结果",
-        "summary": f"按“{_text(result.get('key'))}”配对 {matched} 行，发现 {len(diffs)} 处值差异和 {len(only_rows)} 条单侧记录。",
-        "metrics": [
-            _metric("matched", "成功配对", matched, tone="success"),
-            _metric("diffs", "值差异", len(diffs), tone="warning" if diffs else "success"),
-            _metric("only_a", "只在 A", len(only_a), tone="danger" if only_a else "success"),
-            _metric("only_b", "只在 B", len(only_b), tone="danger" if only_b else "success"),
-            _metric("skipped", "重复/空关键值", duplicate_count + blank_count, tone="warning" if duplicate_count + blank_count else "success"),
-        ],
-        "quality": _quality(
-            score,
-            "评分只衡量关键列能否稳定配对；业务差异本身不会降低这项评分。",
-            [
-                _quality_check(
-                    "success" if duplicate_count == 0 else "warning",
-                    "关键值唯一性",
-                    f"A、B 两表共发现 {duplicate_count} 个重复关键值。",
-                ),
-                _quality_check(
-                    "success" if blank_count == 0 else "warning",
-                    "关键值完整性",
-                    f"有 {blank_count} 行关键值为空，未参与比对。",
-                ),
-            ],
-        ),
-        "parameters": [
-            _parameter("key", "关键列", result.get("key")),
-            _parameter("columns", "比较列", "、".join(columns) if columns else "未选择"),
-        ],
-        "sections": sections,
+        "summary": f"按“{key_text}”配对 {matched} 行，发现 {len(diffs)} 处值差异和 {len(only_rows)} 条单侧记录。",
+        "metrics": _compare_metrics(matched, diffs, only_a, only_b, skipped),
+        "quality": _compare_quality(score, duplicate_count, blank_count),
+        "parameters": _compare_parameters(result.get("key"), columns),
+        "sections": _compare_sections(diffs, only_rows, key_label, limit),
         "notices": [],
     }
 

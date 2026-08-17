@@ -76,6 +76,62 @@ def _arrival_material(value: object) -> dict[str, object] | None:
     }
 
 
+def _arrival_materials(item: Mapping[str, object]) -> list[dict[str, object]]:
+    """读取批次内的未到物料，过滤无法识别的旧结构明细。"""
+    return [
+        material for material in (
+            _arrival_material(value)
+            for value in _sequence(item.get("missing_materials", item.get("materials")))
+        )
+        if material is not None
+    ]
+
+
+def _arrival_batch_fields(item: Mapping[str, object]) -> tuple[str, int, int, int, list[dict[str, object]], object, object, object]:
+    """从新结构批次映射中提取统一批次字段。"""
+    materials = _arrival_materials(item)
+    batch_no = _text(item.get("batch_no") or item.get("batch"))
+    missing = _integer(item.get("missing_count", item.get("missing")), len(materials))
+    arrived = _integer(item.get("arrived_count", item.get("arrived", 0)))
+    total = _integer(item.get("total_count", item.get("total", 0)))
+    planned_quantity = item.get("planned_quantity", item.get("planned", item.get("plan")))
+    actual_quantity = item.get("actual_quantity", item.get("actual"))
+    difference_quantity = item.get("difference_quantity", item.get("difference", item.get("diff")))
+    return batch_no, missing, arrived, total, materials, planned_quantity, actual_quantity, difference_quantity
+
+
+def _legacy_arrival_batch_fields(item: object) -> tuple[str, int, int, int, list[dict[str, object]], str, str, str] | None:
+    """从旧结构四列数组中提取统一批次字段，长度不足时返回 ``None``。"""
+    values = _sequence(item)
+    if len(values) < 4:
+        return None
+    return (_text(values[0]), _integer(values[1]), _integer(values[2]), _integer(values[3]), [], "", "", "")
+
+
+def _arrival_batch_row(fields: tuple[str, int, int, int, list[dict[str, object]], object, object, object], index: int) -> dict[str, object]:
+    """把统一批次字段组装为前端行，并计算完成率与数据闭合状态。"""
+    batch_no, missing, arrived, total, materials, planned_quantity, actual_quantity, difference_quantity = fields
+    rate = round(max(0.0, min(100.0, arrived / total * 100)), 1) if total > 0 else 0.0  # 异常数据也不允许进度条超过 100%。
+    row = {
+        "id": f"arrival-{index}",
+        "batch_no": batch_no or f"未命名批次 {index}",
+        "missing_count": missing,
+        "arrived_count": arrived,
+        "total_count": total,
+        "completion_rate": rate,
+        "completion_label": f"{rate:.1f}%",
+        "data_valid": total >= 0 and missing >= 0 and arrived >= 0 and missing + arrived == total,  # 用等式检查总类数与拆分是否闭合。
+        "missing_materials": materials,
+    }
+    if planned_quantity not in (None, ""):
+        row["planned_quantity"] = _text(planned_quantity)
+    if actual_quantity not in (None, ""):
+        row["actual_quantity"] = _text(actual_quantity)
+    if difference_quantity not in (None, ""):
+        row["difference_quantity"] = _text(difference_quantity)
+    return row
+
+
 def arrival_batches(value: object) -> list[dict[str, object]]:
     """读取到料结果中的批次指标与未到物料，兼容旧任务结构。
 
@@ -89,73 +145,23 @@ def arrival_batches(value: object) -> list[dict[str, object]]:
     source = detailed_batches or _sequence(result.get("results"))
     for index, item in enumerate(source, start=1):
         if isinstance(item, Mapping):
-            materials = [
-                material for material in (
-                    _arrival_material(value)
-                    for value in _sequence(item.get("missing_materials", item.get("materials")))
-                )
-                if material is not None
-            ]
-            batch_no = _text(item.get("batch_no") or item.get("batch"))
-            missing = _integer(
-                item.get("missing_count", item.get("missing")), len(materials),
-            )
-            arrived = _integer(item.get("arrived_count", item.get("arrived", 0)))
-            total = _integer(item.get("total_count", item.get("total", 0)))
-            planned_quantity = item.get("planned_quantity", item.get("planned", item.get("plan")))
-            actual_quantity = item.get("actual_quantity", item.get("actual"))
-            difference_quantity = item.get(
-                "difference_quantity", item.get("difference", item.get("diff"))
-            )
+            fields = _arrival_batch_fields(item)
         else:
-            values = _sequence(item)
-            if len(values) < 4:
-                continue
-            batch_no = _text(values[0])
-            missing = _integer(values[1])
-            arrived = _integer(values[2])
-            total = _integer(values[3])
-            materials = []
-            planned_quantity = actual_quantity = difference_quantity = ""
-        rate = round(max(0.0, min(100.0, arrived / total * 100)), 1) if total > 0 else 0.0  # 异常数据也不允许进度条超过 100%。
-        row = {
-            "id": f"arrival-{index}",
-            "batch_no": batch_no or f"未命名批次 {index}",
-            "missing_count": missing,
-            "arrived_count": arrived,
-            "total_count": total,
-            "completion_rate": rate,
-            "completion_label": f"{rate:.1f}%",
-            "data_valid": total >= 0 and missing >= 0 and arrived >= 0 and missing + arrived == total,  # 用等式检查总类数与拆分是否闭合。
-            "missing_materials": materials,
-        }
-        if planned_quantity not in (None, ""):
-            row["planned_quantity"] = _text(planned_quantity)
-        if actual_quantity not in (None, ""):
-            row["actual_quantity"] = _text(actual_quantity)
-        if difference_quantity not in (None, ""):
-            row["difference_quantity"] = _text(difference_quantity)
-        rows.append(row)
+            fields = _legacy_arrival_batch_fields(item)
+        if fields is None:
+            continue
+        rows.append(_arrival_batch_row(fields, index))
     return rows
 
 
-def _present_arrival(value: object, limit: int) -> dict[str, object] | None:
-    """生成到料结果投影：批次进度、未到物料明细和数量一致性提示。"""
-    rows = arrival_batches(value)
-    if not rows:
-        return None
-    total = sum(_integer(row["total_count"]) for row in rows)
-    arrived = sum(_integer(row["arrived_count"]) for row in rows)
-    missing = sum(_integer(row["missing_count"]) for row in rows)
-    rate = round(max(0.0, min(100.0, arrived / total * 100)), 1) if total > 0 else 0.0
-    notices = []
-    if any(not bool(row["data_valid"]) for row in rows):  # 只提示异常，不擅自修正业务输出。
-        notices.append({
-            "tone": "warning",
-            "title": "部分批次的数量关系需要核对",
-            "message": "存在主料总类数与已到货、未收料合计不一致的批次，完成率已限制在 0% 到 100%。",
-        })
-    missing_material_rows = []
+def _arrival_completion_rate(total: int, arrived: int) -> float:
+    """计算并钳制到料完成率，异常数据也不能超过 100%。"""
+    return round(max(0.0, min(100.0, arrived / total * 100)), 1) if total > 0 else 0.0
+
+
+def _arrival_missing_material_rows(rows: list[dict[str, object]]) -> tuple[list[dict[str, object]], int]:
+    """汇总未到物料明细，并统计只有数量汇总而没有物料明细的批次。"""
+    missing_material_rows: list[dict[str, object]] = []
     batches_without_details = 0
     for row in rows:
         materials = _sequence(row.get("missing_materials"))
@@ -173,12 +179,37 @@ def _present_arrival(value: object, limit: int) -> dict[str, object] | None:
                 "received_quantity": material.get("received_quantity"),
                 "shortage_quantity": material.get("shortage_quantity"),
             })
+    return missing_material_rows, batches_without_details
+
+
+def _arrival_notices(
+    rows: list[dict[str, object]],
+    batches_without_details: int,
+    missing_material_rows: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    """生成数量关系异常和历史汇总缺明细两类提示。"""
+    notices: list[dict[str, object]] = []
+    if any(not bool(row["data_valid"]) for row in rows):  # 只提示异常，不擅自修正业务输出。
+        notices.append({
+            "tone": "warning",
+            "title": "部分批次的数量关系需要核对",
+            "message": "存在主料总类数与已到货、未收料合计不一致的批次，完成率已限制在 0% 到 100%。",
+        })
     if batches_without_details:
         notices.append({
             "tone": "info",
             "title": "部分历史任务只有数量汇总",
             "message": f"{batches_without_details} 个批次未保存物料级明细；重新处理源文件后即可在页面查看具体缺料与数量缺口。",
         })
+    return notices
+
+
+def _arrival_sections(
+    rows: list[dict[str, object]],
+    missing_material_rows: list[dict[str, object]],
+    limit: int,
+) -> list[dict[str, object]]:
+    """生成批次完成情况与未到物料明细区块。"""
     sections = [_section(
         "batches", "批次完成情况",
         [("batch_no", "批次"), ("total_count", "主料总类数"),
@@ -199,19 +230,48 @@ def _present_arrival(value: object, limit: int) -> dict[str, object] | None:
             description="逐项列出尚未到齐的物料及数量缺口。",
             limit=MAX_DETAIL_ROWS,
         ))
+    return sections
+
+
+def _arrival_metrics(
+    rows: list[dict[str, object]], rate: float, total: int, arrived: int, missing: int,
+) -> list[dict[str, object]]:
+    """生成到料批次与完成率的前端指标。"""
+    return [
+        _metric("batches", "批次数", len(rows), tone="info"),
+        _metric("completion", "到料完成率", f"{rate:.1f}%", note=f"{arrived} / {total} 类", tone="success" if rate >= 95 else "warning"),
+        _metric("arrived", "已到货类数", arrived, tone="success"),
+        _metric("missing", "未收料类数", missing, tone="danger" if missing else "success"),
+    ]
+
+
+def _arrival_summary(
+    rows: list[dict[str, object]], rate: float, missing: int, missing_material_rows: list[dict[str, object]],
+) -> str:
+    """生成到料投影的一句话摘要。"""
+    summary = f"共 {len(rows)} 个批次，到料完成率 {rate:.1f}%，仍有 {missing} 类未收料。"
+    if missing_material_rows:
+        summary += f" 已列出 {len(missing_material_rows)} 条未到物料明细。"
+    return summary
+
+
+def _present_arrival(value: object, limit: int) -> dict[str, object] | None:
+    """生成到料结果投影：批次进度、未到物料明细和数量一致性提示。"""
+    rows = arrival_batches(value)
+    if not rows:
+        return None
+    total = sum(_integer(row["total_count"]) for row in rows)
+    arrived = sum(_integer(row["arrived_count"]) for row in rows)
+    missing = sum(_integer(row["missing_count"]) for row in rows)
+    rate = _arrival_completion_rate(total, arrived)
+    missing_material_rows, batches_without_details = _arrival_missing_material_rows(rows)
+    notices = _arrival_notices(rows, batches_without_details, missing_material_rows)
+    sections = _arrival_sections(rows, missing_material_rows, limit)
     return {
         "kind": "arrival",
         "title": "到料明细结果",
-        "summary": (
-            f"共 {len(rows)} 个批次，到料完成率 {rate:.1f}%，仍有 {missing} 类未收料。"
-            + (f" 已列出 {len(missing_material_rows)} 条未到物料明细。" if missing_material_rows else "")
-        ),
-        "metrics": [
-            _metric("batches", "批次数", len(rows), tone="info"),
-            _metric("completion", "到料完成率", f"{rate:.1f}%", note=f"{arrived} / {total} 类", tone="success" if rate >= 95 else "warning"),
-            _metric("arrived", "已到货类数", arrived, tone="success"),
-            _metric("missing", "未收料类数", missing, tone="danger" if missing else "success"),
-        ],
+        "summary": _arrival_summary(rows, rate, missing, missing_material_rows),
+        "metrics": _arrival_metrics(rows, rate, total, arrived, missing),
         "sections": sections,
         "notices": notices,
     }

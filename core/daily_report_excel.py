@@ -284,59 +284,79 @@ def _write_safety_and_workshop_sheets(
     )
 
 
+def _rows_or_empty(value: object) -> list[object]:
+    """兼容快照中的列表字段；缺失或类型异常按空表处理。"""
+    return value if isinstance(value, list) else []
+
+
+def _write_person_attendance_sheet(workbook, people: list[object]) -> None:
+    """按参会人员姓名逐人写入每日考勤明细。"""
+    attendance_headers = ["人员类型", "姓名", "单位/班组", "班次", "是否出勤", "状态", "原因", "更新时间"]
+    attendance_sheet = _create_table_sheet(workbook, "每日考勤", attendance_headers)
+    for person in people:
+        if not isinstance(person, Mapping):
+            continue
+        attendance_sheet.append([
+            person.get("person_type"), person.get("name"), person.get("unit"), person.get("shift"),
+            "出勤" if person.get("present") else "缺勤", person.get("status"),
+            person.get("reason"), person.get("updated_at"),
+        ])
+    _finish_table_sheet(attendance_sheet, attendance_headers, [14, 16, 22, 12, 12, 14, 34, 24])
+
+
+def _write_production_attendance_sheet(workbook, attendance: Mapping[str, Any], groups: list[object]) -> None:
+    """按班组和班次写入生产出勤，并追加一个展示用合计行。"""
+    production_headers = ["生产班组", "班次", "人员编制", "出勤", "差异", "备注", "更新时间"]
+    production_sheet = _create_table_sheet(workbook, "生产出勤", production_headers)
+    for group in groups:
+        if not isinstance(group, Mapping):
+            continue
+        production_sheet.append([
+            group.get("group_name"), group.get("shift_name"), group.get("staffing_count", 0),
+            group.get("attendance_count", 0), group.get("difference", 0), group.get("note"), group.get("updated_at"),
+        ])
+    # 合计行是展示结果，不属于可筛选的班组记录，完成样式时会从筛选范围排除。
+    production_sheet.append([
+        "合计", "", attendance.get("production_staffing_count", attendance.get("production_total", 0)),
+        attendance.get("production_present_count", 0), attendance.get("production_difference", 0), "", "",
+    ])
+    _finish_table_sheet(
+        production_sheet,
+        production_headers,
+        [24, 14, 14, 12, 12, 48, 24],
+        filter_last_row=max(2, production_sheet.max_row - 1),
+    )
+
+
+def _write_attendance_summary_sheet(workbook, unit_summary: list[object]) -> None:
+    """按单位/班组汇总写入考勤汇总表。"""
+    summary_headers = ["人员类型", "单位/班组", "班次", "人员编制", "出勤", "差异", "缺勤原因"]
+    summary_sheet = _create_table_sheet(workbook, "考勤汇总", summary_headers)
+    for item in unit_summary:
+        if not isinstance(item, Mapping):
+            continue
+        summary_sheet.append([
+            item.get("person_type"), item.get("unit"), item.get("shift"), item.get("total", 0),
+            item.get("present", 0), item.get("difference", 0), "；".join(item.get("reasons", [])),
+        ])
+    _finish_table_sheet(summary_sheet, summary_headers, [14, 22, 14, 14, 12, 12, 44])
+
+
 def _write_attendance_sheets(workbook, attendance: Mapping[str, Any]) -> None:
     """按参会人员、生产班组和汇总三个层次写入考勤数据。
 
     参会人员按姓名逐人记录；生产人员只按班组和班次记录编制、出勤及备注。两个模型
     不混在一张明细表中，最后的考勤汇总仅在有可用汇总数据时生成。
     """
-    people = attendance.get("people") if isinstance(attendance.get("people"), list) else []
-    production_groups = attendance.get("production_groups") if isinstance(attendance.get("production_groups"), list) else []
+    people = _rows_or_empty(attendance.get("people"))
+    production_groups = _rows_or_empty(attendance.get("production_groups"))
+    unit_summary = _rows_or_empty(attendance.get("unit_summary"))
     if people:
-        attendance_headers = ["人员类型", "姓名", "单位/班组", "班次", "是否出勤", "状态", "原因", "更新时间"]
-        attendance_sheet = _create_table_sheet(workbook, "每日考勤", attendance_headers)
-        for person in people:
-            if not isinstance(person, Mapping):
-                continue
-            attendance_sheet.append([
-                person.get("person_type"), person.get("name"), person.get("unit"), person.get("shift"),
-                "出勤" if person.get("present") else "缺勤", person.get("status"),
-                person.get("reason"), person.get("updated_at"),
-            ])
-        _finish_table_sheet(attendance_sheet, attendance_headers, [14, 16, 22, 12, 12, 14, 34, 24])
+        _write_person_attendance_sheet(workbook, people)
     if production_groups:
-        production_headers = ["生产班组", "班次", "人员编制", "出勤", "差异", "备注", "更新时间"]
-        production_sheet = _create_table_sheet(workbook, "生产出勤", production_headers)
-        for group in production_groups:
-            if not isinstance(group, Mapping):
-                continue
-            production_sheet.append([
-                group.get("group_name"), group.get("shift_name"), group.get("staffing_count", 0),
-                group.get("attendance_count", 0), group.get("difference", 0), group.get("note"), group.get("updated_at"),
-            ])
-        # 合计行是展示结果，不属于可筛选的班组记录，完成样式时会从筛选范围排除。
-        production_sheet.append([
-            "合计", "", attendance.get("production_staffing_count", attendance.get("production_total", 0)),
-            attendance.get("production_present_count", 0), attendance.get("production_difference", 0), "", "",
-        ])
-        _finish_table_sheet(
-            production_sheet,
-            production_headers,
-            [24, 14, 14, 12, 12, 48, 24],
-            filter_last_row=max(2, production_sheet.max_row - 1),
-        )
-    unit_summary = attendance.get("unit_summary") if isinstance(attendance.get("unit_summary"), list) else []
+        _write_production_attendance_sheet(workbook, attendance, production_groups)
     if unit_summary:
-        summary_headers = ["人员类型", "单位/班组", "班次", "人员编制", "出勤", "差异", "缺勤原因"]
-        summary_sheet = _create_table_sheet(workbook, "考勤汇总", summary_headers)
-        for item in unit_summary:
-            if not isinstance(item, Mapping):
-                continue
-            summary_sheet.append([
-                item.get("person_type"), item.get("unit"), item.get("shift"), item.get("total", 0),
-                item.get("present", 0), item.get("difference", 0), "；".join(item.get("reasons", [])),
-            ])
-        _finish_table_sheet(summary_sheet, summary_headers, [14, 22, 14, 14, 12, 12, 44])
+        _write_attendance_summary_sheet(workbook, unit_summary)
 
 
 def _write_brief_and_plan_sheets(workbook, snapshot: Mapping[str, Any]) -> None:

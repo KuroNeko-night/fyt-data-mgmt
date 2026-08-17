@@ -209,13 +209,10 @@ def _daily_source_image_url(upload_id: str, file_name: object) -> str:
     )
 
 
-def _attach_safety_image_urls(summary: dict[str, object], upload_id: str) -> None:
-    """原地补全安全检查摘要中的图片 URL，不泄露服务器绝对路径。
-
-    顶层图片是文件事实源，记录内图片只保存图片编号。先建立编号到受控 URL 的映射，
-    再回填各检查记录，可确保两种展示结构始终指向同一个鉴权接口。
-    """
-    images = summary.get("images") if isinstance(summary.get("images"), list) else []
+def _safety_image_url_map(images: object, upload_id: str) -> dict[str, object]:
+    """把顶层安全检查图片整理成“图片编号 -> 受控 URL”映射。"""
+    if not isinstance(images, list):
+        return {}
     image_urls: dict[str, object] = {}
     for image in images:
         if not isinstance(image, dict):
@@ -226,8 +223,13 @@ def _attach_safety_image_urls(summary: dict[str, object], upload_id: str) -> Non
         image_id = image.get("id")
         if image_id is not None:
             image_urls[str(image_id)] = image.get("url")
+    return image_urls
 
-    records = summary.get("records") if isinstance(summary.get("records"), list) else []
+
+def _attach_safety_record_image_urls(records: object, image_urls: dict[str, object]) -> None:
+    """按图片编号回填各安全检查记录的图片 URL。"""
+    if not isinstance(records, list):
+        return
     for record in records:
         if not isinstance(record, dict):
             continue
@@ -238,6 +240,16 @@ def _attach_safety_image_urls(summary: dict[str, object], upload_id: str) -> Non
             image_id = str(image.get("id"))
             if image_id in image_urls:
                 image["url"] = image_urls[image_id]
+
+
+def _attach_safety_image_urls(summary: dict[str, object], upload_id: str) -> None:
+    """原地补全安全检查摘要中的图片 URL，不泄露服务器绝对路径。
+
+    顶层图片是文件事实源，记录内图片只保存图片编号。先建立编号到受控 URL 的映射，
+    再回填各检查记录，可确保两种展示结构始终指向同一个鉴权接口。
+    """
+    image_urls = _safety_image_url_map(summary.get("images"), upload_id)
+    _attach_safety_record_image_urls(summary.get("records"), image_urls)
 
 
 def daily_source_upload_public(row: sqlite3.Row) -> dict[str, object]:
@@ -431,6 +443,89 @@ def workshop_issue_can_delete(row: sqlite3.Row, user: sqlite3.Row) -> bool:
     )
 
 
+def _workshop_row_value(row: sqlite3.Row, field: str, default: object = "") -> object:
+    """读取可能存在的历史行字段；旧记录缺列时返回安全默认值。"""
+    return row[field] if field in row.keys() else default
+
+
+def _workshop_template_values(row: sqlite3.Row) -> dict[str, object]:
+    """只导出当前标准模板注册的字段，数据库新增内部列不会意外暴露给前端。"""
+    return {
+        field: _workshop_row_value(row, field)
+        for field in WORKSHOP_ISSUE_TEMPLATE_FIELDS
+    }
+
+
+def _workshop_issue_classification(
+    row: sqlite3.Row,
+    template_values: dict[str, object],
+) -> tuple[str, str, object]:
+    """按当前类别重新归一化问题类型、主要负责人和严重程度。"""
+    semantic_values = {  # 兼容旧通用字段，让 Core 能按当前类别重新推断负责人和问题类型。
+        **template_values,
+        "cause": row["cause"],
+        "primary_owner": row["primary_owner"],
+        "notes": row["notes"],
+    }
+    category = workshop_issue_core.normalize_workshop_category(  # 历史别名或旧记录在输出时统一映射为现行五类标准。
+        _workshop_row_value(row, "category"),
+        semantic_values,
+    )
+    primary_owner = workshop_issue_core.workshop_issue_primary_owner(  # 不同类别负责人来源不同，由 Core 的模板规则统一决定。
+        category,
+        semantic_values,
+        row["primary_owner"],
+    )
+    severity = workshop_issue_core.workshop_issue_severity(
+        template_values,
+        _workshop_row_value(row, "severity", "normal"),
+    )
+    return category, primary_owner, severity
+
+
+def _workshop_resolution_fields(row: sqlite3.Row) -> dict[str, object]:
+    """输出闭环字段，并为历史缺列记录提供安全默认值。"""
+    return {
+        "resolution_status": (
+            row["resolution_status"]
+            if "resolution_status" in row.keys()
+            and row["resolution_status"] in {"open", "resolved"}
+            else "open"
+        ),
+        "resolution_note": _workshop_row_value(row, "resolution_note"),
+        "resolved_at": _workshop_row_value(row, "resolved_at"),
+        "resolved_by": {
+            "id": row["resolved_by"] if "resolved_by" in row.keys() else None,
+            "display_name": _workshop_row_value(row, "resolved_by_name"),
+        },
+    }
+
+
+def _workshop_issue_images(images: list[sqlite3.Row], issue_id: object) -> list[dict[str, object]]:
+    """把图片记录转换为只暴露受控接口地址的公开结构。"""
+    return [
+        {
+            "id": image["id"],
+            "name": image["name"],
+            "size": int(image["size"] or 0),
+            "content_type": image["content_type"],
+            "width": int(image["width"] or 0),
+            "height": int(image["height"] or 0),
+            "url": f"/api/workshop/issues/{issue_id}/images/{image['id']}",
+        }
+        for image in images
+    ]
+
+
+def _workshop_issue_permissions(row: sqlite3.Row, user: sqlite3.Row) -> dict[str, bool]:
+    """按当前用户与发布状态分别计算编辑、闭环和删除权限。"""
+    return {
+        "can_edit": workshop_issue_can_edit(row, user),
+        "can_resolve": workshop_issue_can_resolve(row, user),
+        "can_delete": workshop_issue_can_delete(row, user),
+    }
+
+
 def workshop_issue_public(
     row: sqlite3.Row,
     images: list[sqlite3.Row],
@@ -442,25 +537,9 @@ def workshop_issue_public(
     对历史记录提供安全默认值。每张图片只暴露受控接口地址，编辑、闭环和删除权限按当前
     用户与发布状态分别计算，前端无需复制角色矩阵。
     """
-    template_values = {  # 只导出当前标准模板注册的字段，数据库新增内部列不会意外暴露给前端。
-        field: row[field] if field in row.keys() else ""
-        for field in WORKSHOP_ISSUE_TEMPLATE_FIELDS
-    }
-    semantic_values = {  # 兼容旧通用字段，让 Core 能按当前类别重新推断负责人和问题类型。
-        **template_values,
-        "cause": row["cause"],
-        "primary_owner": row["primary_owner"],
-        "notes": row["notes"],
-    }
-    category = workshop_issue_core.normalize_workshop_category(  # 历史别名或旧记录在输出时统一映射为现行五类标准。
-        row["category"] if "category" in row.keys() else "",
-        semantic_values,
-    )
-    primary_owner = workshop_issue_core.workshop_issue_primary_owner(  # 不同类别负责人来源不同，由 Core 的模板规则统一决定。
-        category,
-        semantic_values,
-        row["primary_owner"],
-    )
+    template_values = _workshop_template_values(row)
+    category, primary_owner, severity = _workshop_issue_classification(row, template_values)
+    resolution = _workshop_resolution_fields(row)
     return {
         "id": row["id"],
         "issue_date": row["issue_date"],
@@ -469,24 +548,10 @@ def workshop_issue_public(
         "secondary_owner": row["secondary_owner"],
         "notes": row["notes"],
         "category": category,
-        "severity": workshop_issue_core.workshop_issue_severity(
-            template_values,
-            row["severity"] if "severity" in row.keys() else "normal",
-        ),
+        "severity": severity,
         **template_values,
         "status": row["status"],
-        "resolution_status": (
-            row["resolution_status"]
-            if "resolution_status" in row.keys()
-            and row["resolution_status"] in {"open", "resolved"}
-            else "open"
-        ),
-        "resolution_note": row["resolution_note"] if "resolution_note" in row.keys() else "",
-        "resolved_at": row["resolved_at"] if "resolved_at" in row.keys() else "",
-        "resolved_by": {
-            "id": row["resolved_by"] if "resolved_by" in row.keys() else None,
-            "display_name": row["resolved_by_name"] if "resolved_by_name" in row.keys() else "",
-        },
+        **resolution,
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
         "uploader": {
@@ -494,21 +559,6 @@ def workshop_issue_public(
             "username": row["username"],
             "display_name": row["display_name"],
         },
-        "images": [
-            {
-                "id": image["id"],
-                "name": image["name"],
-                "size": int(image["size"] or 0),
-                "content_type": image["content_type"],
-                "width": int(image["width"] or 0),
-                "height": int(image["height"] or 0),
-                "url": f"/api/workshop/issues/{row['id']}/images/{image['id']}",
-            }
-            for image in images
-        ],
-        "permissions": {
-            "can_edit": workshop_issue_can_edit(row, user),
-            "can_resolve": workshop_issue_can_resolve(row, user),
-            "can_delete": workshop_issue_can_delete(row, user),
-        },
+        "images": _workshop_issue_images(images, row["id"]),
+        "permissions": _workshop_issue_permissions(row, user),
     }

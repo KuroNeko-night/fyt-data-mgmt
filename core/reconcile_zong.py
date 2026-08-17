@@ -18,11 +18,21 @@ def _zong_header_rows(header):
     return [header] if header else range(1, 4)
 
 
+# 角色列识别规则：(返回字段名, 表头文本匹配函数)。顺序与返回字典保持一致；
+# 首个未识别角色先命中，其余角色仍可继续在同一单元格或后续单元格中识别。
+_ZONG_ROLE_MATCHERS = (
+    ("name", lambda text: text.strip() == "姓名"),  # “姓名”要求整格精确匹配，避免“姓名备注”等列抢先生效。
+    ("comp", lambda text: "劳务公司" in text),
+    ("work", lambda text: "出勤工时" in text),
+    ("check", lambda text: "对账时间" in text),
+)
+
+
 def _scan_zong_role_columns(ws, rows):
     """扫描总表表头，识别姓名、劳务公司、出勤工时和对账时间列。
 
     ``rows`` 是 1 基表头候选行；返回同结构的 1 基列号字典，未识别的可选列保持
-    ``None``。“姓名”要求整格精确匹配，避免“姓名备注”等列抢先生效。
+    ``None``。
     """
 
     columns = {"name": None, "comp": None, "work": None, "check": None}
@@ -34,14 +44,9 @@ def _scan_zong_role_columns(ws, rows):
             if value is None:
                 continue
             text = str(value)
-            if columns["name"] is None and text.strip() == "姓名":
-                columns["name"] = column
-            if columns["comp"] is None and "劳务公司" in text:
-                columns["comp"] = column
-            if columns["work"] is None and "出勤工时" in text:
-                columns["work"] = column
-            if columns["check"] is None and "对账时间" in text:
-                columns["check"] = column
+            for role, matches in _ZONG_ROLE_MATCHERS:
+                if columns[role] is None and matches(text):
+                    columns[role] = column
     return columns
 
 

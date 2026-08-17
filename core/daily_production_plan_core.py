@@ -151,6 +151,43 @@ def _fill_forward(values: list[str], start: int) -> list[str]:
     return result
 
 
+def _row_cell(row: list[str], column: int, default: object = None) -> object:
+    """安全读取矩阵/表格行内的单元格；越界列按默认值处理。"""
+    return row[column] if 0 <= column < len(row) else default
+
+
+def _row_text_cell(row: list[str], column: int) -> str:
+    """读取单元格文本并去除首尾空白，越界视为空文本。"""
+    return str(_row_cell(row, column, "")).strip()
+
+
+def _reported_difference(base: int | float, actual: int | float | None, difference: int | float | None) -> int | float | None:
+    """已填报班次优先采用模板差异，缺失时由实际减基数推导。"""
+    if actual is None:
+        return None
+    if difference is not None:
+        return difference
+    return actual - base
+
+
+def _matrix_record(
+    current_date: str,
+    shift: str,
+    plan: float | None,
+    actual: float | None,
+    difference: float | None,
+) -> dict[str, object] | None:
+    """把单个矩阵班次列转换为记录；缺少日期、班次或计划时返回 ``None``。"""
+    if not current_date or not _DATE_RE.match(current_date) or not shift or plan is None:
+        return None  # 缺少日期、班次或计划的列不属于可展示生产记录。
+    actual_reported = actual is not None  # 单独保留填报状态，避免把空值压成零后丢失语义。
+    return {
+        "date": current_date, "shift": shift, "plan": _number_label(plan),
+        "actual": _number_label(actual), "difference": _number_label(_reported_difference(plan, actual, difference)),
+        "actual_reported": actual_reported,
+    }
+
+
 def _matrix_records(
     date_row: list[str],
     shift_row: list[str],
@@ -164,20 +201,15 @@ def _matrix_records(
     records: list[dict[str, object]] = []
     width = max(len(date_row), len(shift_row), len(plan_row), len(actual_row))  # 以最长业务行覆盖所有班次列。
     for column in range(label_column + 1, width):
-        current_date = dates[column] if column < len(dates) else ""  # 越界列视为无日期，避免补齐数据被误算。
-        shift = shift_row[column].strip() if column < len(shift_row) else ""  # 班次为空通常是说明或合计列。
-        plan = _as_number(plan_row[column] if column < len(plan_row) else None)  # 计划是识别业务列的必要条件。
-        actual = _as_number(actual_row[column] if column < len(actual_row) else None)  # 空值代表尚未填报而非零。
-        difference = _as_number(difference_row[column] if column < len(difference_row) else None)  # 优先采用模板差异。
-        if not current_date or not _DATE_RE.match(current_date) or not shift or plan is None:
-            continue  # 缺少日期、班次或计划的列不属于可展示生产记录。
-        actual_reported = actual is not None  # 单独保留填报状态，避免把空值压成零后丢失语义。
-        difference_value = difference if actual_reported and difference is not None else ((actual - plan) if actual_reported else None)
-        records.append({
-            "date": current_date, "shift": shift, "plan": _number_label(plan),
-            "actual": _number_label(actual), "difference": _number_label(difference_value),
-            "actual_reported": actual_reported,
-        })
+        record = _matrix_record(
+            _row_text_cell(dates, column),  # 越界列视为无日期，避免补齐数据被误算。
+            _row_text_cell(shift_row, column),  # 班次为空通常是说明或合计列。
+            _as_number(_row_cell(plan_row, column)),  # 计划是识别业务列的必要条件。
+            _as_number(_row_cell(actual_row, column)),  # 空值代表尚未填报而非零。
+            _as_number(_row_cell(difference_row, column)),  # 优先采用模板差异。
+        )
+        if record is not None:
+            records.append(record)
     return records
 
 
@@ -286,6 +318,27 @@ def _tabular_insights(headers: list[str], rows: list[list[str]], report_date: st
     }
 
 
+def _tabular_shift_record(
+    row: list[str], indexes: dict[str, int], difference_index: int,
+    shift_index: int, report_date: str | None,
+) -> dict[str, object] | None:
+    """把单个传统表格行转换为班次记录，无法确认产量语义时返回 ``None``。"""
+    plan = _as_number(_row_cell(row, indexes["计划"]))  # 计划列为空时无法识别业务行。
+    actual = _as_number(_row_cell(row, indexes["实际"]))  # 空实际代表尚未填报。
+    if plan is None and actual is None:
+        return None  # 说明行、空行和纯文本行不生成虚假的零产量记录。
+    difference = _as_number(_row_cell(row, difference_index))
+    actual_reported = actual is not None
+    shift = _row_cell(row, shift_index, "")
+    return {
+        "date": report_date or "",
+        "shift": shift if shift else "合计",
+        "plan": _number_label(plan), "actual": _number_label(actual),
+        "difference": _number_label(_reported_difference(plan or 0, actual, difference)),
+        "actual_reported": actual_reported,
+    }
+
+
 def _tabular_shift_records(
     rows: list[list[str]], indexes: dict[str, int], difference_index: int,
     shift_index: int, report_date: str | None,
@@ -293,19 +346,9 @@ def _tabular_shift_records(
     """将传统逐行生产计划转换为班次记录，跳过无法确认产量语义的行。"""
     shifts: list[dict[str, object]] = []
     for row in rows:
-        plan = _as_number(row[indexes["计划"]] if indexes["计划"] < len(row) else None)  # 计划列为空时无法识别业务行。
-        actual = _as_number(row[indexes["实际"]] if indexes["实际"] < len(row) else None)  # 空实际代表尚未填报。
-        if plan is None and actual is None:
-            continue  # 说明行、空行和纯文本行不生成虚假的零产量记录。
-        difference = _as_number(row[difference_index] if 0 <= difference_index < len(row) else None)
-        actual_reported = actual is not None
-        difference_value = difference if actual_reported and difference is not None else ((actual - (plan or 0)) if actual_reported else None)
-        shifts.append({
-            "date": report_date or "",
-            "shift": row[shift_index] if 0 <= shift_index < len(row) and row[shift_index] else "合计",
-            "plan": _number_label(plan), "actual": _number_label(actual),
-            "difference": _number_label(difference_value), "actual_reported": actual_reported,
-        })
+        record = _tabular_shift_record(row, indexes, difference_index, shift_index, report_date)
+        if record is not None:
+            shifts.append(record)
     return shifts
 
 

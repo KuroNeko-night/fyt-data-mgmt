@@ -103,6 +103,55 @@ def build_fields_meta(rows):
     return meta
 
 
+def _cache_group_field_xml(m):
+    """生成分组字段的 cacheField：sharedItems 逐个声明值或空项。"""
+    name = _esc(FIELD_LABELS[m["idx"]])
+    items = ["<m/>" if s == "" else '<s v="%s"/>' % _esc(s) for s in m["shared"]]
+    # 含空项(<m/>)时必须声明 containsBlank="1", 否则 Excel 判定
+    # sharedItems 与实际内容不符 -> 打开报"内容有问题"并自动修复。
+    blank_attr = ' containsBlank="1"' if m["has_blank"] else ''
+    return ('<cacheField name="%s" numFmtId="0">'
+            '<sharedItems%s count="%d">%s</sharedItems>'
+            '</cacheField>' % (name, blank_attr, len(items), "".join(items)))
+
+
+def _cache_has_integer_values(m):
+    """判断普通字段的数值上下界是否都是整数值。"""
+    return (
+        m["vmin"] is not None
+        and float(m["vmin"]) == int(m["vmin"])
+        and m["vmax"] is not None
+        and float(m["vmax"]) == int(m["vmax"])
+    )
+
+
+def _cache_value_field_attrs(m):
+    """生成普通字段 sharedItems 的属性列表。"""
+    attrs = []
+    if m["has_str"]:
+        attrs.append('containsString="1"')
+    else:
+        attrs.append('containsString="0"')
+    if m["has_blank"]:
+        attrs.append('containsBlank="1"')
+    if m["has_num"] and not m["has_str"]:
+        attrs.append('containsNumber="1"')
+        if _cache_has_integer_values(m):
+            attrs.append('containsInteger="1"')
+        attrs.append('minValue="%s"' % m["vmin"])
+        attrs.append('maxValue="%s"' % m["vmax"])
+    return attrs
+
+
+def _cache_value_field_xml(m):
+    """生成普通字段的 cacheField。"""
+    name = _esc(FIELD_LABELS[m["idx"]])
+    attrs = _cache_value_field_attrs(m)
+    return ('<cacheField name="%s" numFmtId="0">'
+            '<sharedItems %s/>'
+            '</cacheField>' % (name, " ".join(attrs)))
+
+
 def cache_definition_xml(meta, record_count, rid_records):
     """pivotCacheDefinition: 声明字段与 sharedItems。
        注意: 不设 refreshOnLoad。它会让 Excel 打开即重建并按自身排序重排行,
@@ -119,36 +168,10 @@ def cache_definition_xml(meta, record_count, rid_records):
     parts.append('<cacheSource type="worksheet"><worksheetSource ref="__SRC_REF__" sheet="__SRC_SHEET__"/></cacheSource>')
     parts.append('<cacheFields count="7">')
     for m in meta:
-        name = _esc(FIELD_LABELS[m["idx"]])
         if m["group"]:
-            items = []
-            for s in m["shared"]:
-                items.append("<m/>" if s == "" else '<s v="%s"/>' % _esc(s))
-            # 含空项(<m/>)时必须声明 containsBlank="1", 否则 Excel 判定
-            # sharedItems 与实际内容不符 -> 打开报"内容有问题"并自动修复。
-            blank_attr = ' containsBlank="1"' if m["has_blank"] else ''
-            parts.append('<cacheField name="%s" numFmtId="0">' % name)
-            parts.append('<sharedItems%s count="%d">%s</sharedItems>'
-                         % (blank_attr, len(items), "".join(items)))
-            parts.append('</cacheField>')
+            parts.append(_cache_group_field_xml(m))
         else:
-            attrs = []
-            if m["has_str"]:
-                attrs.append('containsString="1"')
-            else:
-                attrs.append('containsString="0"')
-            if m["has_blank"]:
-                attrs.append('containsBlank="1"')
-            if m["has_num"] and not m["has_str"]:
-                attrs.append('containsNumber="1"')
-                if m["vmin"] is not None and float(m["vmin"]) == int(m["vmin"]) and \
-                   m["vmax"] is not None and float(m["vmax"]) == int(m["vmax"]):
-                    attrs.append('containsInteger="1"')
-                attrs.append('minValue="%s"' % m["vmin"])
-                attrs.append('maxValue="%s"' % m["vmax"])
-            parts.append('<cacheField name="%s" numFmtId="0">' % name)
-            parts.append('<sharedItems %s/>' % " ".join(attrs))
-            parts.append('</cacheField>')
+            parts.append(_cache_value_field_xml(m))
     parts.append('</cacheFields>')
     parts.append('</pivotCacheDefinition>')
     return "".join(parts)
@@ -333,6 +356,147 @@ def _sheet_target_for(zin_names, data):
     return out
 
 
+_PIVOT_CACHE_RECORDS_REL = (
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/pivotCacheRecords"
+)
+_PIVOT_CACHE_DEFINITION_REL = (
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/pivotCacheDefinition"
+)
+_PIVOT_TABLE_REL = (
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/pivotTable"
+)
+
+
+def _read_xlsx_parts(xlsx_path):
+    """完整读取 xlsx ZIP 的全部部件，避免在原归档上边读边写造成损坏。"""
+    with zipfile.ZipFile(xlsx_path, "r") as z:
+        names = z.namelist()
+        data = {n: z.read(n) for n in names}
+    return names, data
+
+
+def _next_relationship_id(rels_xml):
+    """返回关系 XML 中可用的下一个 ``rId`` 编号。"""
+    used = [int(x) for x in re.findall(r'Id="rId(\d+)"', rels_xml)]
+    return max(used) + 1 if used else 1
+
+
+def _relationship_element(rid, relationship_type, target):
+    """生成单个 OPC 关系元素。"""
+    return '<Relationship Id="%s" Type="%s" Target="%s"/>' % (rid, relationship_type, target)
+
+
+def _relationship_part(relationship_type, target):
+    """生成以 ``rId1`` 为唯一关系的独立 .rels 部件。"""
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        + _relationship_element("rId1", relationship_type, target)
+        + '</Relationships>'
+    )
+
+
+def _content_type_override(part_name, content_suffix):
+    """生成 Content Types 中单个部件覆盖声明。"""
+    return ('<Override PartName="/%s" ContentType="application/vnd.openxmlformats-'
+            'officedocument.spreadsheetml.%s+xml"/>' % (part_name, content_suffix))
+
+
+def _pivot_part_paths(i):
+    """返回第 ``i`` 个透视的缓存定义、缓存记录和透视表部件路径。"""
+    return (
+        "xl/pivotCache/pivotCacheDefinition%d.xml" % i,
+        "xl/pivotCache/pivotCacheRecords%d.xml" % i,
+        "xl/pivotTables/pivotTable%d.xml" % i,
+    )
+
+
+def _build_pivot_parts(pv, i, next_rid):
+    """生成单个透视的缓存 XML、透视表 XML 及其关系注册。
+
+    返回 ``(新部件, Content Types 覆盖项, workbook 缓存声明, workbook 关系元素)``。
+    """
+    cache_id = 1000 + i  # 使用独立高位缓存编号，避免与工作簿潜在既有编号碰撞。
+    cdef, crec, ptbl = _pivot_part_paths(i)
+
+    meta = build_fields_meta(pv["rows"])
+    # cacheDefinition (rid 指向 records, 局部 rId1)
+    cdx = cache_definition_xml(meta, len(pv["rows"]), "rId1")
+    cdx = cdx.replace("__SRC_REF__", _esc(pv["src_ref"])).replace("__SRC_SHEET__", _esc(pv["src_sheet"]))
+    new_parts = {cdef: cdx.encode("utf-8")}
+    new_parts[crec] = cache_records_xml(pv["rows"], meta).encode("utf-8")
+    new_parts["xl/pivotCache/_rels/pivotCacheDefinition%d.xml.rels" % i] = _relationship_part(
+        _PIVOT_CACHE_RECORDS_REL, "pivotCacheRecords%d.xml" % i
+    ).encode("utf-8")
+
+    new_parts[ptbl] = pivot_table_xml(meta, pv["agg"], cache_id, pv["name"]).encode("utf-8")
+    new_parts["xl/pivotTables/_rels/pivotTable%d.xml.rels" % i] = _relationship_part(
+        _PIVOT_CACHE_DEFINITION_REL, "../pivotCache/pivotCacheDefinition%d.xml" % i
+    ).encode("utf-8")
+
+    ct_overrides = [
+        _content_type_override(cdef, "pivotCacheDefinition"),
+        _content_type_override(crec, "pivotCacheRecords"),
+        _content_type_override(ptbl, "pivotTable"),
+    ]
+    rid = "rId%d" % next_rid
+    wb_cache = (cache_id, rid)
+    wb_rel_add = _relationship_element(
+        rid, _PIVOT_CACHE_DEFINITION_REL, "pivotCache/pivotCacheDefinition%d.xml" % i
+    )
+    return new_parts, ct_overrides, wb_cache, wb_rel_add
+
+
+def _append_sheet_pivot_relationship(data, sheet_name, sheet_target, pivot_index):
+    """把透视 sheet 到 pivotTable 的关系写入对应 worksheet rels。"""
+    st = sheet_target.get(sheet_name)
+    if not st:
+        return
+    base = os.path.basename(st)
+    relpath = os.path.dirname(st) + "/_rels/" + base + ".rels"
+    if relpath in data:
+        sr = data[relpath].decode("utf-8")
+        sused = [int(x) for x in re.findall(r'Id="rId(\d+)"', sr)]
+        srid = "rId%d" % ((max(sused) + 1) if sused else 1)
+        add = _relationship_element(
+            srid, _PIVOT_TABLE_REL, "../pivotTables/pivotTable%d.xml" % pivot_index
+        )
+        data[relpath] = sr.replace("</Relationships>", add + "</Relationships>").encode("utf-8")
+    else:
+        data[relpath] = _relationship_part(
+            _PIVOT_TABLE_REL, "../pivotTables/pivotTable%d.xml" % pivot_index
+        ).encode("utf-8")
+
+
+def _insert_pivot_caches_xml(wbx, wb_caches):
+    """向 workbook.xml 插入 ``pivotCaches``，并确保根元素声明 ``xmlns:r``。"""
+    if "xmlns:r=" not in wbx[:wbx.find(">") + 1]:
+        wbx = wbx.replace("<workbook ",
+            '<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" ', 1)
+    caches_xml = '<pivotCaches>' + "".join(
+        '<pivotCache cacheId="%d" r:id="%s"/>' % (cid, rid) for cid, rid in wb_caches) + '</pivotCaches>'
+    # OOXML schema 要求 pivotCaches 必须在 calcPr 之后(顺序: sheets, definedNames,
+    # calcPr, ..., pivotCaches, extLst). 顺序错会导致 Excel 报"文件损坏".
+    m = re.search(r'<calcPr\b[^>]*/>', wbx)
+    if m:
+        return wbx[:m.end()] + caches_xml + wbx[m.end():]
+    m2 = re.search(r'</calcPr>', wbx)
+    if m2:
+        return wbx[:m2.end()] + caches_xml + wbx[m2.end():]
+    if "<extLst" in wbx:
+        return wbx.replace("<extLst", caches_xml + "<extLst", 1)
+    return wbx.replace("</workbook>", caches_xml + "</workbook>", 1)
+
+
+def _write_xlsx_parts(xlsx_path, data):
+    """把内存部件写为临时归档后原子替换原 xlsx。"""
+    tmp = xlsx_path + ".tmp"
+    with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as z:
+        for n, b in data.items():
+            z.writestr(n, b)
+    os.replace(tmp, xlsx_path)  # 完整新归档写成后再替换，避免留下半份 xlsx。
+
+
 def inject_pivots(xlsx_path, pivots):
     """把原生透视缓存、透视表和关系部件注入现有 xlsx。
 
@@ -340,11 +504,7 @@ def inject_pivots(xlsx_path, pivots):
     读取 ZIP 包，在内存中补齐 Content Types、工作簿缓存关系、工作表关系和三类透视 XML，
     最后写临时归档并原子替换。任一异常会保留原静态工作簿，由调用方记录注入失败。
     """
-    with zipfile.ZipFile(xlsx_path, "r") as z:
-        # 先读取全部部件，避免在原归档上边读边写造成损坏。
-        names = z.namelist()
-        data = {n: z.read(n) for n in names}
-
+    names, data = _read_xlsx_parts(xlsx_path)
     sheet_target = _sheet_target_for(names, data)
     new_parts = {}
     ct_overrides = []
@@ -353,68 +513,17 @@ def inject_pivots(xlsx_path, pivots):
 
     # 现有 workbook rels 里最大 rId
     wb_rels = data["xl/_rels/workbook.xml.rels"].decode("utf-8")
-    used = [int(x) for x in re.findall(r'Id="rId(\d+)"', wb_rels)]
-    next_rid = max(used) + 1 if used else 1
+    next_rid = _next_relationship_id(wb_rels)
 
     for i, pv in enumerate(pivots, start=1):
-        cache_id = 1000 + i  # 使用独立高位缓存编号，避免与工作簿潜在既有编号碰撞。
-        cdef = "xl/pivotCache/pivotCacheDefinition%d.xml" % i
-        crec = "xl/pivotCache/pivotCacheRecords%d.xml" % i
-        ptbl = "xl/pivotTables/pivotTable%d.xml" % i
-
-        meta = build_fields_meta(pv["rows"])
-        # cacheDefinition (rid 指向 records, 局部 rId1)
-        cdx = cache_definition_xml(meta, len(pv["rows"]), "rId1")
-        cdx = cdx.replace("__SRC_REF__", _esc(pv["src_ref"])).replace("__SRC_SHEET__", _esc(pv["src_sheet"]))
-        new_parts[cdef] = cdx.encode("utf-8")
-        new_parts[crec] = cache_records_xml(pv["rows"], meta).encode("utf-8")
-        new_parts["xl/pivotCache/_rels/pivotCacheDefinition%d.xml.rels" % i] = (
-            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
-            '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/'
-            'relationships/pivotCacheRecords" Target="pivotCacheRecords%d.xml"/></Relationships>' % i
-        ).encode("utf-8")
-
-        new_parts[ptbl] = pivot_table_xml(meta, pv["agg"], cache_id, pv["name"]).encode("utf-8")
-        new_parts["xl/pivotTables/_rels/pivotTable%d.xml.rels" % i] = (
-            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
-            '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/'
-            'relationships/pivotCacheDefinition" Target="../pivotCache/pivotCacheDefinition%d.xml"/>'
-            '</Relationships>' % i
-        ).encode("utf-8")
-
-        ct_overrides.append('<Override PartName="/%s" ContentType="application/vnd.openxmlformats-'
-            'officedocument.spreadsheetml.pivotCacheDefinition+xml"/>' % cdef)
-        ct_overrides.append('<Override PartName="/%s" ContentType="application/vnd.openxmlformats-'
-            'officedocument.spreadsheetml.pivotCacheRecords+xml"/>' % crec)
-        ct_overrides.append('<Override PartName="/%s" ContentType="application/vnd.openxmlformats-'
-            'officedocument.spreadsheetml.pivotTable+xml"/>' % ptbl)
-
-        rid = "rId%d" % next_rid; next_rid += 1
-        wb_caches.append((cache_id, rid))
-        wb_rels_add.append('<Relationship Id="%s" Type="http://schemas.openxmlformats.org/'
-            'officeDocument/2006/relationships/pivotCacheDefinition" '
-            'Target="pivotCache/pivotCacheDefinition%d.xml"/>' % (rid, i))
-
+        parts, overrides, wb_cache, wb_rel_add = _build_pivot_parts(pv, i, next_rid)
+        new_parts.update(parts)
+        ct_overrides.extend(overrides)
+        wb_caches.append(wb_cache)
+        wb_rels_add.append(wb_rel_add)
+        next_rid += 1
         # sheet rels: 透视 sheet -> pivotTable
-        st = sheet_target.get(pv["sheet"])
-        if st:
-            base = os.path.basename(st)
-            relpath = os.path.dirname(st) + "/_rels/" + base + ".rels"
-            if relpath in data:
-                sr = data[relpath].decode("utf-8")
-                sused = [int(x) for x in re.findall(r'Id="rId(\d+)"', sr)]
-                srid = "rId%d" % ((max(sused)+1) if sused else 1)
-                add = ('<Relationship Id="%s" Type="http://schemas.openxmlformats.org/officeDocument/'
-                       '2006/relationships/pivotTable" Target="../pivotTables/pivotTable%d.xml"/>' % (srid, i))
-                data[relpath] = sr.replace("</Relationships>", add + "</Relationships>").encode("utf-8")
-            else:
-                data[relpath] = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-                    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
-                    '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/'
-                    'relationships/pivotTable" Target="../pivotTables/pivotTable%d.xml"/></Relationships>' % i
-                    ).encode("utf-8")
+        _append_sheet_pivot_relationship(data, pv["sheet"], sheet_target, i)
 
     # [Content_Types].xml
     ct = data["[Content_Types].xml"].decode("utf-8")
@@ -425,32 +534,10 @@ def inject_pivots(xlsx_path, pivots):
         "</Relationships>", "".join(wb_rels_add) + "</Relationships>").encode("utf-8")
 
     # workbook.xml: 插入 <pivotCaches>; 确保根元素声明 xmlns:r
-    wbx = data["xl/workbook.xml"].decode("utf-8")
-    if "xmlns:r=" not in wbx[:wbx.find(">")+1]:
-        wbx = wbx.replace("<workbook ",
-            '<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" ', 1)
-    caches_xml = '<pivotCaches>' + "".join(
-        '<pivotCache cacheId="%d" r:id="%s"/>' % (cid, rid) for cid, rid in wb_caches) + '</pivotCaches>'
-    # OOXML schema 要求 pivotCaches 必须在 calcPr 之后(顺序: sheets, definedNames,
-    # calcPr, ..., pivotCaches, extLst). 顺序错会导致 Excel 报"文件损坏".
-    m = re.search(r'<calcPr\b[^>]*/>', wbx)
-    if m:
-        wbx = wbx[:m.end()] + caches_xml + wbx[m.end():]
-    else:
-        m2 = re.search(r'</calcPr>', wbx)
-        if m2:
-            wbx = wbx[:m2.end()] + caches_xml + wbx[m2.end():]
-        elif "<extLst" in wbx:
-            wbx = wbx.replace("<extLst", caches_xml + "<extLst", 1)
-        else:
-            wbx = wbx.replace("</workbook>", caches_xml + "</workbook>", 1)
+    wbx = _insert_pivot_caches_xml(data["xl/workbook.xml"].decode("utf-8"), wb_caches)
     data["xl/workbook.xml"] = wbx.encode("utf-8")
 
     for p, b in new_parts.items():
         data[p] = b
 
-    tmp = xlsx_path + ".tmp"
-    with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as z:
-        for n, b in data.items():
-            z.writestr(n, b)
-    os.replace(tmp, xlsx_path)  # 完整新归档写成后再替换，避免留下半份 xlsx。
+    _write_xlsx_parts(xlsx_path, data)

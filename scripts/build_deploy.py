@@ -285,6 +285,39 @@ def build_web_dist() -> None:
 CONTENT_DIRS: dict[str, str] = {}
 
 
+def _source_ignored_by_relative_dir(relative_dir: str, name: str) -> bool:
+    """判断依赖当前相对目录身份的源码包排除规则。"""
+    if relative_dir == "docs" and name in SOURCE_LOCAL_ONLY_DOCS:
+        # 本地运维资料不得随纯净源码包对外分发。
+        return True
+    if relative_dir == "assets/generated" and name == "_source":
+        # 对话生成的原始大图不属于运行资产，正式资源只取 manifest 中已验收的输出。
+        return True
+    if relative_dir == "secrets" and name != "admin-password.example.txt":
+        # Docker secret 目录只允许公开空示例，真实初始密码文件永不进入源码包。
+        return True
+    return False
+
+
+def _source_ignored_by_name(path: str, name: str) -> bool:
+    """判断只依赖候选文件名或文件类型的源码包排除规则。"""
+    lower = name.lower()  # 统一小写，锁定扩展名匹配
+    if os.path.isdir(path) and name in SOURCE_IGNORED_DIRS:
+        # 排除运行数据与生成目录。
+        return True
+    if lower.startswith(".env") and lower != ".env.example":
+        # 仅示例配置可公开；实际 .env 可能包含密码、令牌或部署地址。
+        return True
+    if lower.endswith((
+        ".bak", ".cer", ".crt", ".db", ".db-shm", ".db-wal", ".exe",
+        ".key", ".log", ".msi", ".part", ".pem", ".pfx", ".p12",
+        ".pid", ".pyc", ".pyo", ".secret", ".sqlite", ".sqlite3",
+        ".token", ".tsbuildinfo", ".zip",
+    )):
+        return True
+    return lower in {"vite.config.js", "vite.config.d.ts"}
+
+
 def _source_ignore(directory: str, names: list[str]) -> set[str]:
     """返回源码包中应排除的本地数据、缓存、密钥候选和生成文件。
 
@@ -297,34 +330,7 @@ def _source_ignore(directory: str, names: list[str]) -> set[str]:
     relative_dir = os.path.relpath(directory, ROOT).replace("\\", "/")  # 路径统一为斜杠，便于规则比对
     for name in names:
         path = os.path.join(directory, name)  # 拼出完整路径供目录判断
-        lower = name.lower()  # 统一小写，锁定扩展名匹配
-        if os.path.isdir(path) and name in SOURCE_IGNORED_DIRS:
-            ignored.add(name)  # 排除运行数据与生成目录
-            continue
-        if relative_dir == "docs" and name in SOURCE_LOCAL_ONLY_DOCS:
-            ignored.add(name)  # 本地运维资料不得随纯净源码包对外分发
-            continue
-        if relative_dir == "assets/generated" and name == "_source":
-            # 对话生成的原始大图不属于运行资产，正式资源只取 manifest 中已验收的输出。
-            ignored.add(name)
-            continue
-        if relative_dir == "secrets" and name != "admin-password.example.txt":
-            # Docker secret 目录只允许公开空示例，真实初始密码文件永不进入源码包。
-            ignored.add(name)
-            continue
-        if lower.startswith(".env") and lower != ".env.example":
-            # 仅示例配置可公开；实际 .env 可能包含密码、令牌或部署地址。
-            ignored.add(name)
-            continue
-        if lower.endswith((
-            ".bak", ".cer", ".crt", ".db", ".db-shm", ".db-wal", ".exe",
-            ".key", ".log", ".msi", ".part", ".pem", ".pfx", ".p12",
-            ".pid", ".pyc", ".pyo", ".secret", ".sqlite", ".sqlite3",
-            ".token", ".tsbuildinfo", ".zip",
-        )):
-            ignored.add(name)
-            continue
-        if lower in {"vite.config.js", "vite.config.d.ts"}:
+        if _source_ignored_by_relative_dir(relative_dir, name) or _source_ignored_by_name(path, name):
             ignored.add(name)
     return ignored
 
