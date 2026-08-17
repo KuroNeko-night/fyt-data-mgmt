@@ -150,12 +150,12 @@ export function useBridgeTask<T>(): BridgeTaskState<T> {
       setOutDir(response.out_dir || "");
       setResult(response.result);
       setPresentation(response.presentation || null);
-      void notifyTask("业务处理完成", "处理结果已生成，可查看或打开结果文件。");
+      void notifyTask("业务处理完成", "处理结果已生成，可查看或打开结果文件。");  // 完成通知不等待权限与发送结果，避免阻塞状态收尾
       if (isTauriRuntime()) {
         try {
           const settings = await bridgeRequest<AppSettings>("settings.get");
-          if (settings.auto_open_output && response.out_dir) await openLocalPath(response.out_dir);
-          if (settings.show_done_dialog) await message("业务处理已完成。", {
+          if (settings.auto_open_output && response.out_dir) await openLocalPath(response.out_dir);  // 按用户偏好自动打开输出目录
+          if (settings.show_done_dialog) await message("业务处理已完成。", {  // 完成后弹窗提示，用户可在设置中关闭该偏好
             title: "峰运通数据管理系统", kind: "info",
           });
         } catch {
@@ -188,7 +188,7 @@ export function useBridgeTask<T>(): BridgeTaskState<T> {
     generationRef.current += 1; // 立即让所有在途 Promise 失去更新当前状态的资格。
     const requestId = requestIdRef.current;
     requestIdRef.current = "";
-    if (requestId) void cancelBridgeRequest(requestId);
+    if (requestId) void cancelBridgeRequest(requestId);  // 重置时取消在途任务，防止其回调污染新状态
     setBusy(false);
     setError("");
     setLogs([]);

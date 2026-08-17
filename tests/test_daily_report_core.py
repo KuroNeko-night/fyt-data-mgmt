@@ -70,33 +70,33 @@ class DailyReportCoreTests(unittest.TestCase):
         snapshot = daily_report_core.build_snapshot(
             "2026-08-05", arrivals, issues, generated_at="2026-08-05T06:00:00+00:00",
         )
-        self.assertEqual(snapshot["arrival"]["batch_count"], 2)
-        self.assertEqual(snapshot["arrival"]["total_categories"], 15)
-        self.assertEqual(snapshot["arrival"]["completion_rate"], 86.7)
-        self.assertEqual(snapshot["arrival"]["missing_material_detail_count"], 1)
-        self.assertEqual(snapshot["arrival"]["batches"][0]["missing_materials"][0]["shortage_quantity"], "3")
+        self.assertEqual(snapshot["arrival"]["batch_count"], 2)  # 两批到料
+        self.assertEqual(snapshot["arrival"]["total_categories"], 15)  # 主料总类数
+        self.assertEqual(snapshot["arrival"]["completion_rate"], 86.7)  # 到料完成率
+        self.assertEqual(snapshot["arrival"]["missing_material_detail_count"], 1)  # 未到明细条数
+        self.assertEqual(snapshot["arrival"]["batches"][0]["missing_materials"][0]["shortage_quantity"], "3")  # 字符串输出
         self.assertEqual(snapshot["arrival"]["supplier_distribution"][0]["supplier"], "供应商甲")
-        self.assertEqual(snapshot["arrival"]["batches"][0]["supplier_distribution"][0]["shortage_quantity"], 3)
-        self.assertEqual(snapshot["workshop"]["issue_count"], 2)
-        self.assertEqual(snapshot["workshop"]["image_count"], 2)
-        self.assertEqual(snapshot["workshop"]["owner_distribution"][0], {"owner": "张工", "count": 2})
+        self.assertEqual(snapshot["arrival"]["batches"][0]["supplier_distribution"][0]["shortage_quantity"], 3)  # 数值输出
+        self.assertEqual(snapshot["workshop"]["issue_count"], 2)  # 两个现场问题
+        self.assertEqual(snapshot["workshop"]["image_count"], 2)  # 图片总数
+        self.assertEqual(snapshot["workshop"]["owner_distribution"][0], {"owner": "张工", "count": 2})  # 责任人分布
 
         with tempfile.TemporaryDirectory() as temp_name:
             result = daily_report_core.run(snapshot, out_dir=temp_name)
             target = Path(result["out_file"])
-            self.assertTrue(target.is_file())
+            self.assertTrue(target.is_file())  # 日清工作簿落盘
             workbook = load_workbook(target, data_only=True)
             try:
                 for sheet_name in (
                     "日清概览", "每日到料", "未到物料", "安全检查日报", "现场问题",
                     "月度生产订单台账", "订单缺件明细", "订单危包明细", "零星订单明细",
                 ):
-                    self.assertIn(sheet_name, workbook.sheetnames)
-                self.assertEqual(workbook["日清概览"]["A1"].value, "峰运通日清报告 · 2026-08-05")
-                self.assertEqual(workbook["每日到料"]["A2"].value, "26035-01")
-                self.assertEqual(workbook["未到物料"]["C2"].value, "A-01")
-                self.assertEqual(workbook["未到物料"]["H2"].value, "3")
-                self.assertEqual(workbook["现场问题"]["C2"].value, "防护罩松动")
+                    self.assertIn(sheet_name, workbook.sheetnames)  # 固定工作表齐全
+                self.assertEqual(workbook["日清概览"]["A1"].value, "峰运通日清报告 · 2026-08-05")  # 标题带日期
+                self.assertEqual(workbook["每日到料"]["A2"].value, "26035-01")  # 批次号写入
+                self.assertEqual(workbook["未到物料"]["C2"].value, "A-01")  # 物料编码写入
+                self.assertEqual(workbook["未到物料"]["H2"].value, "3")  # 短缺数量写入
+                self.assertEqual(workbook["现场问题"]["C2"].value, "防护罩松动")  # 问题原因写入
             finally:
                 workbook.close()
 
@@ -104,7 +104,7 @@ class DailyReportCoreTests(unittest.TestCase):
         """不存在的日历日期不能进入日清快照或输出文件名。"""
 
         with self.assertRaisesRegex(ValueError, "YYYY-MM-DD"):
-            daily_report_core.build_snapshot("2026-02-30", [], [])
+            daily_report_core.build_snapshot("2026-02-30", [], [])  # 非法日历日期拒绝
 
     def test_template_issue_fields_and_attendance_summary(self):
         """问题模板扩展字段与参会/生产考勤摘要应原样进入快照。"""
@@ -133,12 +133,12 @@ class DailyReportCoreTests(unittest.TestCase):
             },
         )
         issue = snapshot["workshop"]["issues"][0]
-        self.assertEqual(issue["batch_no"], "GKMYR26027-06")
-        self.assertEqual(issue["external_inspection_owner"], "王工")
+        self.assertEqual(issue["batch_no"], "GKMYR26027-06")  # 模板扩展字段进入快照
+        self.assertEqual(issue["external_inspection_owner"], "王工")  # 外部检查责任人
         summary = snapshot["attendance"]["unit_summary"]
-        self.assertEqual(summary[0]["difference"], 1)
-        self.assertEqual(summary[0]["reasons"], ["参会甲：出差"])
-        self.assertEqual(snapshot["attendance"]["production_groups"][0]["attendance_count"], 17)
+        self.assertEqual(summary[0]["difference"], 1)  # 参会缺勤差异
+        self.assertEqual(summary[0]["reasons"], ["参会甲：出差"])  # 缺勤原因
+        self.assertEqual(snapshot["attendance"]["production_groups"][0]["attendance_count"], 17)  # 按班次保留出勤
         self.assertEqual(snapshot["attendance"]["production_difference"], -3)
 
     def test_production_ledger_tolerates_formatted_and_dirty_quantities(self):
@@ -162,10 +162,10 @@ class DailyReportCoreTests(unittest.TestCase):
             "2026-08-11", [], [], monthly_production_plans=plans,
         )
         ledger = snapshot["production_ledger"]
-        self.assertEqual(ledger["formal_quantity"], 1200.0)
-        self.assertEqual(ledger["sporadic_pallets"], 2.0)
-        self.assertEqual(ledger["sporadic_volume_cbm"], 1.25)
-        self.assertEqual(ledger["today_shipments"][0]["order_no"], "S-001")
+        self.assertEqual(ledger["formal_quantity"], 1200.0)  # 千分位数量转数值
+        self.assertEqual(ledger["sporadic_pallets"], 2.0)  # 零星托数
+        self.assertEqual(ledger["sporadic_volume_cbm"], 1.25)  # 体积转数值
+        self.assertEqual(ledger["today_shipments"][0]["order_no"], "S-001")  # 当日发运订单
 
 
 if __name__ == "__main__":

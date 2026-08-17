@@ -26,7 +26,7 @@ function groupFeatures(features: Feature[]) {
  */
 export function FeaturesPage({ features, onOpen }: { features: Feature[]; onOpen: (key: string) => void }) {
   // 功能列表通常来自服务端配置，分组结果按列表引用缓存即可。
-  const groups = useMemo(() => groupFeatures(features), [features]);
+  const groups = useMemo(() => groupFeatures(features), [features]);  // 功能列表来自服务端配置，按引用缓存分组结果
   return <div className="fyt-feature-page">
     <PageHeader eyebrow="业务能力" title="业务模块" description="选择要处理的资料，系统会依次完成检查、处理和结果生成。" />
     {groups.length ? <div className="fyt-feature-groups">{groups.map(([group, items]) => <Surface as="section" variant="subtle" className="fyt-feature-group" key={group}>

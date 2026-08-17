@@ -64,7 +64,7 @@ export function HomePage({ navigate, library, health, tasks }: HomeProps) {
   const total = Number(library?.storage.files ?? 0);
   const totalBytes = Number(library?.storage.bytes ?? 0);
   // 按导航配置的业务分组保持原始顺序，避免在页面中维护第二份快捷入口清单。
-  const groups = HOME_SHORTCUTS.reduce<Array<{ label: string; items: typeof HOME_SHORTCUTS }>>((result, item) => {
+  const groups = HOME_SHORTCUTS.reduce<Array<{ label: string; items: typeof HOME_SHORTCUTS }>>((result, item) => {  // 按导航配置分组，不维护第二份快捷入口清单
     const current = result.find((group) => group.label === item.group);
     if (current) current.items.push(item);
     else result.push({ label: item.group || "常用业务", items: [item] });
@@ -120,8 +120,8 @@ export function CurrencyPage() {
     setBusy(true); setError("");
     try {
       const response = await bridgeRequest<{ success: boolean; text: string }>("currency.convert", { amount });
-      if (response.success) setResult(response.text);
-      else setError(response.text);
+      if (response.success) setResult(response.text);  // 转换成功只展示大写金额
+      else setError(response.text);  // 业务校验失败直接显示核心层返回的中文原因
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -176,7 +176,7 @@ export function TaskCenterPage() {
   /** 重新读取最多三百条最近任务；失败时保留现有表格，仅更新页面提示。 */
   async function refresh() {
     setError("");
-    try { setData(await bridgeRequest<TaskResult>("tasks.list", { limit: 300 })); }
+    try { setData(await bridgeRequest<TaskResult>("tasks.list", { limit: 300 })); }  // 每次刷新都以服务端返回为真值
     catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
   }
 
@@ -186,7 +186,7 @@ export function TaskCenterPage() {
   async function clearFinished() {
     if (!data?.summary.total || !await confirmAction("确定清除全部已结束的任务历史吗？正在运行的任务会保留。")) return;
     try {
-      const result = await bridgeRequest<{ removed: number }>("tasks.clear");
+      const result = await bridgeRequest<{ removed: number }>("tasks.clear");  // 清除范围由核心层保证只删已结束任务
       setError(result.removed ? `已清除 ${result.removed} 条任务历史。` : "没有可清除的任务历史。");
       await refresh();
     } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
@@ -258,8 +258,8 @@ export function SettingsPage({ settings, onSaved }: SettingsProps) {
   /** 保存完整设置草稿，并把核心层规范化后的结果回传应用顶层。 */
   async function save() {
     try {
-      const updated = await bridgeRequest<AppSettings>("settings.update", { values: draft });
-      setDraft(updated); onSaved(updated); setMessage("设置已保存，新的处理任务将按此执行。");
+      const updated = await bridgeRequest<AppSettings>("settings.update", { values: draft });  // 以核心层规范化后的设置为准
+      setDraft(updated); onSaved(updated); setMessage("设置已保存，新的处理任务将按此执行。");  // 回传顶层以同步 Rust 托盘开关
     } catch (reason) { setMessage(reason instanceof Error ? reason.message : String(reason)); }
   }
 

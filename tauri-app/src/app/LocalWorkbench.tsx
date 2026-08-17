@@ -121,7 +121,7 @@ export default function LocalWorkbench() {
       bridgeRequest<LibrarySummary>("library.summary"),
       bridgeRequest<TaskResult>("tasks.list", { limit: 8 }),
     ]).then((results) => {
-      if (!active) return;
+      if (!active) return;  // 组件卸载后忽略启动结果，防止写入已卸载状态
       const [healthResult, settingsResult, libraryResult, tasksResult] = results;
       if (healthResult.status === "fulfilled") setHealth(healthResult.value);
       if (settingsResult.status === "fulfilled") setSettings(settingsResult.value);
@@ -135,26 +135,26 @@ export default function LocalWorkbench() {
   useEffect(() => {
     if (!settings || localStorage.getItem(`fyt-page-guide-v1:${activeKey}`)) return;
     // 首次进入页面稍后再打开引导，让页面布局和美术资源先稳定；减少动态效果时缩短等待。
-    const timer = window.setTimeout(() => setTourOpen(true), settings.reduce_motion ? 80 : 420);
+    const timer = window.setTimeout(() => setTourOpen(true), settings.reduce_motion ? 80 : 420);  // 稍后打开引导，让页面布局与美术资源先稳定
     return () => window.clearTimeout(timer);
   }, [activeKey, settings]);
 
   useLayoutEffect(() => {
     // 在浏览器绘制新页面前回到内容顶部，避免用户看到上一页滚动位置再瞬间跳动。
-    contentScrollRef.current?.scrollTo({ top: 0, left: 0, behavior: "auto" });
+    contentScrollRef.current?.scrollTo({ top: 0, left: 0, behavior: "auto" });  // 绘制前回到顶部，避免页面切换后的滚动残留
   }, [activeKey]);
 
   useEffect(() => {
     // Rust 只需要窗口关闭行为这一原生设置；保存配置仍由设置页通过 Python Core 完成。
-    if (settings) void syncRuntimeSettings(settings).catch((reason) => setBridgeError(reason instanceof Error ? reason.message : String(reason)));
+    if (settings) void syncRuntimeSettings(settings).catch((reason) => setBridgeError(reason instanceof Error ? reason.message : String(reason)));  // 只把托盘开关同步到 Rust 内存
   }, [settings]);
 
   useEffect(() => {
     if (!settings?.check_update_on_start || !isTauriRuntime()) return;
     // 更新检查属于辅助启动动作，失败保持静默，不影响本地业务页面可用性。
     void bridgeRequest<{ result: null | { status: string; version?: string } }>("updater.check")
-      .then((response) => { if (response.result?.status === "update") setUpdateAvailable(response.result.version || "新版"); })
-      .catch(() => undefined);
+      .then((response) => { if (response.result?.status === "update") setUpdateAvailable(response.result.version || "新版"); })  // 仅在发现新版时点亮顶栏入口
+      .catch(() => undefined);  // 更新检查失败保持静默，不影响本地业务可用性
   }, [settings?.check_update_on_start]);
 
   useEffect(() => {
@@ -170,13 +170,13 @@ export default function LocalWorkbench() {
   // 标题与描述由导航单一事实源派生，不在此处硬编码任何页面文案。
   const header = getPageHeading(activeItem);
   // 显式主题优先；自动主题跟随系统深浅色偏好。
-  const dark = settings?.theme_mode === "dark" || (settings?.theme_mode === "auto" && systemDark);
+  const dark = settings?.theme_mode === "dark" || (settings?.theme_mode === "auto" && systemDark);  // 显式主题优先，自动模式跟随系统深浅色
 
   const navigateTo = useCallback((nextKey: string) => {
     if (nextKey === activeKey) return;
     setTourOpen(false);
     const documentWithTransition = document as Document & { startViewTransition?: (callback: () => void) => void };
-    if (settings?.reduce_motion || !documentWithTransition.startViewTransition) {
+    if (settings?.reduce_motion || !documentWithTransition.startViewTransition) {  // 减少动效或浏览器不支持时直接切页
       setActiveKey(nextKey);
       return;
     }
@@ -186,7 +186,7 @@ export default function LocalWorkbench() {
 
   const closeTour = useCallback(() => {
     // 完成记录按页面键保存，同一版本的引导不会在之后每次访问时重复弹出。
-    localStorage.setItem(`fyt-page-guide-v1:${activeKey}`, "1");
+    localStorage.setItem(`fyt-page-guide-v1:${activeKey}`, "1");  // 按页面键记录引导完成，之后不再重复弹出
     setTourOpen(false);
     contentScrollRef.current?.scrollTo({ top: 0, left: 0, behavior: "auto" });
   }, [activeKey]);

@@ -33,7 +33,7 @@ def _wb(path, sheets):
         first = False
         for row in rows:
             ws.append(row)
-    wb.save(path)
+    wb.save(path)  # 生成多工作表分类样本
 
 
 class _TmpFile(unittest.TestCase):
@@ -75,7 +75,7 @@ class TestClassifySynthetic(_TmpFile):
         # SAP 表用「下阶物料」作编码,靠 供应商代码+供应商名称 定性
         p = self.mk("供应商表.xlsx", {"Sheet1": [SUPP_HDR, SUPP_ROW]})
         r = L.classify(p)
-        self.assertEqual(r["category"], "deliv_supp")
+        self.assertEqual(r["category"], "deliv_supp")  # SAP 下阶物料表归类
         self.assertIn("deliv_supp", r["categories"])
 
     def test_pivot_src(self):
@@ -83,7 +83,7 @@ class TestClassifySynthetic(_TmpFile):
 
         p = self.mk("包材核算.xlsx",
                     {"包装方案汇总及包材用量计算": [PIVOT_HDR, PIVOT_ROW]})
-        self.assertEqual(L.classify(p)["category"], "pivot_src")
+        self.assertEqual(L.classify(p)["category"], "pivot_src")  # 销售源数据归类
 
     def test_multi_label_cross_feature(self):
         """不同子表分别命中业务时，一个文件应同时保存两个分类标签和表名映射。"""
@@ -94,10 +94,10 @@ class TestClassifySynthetic(_TmpFile):
             "包装方案汇总及包材用量计算": [PIVOT_HDR, PIVOT_ROW],
         })
         r = L.classify(p)
-        self.assertIn("deliv_supp", r["categories"])
+        self.assertIn("deliv_supp", r["categories"])  # 多标签命中
         self.assertIn("pivot_src", r["categories"])
         # sheets 映射应指出各标签命中的子表
-        self.assertEqual(r["sheets"]["deliv_supp"], "供应商表")
+        self.assertEqual(r["sheets"]["deliv_supp"], "供应商表")  # 标签对应子表
         self.assertEqual(r["sheets"]["pivot_src"], "包装方案汇总及包材用量计算")
 
     def test_single_label_files_stay_single(self):
@@ -105,15 +105,15 @@ class TestClassifySynthetic(_TmpFile):
 
         # 纯供应商表不应被误加其它标签(防多标签泛滥)
         p = self.mk("纯供应商.xlsx", {"Sheet1": [SUPP_HDR, SUPP_ROW]})
-        self.assertEqual(L.classify(p)["categories"], ["deliv_supp"])
+        self.assertEqual(L.classify(p)["categories"], ["deliv_supp"])  # 单一标签不泛滥
 
     def test_unknown_below_threshold(self):
         """无业务特征的普通表应落入未知分类且 categories 为空。"""
 
         p = self.mk("杂表.xlsx", {"Sheet1": [["甲", "乙", "丙"], [1, 2, 3]]})
         r = L.classify(p)
-        self.assertEqual(r["category"], L.UNKNOWN)
-        self.assertEqual(r["categories"], [])
+        self.assertEqual(r["category"], L.UNKNOWN)  # 低于阈值归未知
+        self.assertEqual(r["categories"], [])  # 无标签
 
 
 class TestIndexMultiLabel(unittest.TestCase):
@@ -130,7 +130,7 @@ class TestIndexMultiLabel(unittest.TestCase):
             {"name": "旧条目.xlsx", "category": "deliv_bom",   # 无 categories:测回退
              "path": "Y/旧.xlsx", "updated": "2026-07-16"},
         ]}
-        L._load_index = lambda: self._fake
+        L._load_index = lambda: self._fake  # 注入假索引
 
     def tearDown(self):
         """恢复真实索引加载函数，避免影响后续文件库测试。"""
@@ -153,7 +153,7 @@ class TestIndexMultiLabel(unittest.TestCase):
         """多标签文件在每个所属类别各计一次，但同一类别不重复计数。"""
 
         c = L.counts()
-        self.assertEqual(c["pivot_src"], 1)
+        self.assertEqual(c["pivot_src"], 1)  # 主标签计数
         self.assertEqual(c["deliv_supp"], 1)     # 多标签在每类各计一次
         self.assertEqual(c["deliv_bom"], 1)
 
@@ -212,29 +212,29 @@ class TestReclassifyConflict(unittest.TestCase):
              mock.patch.object(L.paths, "library_index_path", return_value=os.path.join(self._tmp, "index.json")), \
              mock.patch.object(L, "_load_index", return_value=index), \
              mock.patch.object(L, "_save_index", side_effect=lambda value: saved.append(value) or save_result):
-            result = L.reclassify("att_source", name, "rec_zong")
+            result = L.reclassify("att_source", name, "rec_zong")  # 重分类到目标类别
         return result, source, target, saved
 
     def test_existing_destination_is_preserved_until_move_succeeds(self):
         """目标同名旧文件应先备份，源移动及索引保存成功后再清除备份。"""
 
         result, source, target, saved = self._run()
-        self.assertTrue(result)
-        self.assertFalse(os.path.exists(source))
+        self.assertTrue(result)  # 重分类成功
+        self.assertFalse(os.path.exists(source))  # 源文件已移走
         with open(target, "rb") as stream:
-            self.assertEqual(stream.read(), b"source")
-        self.assertFalse(os.path.exists(target + ".reclassify.bak"))
-        self.assertEqual(saved[0]["items"][0]["path"], target)
+            self.assertEqual(stream.read(), b"source")  # 目标内容为源内容
+        self.assertFalse(os.path.exists(target + ".reclassify.bak"))  # 备份已清除
+        self.assertEqual(saved[0]["items"][0]["path"], target)  # 索引路径更新
 
     def test_index_failure_restores_both_files(self):
         """索引保存失败时必须同时恢复源文件和原目标文件内容。"""
 
         result, source, target, _ = self._run(save_result=False)
-        self.assertFalse(result)
+        self.assertFalse(result)  # 索引保存失败返回失败
         with open(source, "rb") as stream:
-            self.assertEqual(stream.read(), b"source")
+            self.assertEqual(stream.read(), b"source")  # 源文件恢复
         with open(target, "rb") as stream:
-            self.assertEqual(stream.read(), b"existing")
+            self.assertEqual(stream.read(), b"existing")  # 目标文件恢复
 
 
 class TestGoldenMatrix(unittest.TestCase):
@@ -263,10 +263,10 @@ class TestGoldenMatrix(unittest.TestCase):
 
         srcs = sd.supp_pfep_sources()
         if not srcs:
-            self.skipTest("缺少 PFEP 样本")
+            self.skipTest("缺少 PFEP 样本")  # 样本缺失跳过
         for p in srcs:
             self.assertEqual(L.classify(p)["category"], "pivot_src",
-                             "%s 应归 pivot_src" % os.path.basename(p))
+                             "%s 应归 pivot_src" % os.path.basename(p))  # 黄金类别不回退
 
 
 if __name__ == "__main__":
@@ -289,16 +289,16 @@ class TestClassifyReadFailure(_TmpFile):
 
         logs = []
         info = L.classify(self._corrupt(), log=logs.append)
-        self.assertEqual(info["category"], L.UNKNOWN)
+        self.assertEqual(info["category"], L.UNKNOWN)  # 损坏文件归未知
         self.assertTrue(any("无法读取" in l for l in logs),
-                        "损坏文件应记读取失败告警")
+                        "损坏文件应记读取失败告警")  # 日志上报
 
     def test_corrupt_log_none_backcompat(self):
         """调用方不提供日志回调时仍应保持旧版不抛错行为。"""
 
         # 不传 log 时不得抛异常,行为与旧版一致(仍归 unknown)
         info = L.classify(self._corrupt())
-        self.assertEqual(info["category"], L.UNKNOWN)
+        self.assertEqual(info["category"], L.UNKNOWN)  # 无日志回调也不抛错
 
     def test_valid_file_no_false_warning(self):
         """正常工作簿不得产生“无法读取”的误报警告。"""
@@ -306,4 +306,4 @@ class TestClassifyReadFailure(_TmpFile):
         logs = []
         p = self.mk("正常.xlsx", {"S": [PIVOT_HDR, PIVOT_ROW]})
         L.classify(p, log=logs.append)
-        self.assertEqual([l for l in logs if "无法读取" in l], [])
+        self.assertEqual([l for l in logs if "无法读取" in l], [])  # 正常文件无误报

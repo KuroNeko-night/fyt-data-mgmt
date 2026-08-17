@@ -27,7 +27,7 @@ class WebServerFileTests(WebServerTestBase):
         for username, display_name in (("library_a", "资料甲"), ("library_b", "资料乙")):
             self.assertEqual(self.call("/api/auth/register", {
                 "username": username, "display_name": display_name, "password": "password123",
-            })[0], 201)
+            })[0], 201)  # 注册班组长
             account = next(
                 item for item in self.call("/api/admin/users", token=self.admin)[1]["users"]
                 if item["username"] == username
@@ -35,17 +35,17 @@ class WebServerFileTests(WebServerTestBase):
             self.assertEqual(
                 self.call(f"/api/admin/users/{account['id']}/approve", {}, token=self.admin)[0],
                 200,
-            )
+            )  # 审核通过
             self.assertEqual(
                 self.call(
                     f"/api/admin/users/{account['id']}/role",
                     {"role": "team_leader"}, token=self.admin,
                 )[0],
                 200,
-            )
+            )  # 设为班组长
             tokens[username] = self.call("/api/auth/login", {
                 "username": username, "password": "password123",
-            })[1]["token"]
+            })[1]["token"]  # 登录取令牌
 
         def upload(name, content, scope="team"):
             """上传共享资料并返回服务端记录，允许测试切换共享范围。"""
@@ -63,31 +63,31 @@ class WebServerFileTests(WebServerTestBase):
         team_file = upload("团队资料.txt", b"team-v1")
         private_file = upload("个人资料.txt", b"private", "private")
         second_team = upload("团队资料二.txt", b"team-v2")
-        self.assertEqual(team_file["uploader"]["display_name"], "资料甲")
-        self.assertEqual(team_file["scope"], "team")
-        self.assertTrue(team_file["permissions"]["can_edit"])
+        self.assertEqual(team_file["uploader"]["display_name"], "资料甲")  # 上传人
+        self.assertEqual(team_file["scope"], "team")  # 共享范围
+        self.assertTrue(team_file["permissions"]["can_edit"])  # 上传者可编辑
 
         status, listed = self.call(
             "/api/library/files?page=1&page_size=1", token=tokens["library_b"],
         )
         self.assertEqual(status, 200)
-        self.assertEqual(listed["pagination"], {"page": 1, "page_size": 1, "total": 2, "pages": 2})
-        self.assertEqual(len(listed["files"]), 1)
-        self.assertFalse(listed["files"][0]["permissions"]["can_edit"])
-        self.assertEqual(listed["summary"]["visible_count"], 2)
+        self.assertEqual(listed["pagination"], {"page": 1, "page_size": 1, "total": 2, "pages": 2})  # 分页元数据
+        self.assertEqual(len(listed["files"]), 1)  # 单页一条
+        self.assertFalse(listed["files"][0]["permissions"]["can_edit"])  # 他人不可编辑
+        self.assertEqual(listed["summary"]["visible_count"], 2)  # 可见总数
 
         status, content = self.call(
             f"/api/library/files/{team_file['id']}/download", token=tokens["library_b"],
         )
-        self.assertEqual((status, content), (200, b"team-v1"))
+        self.assertEqual((status, content), (200, b"team-v1"))  # 共享资料可下载
         self.assertEqual(self.call(
             f"/api/library/files/{private_file['id']}/download", token=tokens["library_b"],
-        )[0], 404)
+        )[0], 404)  # 私有资料不可见
         self.assertEqual(self.call(
             f"/api/library/files/{team_file['id']}",
             {"name": "越权修改.txt", "scope": "team"},
             token=tokens["library_b"], method="PATCH",
-        )[0], 403)
+        )[0], 403)  # 他人修改被拒
 
         status, updated = self.call(
             f"/api/library/files/{team_file['id']}",

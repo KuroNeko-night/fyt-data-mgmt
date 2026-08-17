@@ -22,16 +22,16 @@ class TestClassify(unittest.TestCase):
     def test_kinds(self):
         """分类器应区分常见横表、竖表、矩阵和未知结构。"""
 
-        self.assertEqual(S.classify_value(None), "empty")
-        self.assertEqual(S.classify_value("   "), "empty")
-        self.assertEqual(S.classify_value(123), "number")
-        self.assertEqual(S.classify_value(12.5), "number")
-        self.assertEqual(S.classify_value("1,234.5"), "number")
-        self.assertEqual(S.classify_value("物料名称"), "text")
-        self.assertEqual(S.classify_value("A12345"), "code")
+        self.assertEqual(S.classify_value(None), "empty")  # 空值
+        self.assertEqual(S.classify_value("   "), "empty")  # 纯空白按空
+        self.assertEqual(S.classify_value(123), "number")  # 整数按数值
+        self.assertEqual(S.classify_value(12.5), "number")  # 小数按数值
+        self.assertEqual(S.classify_value("1,234.5"), "number")  # 千分位数字按数值
+        self.assertEqual(S.classify_value("物料名称"), "text")  # 中文按文本
+        self.assertEqual(S.classify_value("A12345"), "code")  # 字母数字按编码
         self.assertEqual(S.classify_value("KD-001"), "code")
         import datetime
-        self.assertEqual(S.classify_value(datetime.date(2020, 1, 1)), "date")
+        self.assertEqual(S.classify_value(datetime.date(2020, 1, 1)), "date")  # 日期类型
         self.assertEqual(S.classify_value(True), "text")   # bool 不当数字
 
 
@@ -84,11 +84,11 @@ class TestDetect(_Tmp):
         wb, ws = self._ws(rows)
         hr, col, conf = S.detect_by_shape(ws, _PROFILE, min_conf=0.4)
         wb.close()
-        self.assertIsNotNone(hr)
+        self.assertIsNotNone(hr)  # 表头陌生仍能兜底识别
         self.assertEqual(col["code"], 1)
         self.assertEqual(col["cname"], 2)
         self.assertEqual(col["qty"], 3)
-        self.assertGreater(conf, 0.4)
+        self.assertGreater(conf, 0.4)  # 置信度超过阈值
 
     def test_missing_required_returns_none(self):
         """缺少业务必需角色时即使部分特征命中也不能接受布局。"""
@@ -100,7 +100,7 @@ class TestDetect(_Tmp):
         wb, ws = self._ws(rows)
         hr, col, conf = S.detect_by_shape(ws, _PROFILE, min_conf=0.4)
         wb.close()
-        self.assertIsNone(hr)
+        self.assertIsNone(hr)  # 必需角色缺失不采用
         self.assertEqual(col, {})
 
     def test_low_confidence_rejected(self):
@@ -111,7 +111,7 @@ class TestDetect(_Tmp):
         wb, ws = self._ws(rows)
         hr, col, conf = S.detect_by_shape(ws, _PROFILE, min_conf=0.99)
         wb.close()
-        self.assertIsNone(hr)
+        self.assertIsNone(hr)  # 低置信度被阈值拒绝
 
     def test_log_emitted_on_hit(self):
         rows = [["x", "y", "z"]]
@@ -121,7 +121,7 @@ class TestDetect(_Tmp):
         logs = []
         S.detect_by_shape(ws, _PROFILE, min_conf=0.4, log=logs.append)
         wb.close()
-        self.assertTrue(any("形态兜底" in l for l in logs))
+        self.assertTrue(any("形态兜底" in l for l in logs))  # 命中时记录来源
 
 
 class TestDeliveryWrapper(_Tmp):
@@ -138,7 +138,7 @@ class TestDeliveryWrapper(_Tmp):
         wb, ws = self._ws(rows)
         hr, col, src = D.detect_layout_or_shape(ws)
         wb.close()
-        self.assertEqual(src, "header")
+        self.assertEqual(src, "header")  # 正常表头走表头识别来源
         self.assertIn("code", col)
 
 

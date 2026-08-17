@@ -9,11 +9,11 @@ import { fileURLToPath } from "node:url";
  */
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const tokenPath = resolve(root, "design-system", "tokens.json");
-const tokens = JSON.parse(await readFile(tokenPath, "utf8"));
+const tokens = JSON.parse(await readFile(tokenPath, "utf8"));  // 一次性读入设计令牌，后续 CSS 与类型都从它派生
 
 function cssName(value) {
   // JSON 使用 camelCase，CSS 自定义属性统一转换为短横线命名，保证调用端书写稳定。
-  return value.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
+  return value.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);  // camelCase 转短横线，保证 CSS 变量名书写稳定
 }
 
 function renderTokenBlock(category, values, theme = null) {
@@ -22,12 +22,12 @@ function renderTokenBlock(category, values, theme = null) {
    * 过滤规则可阻止对象被隐式序列化为 [object Object]，从生成阶段暴露令牌结构错误。
    */
   return Object.entries(values)
-    .filter(([, value]) => {
+    .filter(([, value]) => {  // 过滤非字符串值，防止对象被隐式序列化为 [object Object]
       if (!theme) return typeof value === "string";
       return value && typeof value === "object" && theme in value;
     })
     .map(([key, value]) => {
-      const resolved = theme ? value[theme] : value;
+      const resolved = theme ? value[theme] : value;  // 无主题令牌直接取值，主题令牌按 light/dark 分支取值
       return `  --fyt-${category}-${cssName(key)}: ${resolved};`;
     })
     .join("\n");
@@ -35,7 +35,7 @@ function renderTokenBlock(category, values, theme = null) {
 
 function renderTokensCss() {
   // :root 包含亮色与所有非主题令牌；暗色选择器只覆盖确实存在暗色分支的变量。
-  const rootLines = [
+  const rootLines = [  // :root 同时承载亮色与无主题令牌，暗色只覆盖有暗色分支的变量
     renderTokenBlock("", tokens.colors, "light").replaceAll("--fyt--", "--fyt-"),
     renderTokenBlock("space", tokens.spacing),
     renderTokenBlock("radius", tokens.radius),
@@ -412,12 +412,12 @@ const outputs = [
   ["responsive.css", responsiveCss],
 ];
 
-const targets = ["web-app/src/styles", "tauri-app/src/styles"];
+const targets = ["web-app/src/styles", "tauri-app/src/styles"];  // 双端样式目录必须同内容，避免两端视觉漂移
 for (const target of targets) {
   const targetDir = resolve(root, target);
   await mkdir(targetDir, { recursive: true });
   // 同一内存内容写入双端，避免分别渲染时受可变全局状态影响而产生差异。
-  for (const [file, content] of outputs) await writeFile(resolve(targetDir, file), content, "utf8");
+  for (const [file, content] of outputs) await writeFile(resolve(targetDir, file), content, "utf8");  // 同一内存内容写入双端，避免分别渲染产生差异
 }
 
 // 状态定义与 CSS 令牌来自同一 JSON；生成 TypeScript 类型后，业务组件只能使用已登记状态键。
@@ -426,7 +426,7 @@ export const STATUS_DEFINITIONS = ${JSON.stringify(tokens.statuses, null, 2)} as
 export type StatusKey = keyof typeof STATUS_DEFINITIONS;
 export type StatusTone = (typeof STATUS_DEFINITIONS)[StatusKey]["tone"];
 `;
-for (const target of ["web-app/src/ui/status.ts", "tauri-app/src/ui/status.ts"]) {
+for (const target of ["web-app/src/ui/status.ts", "tauri-app/src/ui/status.ts"]) {  // 状态类型与 CSS 令牌来自同一 JSON，业务组件只能使用已登记状态键
   const targetPath = resolve(root, target);
   await mkdir(dirname(targetPath), { recursive: true });
   await writeFile(targetPath, statusSource, "utf8");

@@ -119,7 +119,7 @@ def list_sheets(path):
     """返回 xlsx/xlsm 页签名供界面选择；不支持格式或读取失败时返回空列表。"""
     ext = os.path.splitext(path)[1].lower()
     if ext not in (".xlsx", ".xlsm"):
-        return []  # openpyxl 不读取旧 xls，此辅助函数不承担多格式兼容。
+        return []
     try:
         wb = openpyxl.load_workbook(path, read_only=True)
         try:

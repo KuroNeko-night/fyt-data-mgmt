@@ -18,11 +18,11 @@ const targets = [
 
 await readFile(manifestPath, "utf8"); // 先验证清单可读；失败时不留下“图片已复制但清单缺失”的状态。
 for (const { source, target } of targets) {
-  await mkdir(target, { recursive: true });
+  await mkdir(target, { recursive: true });  // 先建目录，重复执行不会因目标已存在而失败
   // force 只覆盖同名正式资产，不删除目标目录中的其他文件，保持同步操作可重复执行。
-  await cp(source, target, { recursive: true, force: true });
+  await cp(source, target, { recursive: true, force: true });  // force 只覆盖同名资产，不删除目标目录其他文件
 }
 // 双端分别复制同一份清单，运行时无需跨目录读取仓库级 assets。
-await cp(manifestPath, resolve(root, "web-app", "public", "illustrations", "generated", "manifest.json"));
-await cp(manifestPath, resolve(root, "tauri-app", "public", "illustrations", "generated", "manifest.json"));
+await cp(manifestPath, resolve(root, "web-app", "public", "illustrations", "generated", "manifest.json"));  // 复制同一份清单到 Web，运行时无需跨目录读取仓库级 assets
+await cp(manifestPath, resolve(root, "tauri-app", "public", "illustrations", "generated", "manifest.json"));  // 复制同一份清单到 Tauri，保证双端资源可追溯
 console.log("已同步双端静态美术资源");

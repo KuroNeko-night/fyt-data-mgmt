@@ -54,8 +54,8 @@ function Dashboard({ initialUser, onLogout }: { initialUser: User; onLogout: () 
 
   useEffect(() => {
     // 主题写在根节点数据属性上，所有设计令牌可在一次切换中同步生效。
-    document.documentElement.dataset.theme = theme;
-    localStorage.setItem("fyt-web-theme", theme);
+    document.documentElement.dataset.theme = theme;  // 根节点数据属性驱动令牌切换，避免逐组件换肤
+    localStorage.setItem("fyt-web-theme", theme);  // 持久化主题偏好，下次访问保持相同外观
   }, [theme]);
 
   useEffect(() => {
@@ -76,7 +76,7 @@ function Dashboard({ initialUser, onLogout }: { initialUser: User; onLogout: () 
 
   /** 切换一级页面，并清除仅属于任务或业务工作区的临时定位状态。 */
   function navigate(key: string) {
-    if (!isNavigationAllowed(getNavigationItem(key), user.role)) {
+    if (!isNavigationAllowed(getNavigationItem(key), user.role)) {  // 越权入口直接回工作台，隐藏导航不能替代后端鉴权
       setMoreOpen(false);
       setActive("overview");
       return;
@@ -119,7 +119,7 @@ function Dashboard({ initialUser, onLogout }: { initialUser: User; onLogout: () 
       "web.compare.review": "compare",
       "web.supplier_batch.review": "supplier_batch",
     };
-    const key = reviewFeatures[action] || (action.startsWith("web.") ? action.slice(4) : action.split(".")[0]);
+    const key = reviewFeatures[action] || (action.startsWith("web.") ? action.slice(4) : action.split(".")[0]);  // 复核动作名特殊，先查显式映射再退回前缀规则
     setSelectedJobId(jobId);
     setActive(`feature:${key}`);
   }
@@ -177,10 +177,10 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [checking, setChecking] = useState(true);
   // 令牌无效或网络请求失败都先回到登录页，避免在未知身份下渲染受保护内容。
-  useEffect(() => { void me().then((result) => setUser(result.user)).catch(() => clearToken()).finally(() => setChecking(false)); }, []);
+  useEffect(() => { void me().then((result) => setUser(result.user)).catch(() => clearToken()).finally(() => setChecking(false)); }, []);  // 会话无效或请求失败都回登录页，避免未知身份渲染受保护内容
 
   /** 尽力撤销服务端会话；即使网络失败也清除本机令牌和用户状态。 */
-  function onLogout() { void logout().catch(() => undefined).finally(() => { clearToken(); setUser(null); }); }
+  function onLogout() { void logout().catch(() => undefined).finally(() => { clearToken(); setUser(null); }); }  // 即使服务端撤销失败也清除本地会话
   if (checking) return <PageLoading text="正在验证登录状态..." />;
   return user ? <Dashboard initialUser={user} onLogout={onLogout} /> : <AuthScreen onAuthed={setUser} />;
 }

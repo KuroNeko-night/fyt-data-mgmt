@@ -27,7 +27,7 @@ export function normalizeDailyReportData(
   raw: Partial<DailyReportData> | null | undefined,
   requestedDate: string,
 ): DailyReportData {
-  const data = raw || {};
+  const data = raw || {};  // 空响应统一按空对象处理，后续逐字段兜底
   const reportDate = data.date || requestedDate;
   const arrival = data.arrival || {} as Partial<DailyReportData["arrival"]>;
   const safety = data.safety_checks || {} as Partial<DailyReportData["safety_checks"]>;

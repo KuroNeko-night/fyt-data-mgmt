@@ -35,18 +35,18 @@ class DeliveryCaseMapTests(unittest.TestCase):
         detail.append(["往期送货计划"])
         detail.append(["物料编码", "CASE", "CASE托数", "班组"])
         detail.append(["JBC001", "CASE-A", 2, "一组"])
-        detail.append(["JBC001", "CASE-B", 3, "二组"])
-        detail.append(["JBC002", "", None, ""])
+        detail.append(["JBC001", "CASE-B", 3, "二组"])  # 重复编码应保留首条
+        detail.append(["JBC002", "", None, ""])  # 空记录不阻止后续
         detail.append(["JBC002", "CASE-C", None, "三组"])
-        detail.append([100.0, "CASE-D", 1, "四组"])
+        detail.append([100.0, "CASE-D", 1, "四组"])  # 数值编码应转字符串
         workbook.save(path)
-        workbook.close()
+        workbook.close()  # 关闭工作簿释放文件
 
         logs = []
         mapping = delivery_core.build_case_map(path, log=logs.append)
-        self.assertEqual(mapping["JBC001"], ("CASE-A", 2, "一组"))
-        self.assertEqual(mapping["JBC002"], ("CASE-C", None, "三组"))
-        self.assertEqual(mapping["100"], ("CASE-D", 1, "四组"))
+        self.assertEqual(mapping["JBC001"], ("CASE-A", 2, "一组"))  # 重复编码保留首条
+        self.assertEqual(mapping["JBC002"], ("CASE-C", None, "三组"))  # 空行后有效记录仍读取
+        self.assertEqual(mapping["100"], ("CASE-D", 1, "四组"))  # 数字编码转字符串键
         self.assertEqual(len(mapping), 3)
         self.assertIn("零件到货计划", logs[-1])
 
@@ -60,7 +60,7 @@ class DeliveryCaseMapTests(unittest.TestCase):
         workbook.close()
 
         logs = []
-        self.assertEqual(delivery_core.build_case_map(path, log=logs.append), {})
+        self.assertEqual(delivery_core.build_case_map(path, log=logs.append), {})  # 无明细返回空映射
         self.assertIn("未找到", logs[-1])
 
 

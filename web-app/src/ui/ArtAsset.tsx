@@ -37,7 +37,7 @@ function fallbackName(name: string) {
  */
 export function ArtAsset({ name, alt = "", className = "", loading = "lazy" }: Props) {
   // 图片加载失败后置位；一旦进入兜底模式就保持稳定，避免闪烁和重复请求。
-  const [failed, setFailed] = useState(false);
+  const [failed, setFailed] = useState(false);  // 进入兜底模式后保持稳定，避免闪烁和重复请求
   const assetName = fallbackName(name);
   // 同时挂载通用兜底类与按资源名生成的专用类，供全局样式和局部覆盖共同使用。
   const fallbackClass = `fyt-art-fallback fyt-art-${assetName} fyt-art-fallback-${assetName}`;

@@ -154,7 +154,7 @@ const SPECS: Record<string, FeatureSpec> = {
 
 /** 从静态功能规格生成新的参数对象，防止不同工作区共享可变引用。 */
 function initialOptions(spec: FeatureSpec) {
-  return Object.fromEntries(spec.options.map((field) => [field.key, field.value]));
+  return Object.fromEntries(spec.options.map((field) => [field.key, field.value]));  // 生成新对象，防止不同工作区共享可变引用
 }
 
 /** 将上传和结果文件大小转换为紧凑单位。 */
@@ -190,7 +190,7 @@ function FileField({ config, files, onChange }: { config: FileGroup; files: File
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [dragging, setDragging] = useState(false);
   /** 合并新文件并遵守当前上传组的单选或多选约束。 */
-  function accept(next: File[]) { onChange(config.multiple ? Array.from(new Map([...files, ...next].map((file) => [`${file.name}-${file.size}`, file])).values()) : next.slice(0, 1)); }
+  function accept(next: File[]) { onChange(config.multiple ? Array.from(new Map([...files, ...next].map((file) => [`${file.name}-${file.size}`, file])).values()) : next.slice(0, 1)); }  // 按名称与大小去重并保持已有文件在前
   return <section className="fyt-flow-file-field" data-dragging={dragging ? "true" : undefined} data-has-files={files.length ? "true" : undefined} onDragOver={(event) => { event.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={(event) => { event.preventDefault(); setDragging(false); accept(Array.from(event.dataTransfer.files)); }}>
     <div className="fyt-flow-file-heading"><div><strong className="fyt-flow-file-title">{config.label}{config.optional ? <span className="fyt-flow-optional">可选</span> : null}</strong><p>{config.description}</p></div><Button variant="secondary" size="sm" type="button" onClick={() => inputRef.current?.click()}><Icon name="plus" size={15} />选择文件</Button></div>
     <input ref={inputRef} className="fyt-flow-file-input" type="file" accept={config.accept === "*" ? undefined : config.accept} multiple={config.multiple} onChange={(event) => { accept(Array.from(event.target.files || [])); event.currentTarget.value = ""; }} />
@@ -213,7 +213,7 @@ function ResultValue({ job }: { job: WebJob }) {
 function PreviewPanel({ file, onClose }: { file: WebJob["files"][number]; onClose: () => void }) {
   const [data, setData] = useState<PreviewData | null>(null);
   const [error, setError] = useState("");
-  useEffect(() => { let active = true; void previewJobFile(file).then((result) => { if (active) setData(result); }).catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : "预览失败"); }); return () => { active = false; }; }, [file]);
+  useEffect(() => { let active = true; void previewJobFile(file).then((result) => { if (active) setData(result); }).catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : "预览失败"); }); return () => { active = false; }; }, [file]);  // active 守卫在切换文件后忽略旧预览响应
   return <div className="fyt-flow-preview"><div className="fyt-flow-preview-head"><div><span>在线预览</span><strong title={file.name}>{file.name}</strong></div><IconButton label="关闭预览" onClick={onClose}><Icon name="x" size={16} /></IconButton></div>{error ? <Notice tone="error">{error}</Notice> : data ? <div className="fyt-flow-preview-table"><table><tbody>{data.rows.map((row, rowIndex) => <tr key={rowIndex}>{row.map((cell, cellIndex) => rowIndex === 0 ? <th key={cellIndex}>{cell}</th> : <td key={cellIndex}>{cell}</td>)}</tr>)}</tbody></table></div> : <div className="fyt-empty-state"><h3>正在读取文件内容</h3></div>}{data?.truncated ? <small className="fyt-flow-preview-note">仅显示前 30 行，完整内容请下载文件查看</small> : null}</div>;
 }
 
@@ -255,7 +255,7 @@ export function FeatureWorkspace({ feature, onBack, onCompleted, initialJobId }:
   const [arrivalScanning, setArrivalScanning] = useState(false);
   const [arrivalScanError, setArrivalScanError] = useState("");
   // 上传总进度需要跨文件组累计，因此先派生本次选择的文件总数。
-  const totalFiles = useMemo(() => Object.values(files).reduce((count, items) => count + items.length, 0), [files]);
+  const totalFiles = useMemo(() => Object.values(files).reduce((count, items) => count + items.length, 0), [files]);  // 跨文件组累计总数，用于上传进度与可运行判断
   const canRun = isReconcile ? Boolean(reconcileHandles.length && selected.size && month.trim())
     : isArrival ? arrivalRows.some((row) => row.include && row.total > 0 && row.batch_no.trim())
     : spec.files.every((group) => group.optional || (files[group.key]?.length || 0) > 0)
@@ -263,11 +263,11 @@ export function FeatureWorkspace({ feature, onBack, onCompleted, initialJobId }:
     // （如考勤的“额外假休标记”）留空不应阻止启动，否则会把可选字段误判成必填导致按钮永远禁用。
     && spec.options
       .filter((field) => !field.optional && (field.kind === "textarea" || field.key === "amount"))
-      .every((field) => String(options[field.key] || "").trim());
+      .every((field) => String(options[field.key] || "").trim());  // 仅必填文本参数参与可用性判断，可选字段留空不阻止启动
 
   useEffect(() => {
     // 历史同时匹配正式动作与分析动作，使待复核任务也能在当前功能下恢复。
-    const actions = new Set([spec.action, spec.reviewAction].filter(Boolean));
+    const actions = new Set([spec.action, spec.reviewAction].filter(Boolean));  // 同时匹配正式动作与分析动作，待复核任务也能恢复
     setHistoryLoading(true);
     void listJobs().then((result) => setHistory(result.jobs.filter((item) => actions.has(item.action)).slice(0, 5))).catch(() => undefined).finally(() => setHistoryLoading(false));
   }, [spec.action, spec.reviewAction]);
@@ -277,7 +277,7 @@ export function FeatureWorkspace({ feature, onBack, onCompleted, initialJobId }:
     if (!initialJobId) return;
     let active = true;
     setRestoring(true); setError("");
-    void getJob(initialJobId).then(({ job: next }) => { if (active) setJob(next); }).catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : "读取任务失败"); }).finally(() => { if (active) setRestoring(false); });
+    void getJob(initialJobId).then(({ job: next }) => { if (active) setJob(next); }).catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : "读取任务失败"); }).finally(() => { if (active) setRestoring(false); });  // 恢复历史任务不重新上传或执行
     return () => { active = false; }; // 快速切换任务时不让旧详情覆盖当前工作区。
   }, [initialJobId]);
 
@@ -338,7 +338,7 @@ export function FeatureWorkspace({ feature, onBack, onCompleted, initialJobId }:
   async function submit(action: string, extra: Record<string, unknown> = {}) {
     setError(""); setDownloadError(""); setUploading(true); setUploadedCount(0); setUploadProgress(0); setJob(null); setPreviewFile(null);
     try {
-      const group = typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `${Date.now()}`;
+      const group = typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `${Date.now()}`;  // 随机分组号隔离本批上传，服务端据此清理临时文件
       const handles: Record<string, string[]> = {};
       let completedFiles = 0;
       for (const config of spec.files) {
@@ -354,7 +354,7 @@ export function FeatureWorkspace({ feature, onBack, onCompleted, initialJobId }:
       const check = await preflightJob(action, { ...buildPayload(handles), ...extra }); // 创建持久任务前确认上传句柄仍存在且归属当前用户。
       setPreflight({ warnings: check.warnings, missing: check.missing });
       if (!check.ok) throw new Error([...check.missing.map((item) => `文件不存在：${item}`), ...check.warnings].join("；"));
-      const created = await createJob(action, feature.title, { ...buildPayload(handles), ...extra });
+      const created = await createJob(action, feature.title, { ...buildPayload(handles), ...extra });  // 任务创建成功后才读取首个状态快照
       const next = await getJob(created.job_id);
       setJob(next.job);
     } catch (reason) {
@@ -407,12 +407,12 @@ export function FeatureWorkspace({ feature, onBack, onCompleted, initialJobId }:
 
   /** 更新单个到料批次的人工复核值，保留服务端返回的上传句柄和自动识别依据。 */
   function updateArrivalRow(index: number, patch: Partial<ArrivalScanRow>) {
-    setArrivalRows((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, ...patch } : row));
+    setArrivalRows((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, ...patch } : row));  // 只更新指定批次行，保留其他行引用不变
   }
 
   /** 以不可变 Set 切换扫描批次选择。 */
   function toggleBatch(key: string) {
-    setSelected((prev) => { const next = new Set(prev); if (next.has(key)) next.delete(key); else next.add(key); return next; });
+    setSelected((prev) => { const next = new Set(prev); if (next.has(key)) next.delete(key); else next.add(key); return next; });  // 复制 Set 再切换，确保 React 检测到新引用
   }
 
   /** 执行普通业务，或把对账单扫描选择转换为正式任务载荷。 */
@@ -420,7 +420,7 @@ export function FeatureWorkspace({ feature, onBack, onCompleted, initialJobId }:
     if (isArrival) {
       setError(""); setDownloadError(""); setJob(null); setUploading(true);
       try {
-        const rows = arrivalRows.map((row) => ({ path: row.path, batch_no: row.batch_no, total: row.total, remark: row.remark, include: row.include }));
+        const rows = arrivalRows.map((row) => ({ path: row.path, batch_no: row.batch_no, total: row.total, remark: row.remark, include: row.include }));  // 只发送任务需要的字段，上传句柄保留在服务端
         const payload = { rows, top_label: String(options.top_label || "") };
         const check = await preflightJob(spec.action, payload);
         setPreflight({ warnings: check.warnings, missing: check.missing });
@@ -492,7 +492,7 @@ export function FeatureWorkspace({ feature, onBack, onCompleted, initialJobId }:
   async function cancelCurrentJob() {
     if (!job) return;
     setError("");
-    try { await cancelJob(job.id); setJob((await getJob(job.id)).job); }
+    try { await cancelJob(job.id); setJob((await getJob(job.id)).job); }  // 取消后读取服务端最终状态，不本地猜测
     catch (reason) { setError(reason instanceof Error ? reason.message : "取消任务失败"); }
   }
 
@@ -500,7 +500,7 @@ export function FeatureWorkspace({ feature, onBack, onCompleted, initialJobId }:
   const running = uploading || Boolean(job && ["queued", "running"].includes(job.status));
   const finished = Boolean(job?.status === "completed") || Boolean(job?.review_pending);
   // 上传和后台处理都属于第三步；完成边界单独决定哪些步骤显示勾选。
-  const workflowStep = finished ? 3 : running ? 3 : ready ? 2 : 1;
+  const workflowStep = finished ? 3 : running ? 3 : ready ? 2 : 1;  // 上传与后台处理都归入第三步，完成边界单独计算
   const workflowDone = finished ? 3 : running ? 2 : ready ? 1 : 0;
 
   return <div className="fyt-flow-page">

@@ -26,7 +26,7 @@ export function ReportPage() {
   ] : [];
   /** 请求服务端生成报表；开始新请求时清除旧结果，避免误下载上一轮文件。 */
   async function build() {
-    setBusy(true); setError(""); setResult(null);
+    setBusy(true); setError(""); setResult(null);  // 新请求开始即清空旧结果，避免误下载上一轮文件
     try {
       setResult(await buildReport(range, scopeAll));
     } catch (reason) { setError(reason instanceof Error ? reason.message : "生成失败"); }

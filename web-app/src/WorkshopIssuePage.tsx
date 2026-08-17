@@ -74,12 +74,12 @@ function workshopIssuePayload(
 ): WorkshopIssueInput {
   const config = WORKSHOP_ISSUE_FORM_CONFIG[category];
   // sections 是界面与业务模板共同认可的字段集合，也是提交时的字段白名单。
-  const visibleFields = new Set(config.sections.flatMap((section) => section.fields));
+  const visibleFields = new Set(config.sections.flatMap((section) => section.fields));  // 界面与业务模板共同认可的提交白名单
   const visibleTemplatePayload = Object.fromEntries(
     Object.entries(templateFields).map(([key, value]) => [
       key,
       // 隐藏字段明确写为空串，使服务端能够清除旧类别遗留值，而不是继续保留脏数据。
-      visibleFields.has(key as WorkshopTemplateFieldKey) ? value.trim() : "",
+      visibleFields.has(key as WorkshopTemplateFieldKey) ? value.trim() : "",  // 隐藏字段写空串，清除旧类别遗留值
     ]),
   ) as WorkshopTemplateFields;
   return {
@@ -101,7 +101,7 @@ function validateWorkshopIssue(
   const config = WORKSHOP_ISSUE_FORM_CONFIG[category];
   if (!cause.trim()) return `请填写${config.causeLabel}`;
   // 按配置顺序定位第一个缺项，可让提示顺序与表单从上到下的填写顺序保持一致。
-  const missingField = config.requiredFields.find((field) => !templateFields[field].trim());
+  const missingField = config.requiredFields.find((field) => !templateFields[field].trim());  // 按配置顺序定位首个缺项，提示顺序与表单一致
   if (missingField) return `请填写${config.fieldLabels?.[missingField] || WORKSHOP_FIELD_META[missingField].label}`;
   if (config.requiresImages && imageCount < 1) return "请至少保留一张现场图片";
   return "";
@@ -111,13 +111,13 @@ function validateWorkshopIssue(
 function localDate(value = new Date()) {
   const year = value.getFullYear();
   const month = String(value.getMonth() + 1).padStart(2, "0");
-  const day = String(value.getDate()).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");  // 用本地年/月/日避免 UTC 转换造成日期偏移
   return `${year}-${month}-${day}`;
 }
 
 /** 在本地日历上移动日期；固定到正午可避开夏令时切换附近的午夜边界问题。 */
 function moveDate(value: string, offset: number) {
-  const date = new Date(`${value}T12:00:00`);
+  const date = new Date(`${value}T12:00:00`);  // 固定正午避开夏令时切换附近的午夜边界
   date.setDate(date.getDate() + offset);
   return localDate(date);
 }
@@ -144,7 +144,7 @@ function monthRange(value: string, today: string): [string, string] {
 function rangeDayCount(startDate: string, endDate: string) {
   if (!startDate || !endDate || startDate > endDate) return 0;
   const start = Date.parse(`${startDate}T00:00:00Z`);
-  const end = Date.parse(`${endDate}T00:00:00Z`);
+  const end = Date.parse(`${endDate}T00:00:00Z`);  // UTC 午夜纯日期相减，避免时区和夏令时误差
   return Math.floor((end - start) / 86_400_000) + 1;
 }
 
@@ -259,7 +259,7 @@ function IssueEditDialog({ issue, onClose, onSaved }: {
   const galleryInput = useRef<HTMLInputElement>(null);
   const config = WORKSHOP_ISSUE_FORM_CONFIG[category];
   // Set 让动态字段渲染时的必填判断保持常数时间，并避免在每个字段上重复遍历数组。
-  const requiredFields = useMemo(() => new Set(config.requiredFields), [config.requiredFields]);
+  const requiredFields = useMemo(() => new Set(config.requiredFields), [config.requiredFields]);  // 必填判断保持常数时间，避免逐字段遍历数组
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -272,7 +272,7 @@ function IssueEditDialog({ issue, onClose, onSaved }: {
 
   function setTemplateField<K extends keyof WorkshopTemplateFields>(key: K, value: WorkshopTemplateFields[K]) {
     // 函数式更新保证连续输入时总是在最新字段对象上修改单个键。
-    setTemplateFields((current) => ({ ...current, [key]: value }));
+    setTemplateFields((current) => ({ ...current, [key]: value }));  // 函数式更新保证连续输入时总是基于最新字段对象
   }
 
   /** 按字段语义选择合适的原生控件，具体显示字段由问题类别配置决定。 */
@@ -529,15 +529,15 @@ export function WorkshopIssuePage() {
   const visibleTemplateFields = useMemo(
     () => new Set(issueFormConfig.sections.flatMap((section) => section.fields)),
     [issueFormConfig.sections],
-  );
+  );  // 可见集合用作提交白名单
   const requiredTemplateFields = useMemo(
     () => new Set(issueFormConfig.requiredFields),
     [issueFormConfig.requiredFields],
-  );
+  );  // 必填集合驱动 required 属性与提交前校验
 
   function setTemplateField<K extends keyof WorkshopTemplateFields>(key: K, value: WorkshopTemplateFields[K]) {
     // 仅替换当前输入对应的键，保留同一模板中尚未提交的其他字段。
-    setTemplateFields((current) => ({ ...current, [key]: value }));
+    setTemplateFields((current) => ({ ...current, [key]: value }));  // 函数式更新保证连续输入时总是基于最新字段对象
   }
 
   /** 根据模板字段类型生成输入控件；调用方只需按配置顺序映射字段名。 */
@@ -580,7 +580,7 @@ export function WorkshopIssuePage() {
   // photos 每次改变都把最新对象地址同步到 ref，供仅在卸载时运行的清理函数读取。
   useEffect(() => { previewsRef.current = photos.map((item) => item.preview); }, [photos]);
   // 页面离开时释放仍存活的 blob 地址，防止多次进入现场问题页面后持续占用浏览器内存。
-  useEffect(() => () => previewsRef.current.forEach((url) => URL.revokeObjectURL(url)), []);
+  useEffect(() => () => previewsRef.current.forEach((url) => URL.revokeObjectURL(url)), []);  // 页面离开时释放所有预览地址，避免浏览器内存持续占用
 
   /** 校验本次选择的图片，并创建只用于本地预览的对象地址。 */
   function addPhotos(event: ChangeEvent<HTMLInputElement>) {
@@ -610,7 +610,7 @@ export function WorkshopIssuePage() {
       id: `${file.name}-${file.lastModified}-${Math.random()}`,
       file,
       // 对象地址避免把大图片编码成 base64 放入 React 状态；使用完必须主动释放。
-      preview: URL.createObjectURL(file),
+      preview: URL.createObjectURL(file),  // 对象地址避免把大图片编码成 base64 放入状态
     }))]);
   }
 
@@ -619,7 +619,7 @@ export function WorkshopIssuePage() {
     setPhotos((current) => {
       const target = current.find((item) => item.id === id);
       // revoke 只释放预览 URL，不会改变用户设备上的原始照片。
-      if (target) URL.revokeObjectURL(target.preview);
+      if (target) URL.revokeObjectURL(target.preview);  // revoke 只释放预览地址，不影响用户设备上的原图
       return current.filter((item) => item.id !== id);
     });
   }
@@ -677,9 +677,9 @@ export function WorkshopIssuePage() {
         notes: issueFormConfig.allowsNotes ? notes.trim() : "",
         category,
         ...visibleTemplatePayload,
-      });
+      });  // 先创建草稿让每张图片绑定稳定问题 id
       // 从此处开始失败时需要删除草稿；在创建成功前 draftId 为空，不执行补偿请求。
-      draftId = created.issue.id;
+      draftId = created.issue.id;  // 创建成功后才允许后续失败时补偿删除草稿
       const selectedPhotos = issueFormConfig.requiresImages ? photos : [];
       for (let index = 0; index < selectedPhotos.length; index += 1) {
         setPublishStatus(`正在上传第 ${index + 1} / ${selectedPhotos.length} 张图片`);
@@ -695,9 +695,9 @@ export function WorkshopIssuePage() {
       setPublishStatus("正在确认发布");
       await publishWorkshopIssue(created.issue.id);
       // 标记发布完成后即使后续列表刷新失败，也不能再把已发布的问题当作草稿删除。
-      published = true;
+      published = true;  // 发布完成后即使列表刷新失败也不再删除已发布问题
       // 服务端已经持久化图片，本地预览地址不再需要，必须在清空状态前释放。
-      photos.forEach((item) => URL.revokeObjectURL(item.preview));
+      photos.forEach((item) => URL.revokeObjectURL(item.preview));  // 服务端已持久化图片，释放本地预览地址
       setPhotos([]);
       setCause("");
       setNotes("");

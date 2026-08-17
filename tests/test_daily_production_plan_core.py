@@ -17,8 +17,8 @@ class DailyProductionPlanCoreTests(unittest.TestCase):
     def test_number_label_accepts_integer_statistics(self):
         """整数计数与浮点数量应使用同一展示格式，兼容 Python 3.11。"""
 
-        self.assertEqual(daily_production_plan_core._number_label(3), 3)
-        self.assertEqual(daily_production_plan_core._number_label(3.25), 3.25)
+        self.assertEqual(daily_production_plan_core._number_label(3), 3)  # 整数保持整数
+        self.assertEqual(daily_production_plan_core._number_label(3.25), 3.25)  # 浮点保持浮点
 
     def test_analyze_builds_safe_preview(self):
         """多工作表预览应保留顺序并把单元格值安全转换为前端文本。"""
@@ -34,13 +34,13 @@ class DailyProductionPlanCoreTests(unittest.TestCase):
             detail.append(["批次", "班组", "数量"])
             detail.append(["GKMYR26027-06", "小件组", 18])
             workbook.save(target)
-            workbook.close()
+            workbook.close()  # 关闭工作簿释放文件
 
             result = daily_production_plan_core.analyze(target)
 
-        self.assertEqual(result["sheet_count"], 2)
-        self.assertEqual(result["row_count"], 4)
-        self.assertEqual(result["sheets"][0]["preview"][1], ["白班", "45", "41", "-4"])
+        self.assertEqual(result["sheet_count"], 2)  # 两个工作表都识别
+        self.assertEqual(result["row_count"], 4)  # 总行数
+        self.assertEqual(result["sheets"][0]["preview"][1], ["白班", "45", "41", "-4"])  # 数值转文本预览
 
     def test_rejects_unsupported_file(self):
         """日清生产资料只接受 xlsx，旧 xls 必须在解析前明确拒绝。"""
@@ -49,7 +49,7 @@ class DailyProductionPlanCoreTests(unittest.TestCase):
             target = Path(temp_name) / "计划.xls"
             target.write_bytes(b"legacy")
             with self.assertRaisesRegex(ValueError, "xlsx"):
-                daily_production_plan_core.analyze(target)
+                daily_production_plan_core.analyze(target)  # 旧 xls 明确拒绝
 
     def test_converts_excel_serial_date_and_detects_shipping_sheet(self):
         """Excel 日期序列应转为业务日期，同时识别正式订单与生产计划表。"""
@@ -73,10 +73,10 @@ class DailyProductionPlanCoreTests(unittest.TestCase):
 
             result = daily_production_plan_core.analyze(target)
 
-        self.assertEqual(result["sheets"][0]["kind"], "正式订单")
+        self.assertEqual(result["sheets"][0]["kind"], "正式订单")  # 表名识别正式订单
         plan_sheet = result["sheets"][1]
         self.assertEqual(plan_sheet["kind"], "生产计划")
-        self.assertEqual(plan_sheet["preview"][0][1], "2026-08-01")
+        self.assertEqual(plan_sheet["preview"][0][1], "2026-08-01")  # Excel 日期序列转业务日期
 
     def test_builds_production_insights_for_daily_matrix(self):
         """横向日班/夜班矩阵应聚合计划、实际、差异、班组和批次产量。"""
@@ -103,13 +103,13 @@ class DailyProductionPlanCoreTests(unittest.TestCase):
             result = daily_production_plan_core.analyze(target, report_date="2026-08-01")
 
         insights = result["insights"]
-        self.assertEqual(insights["focus_date"], "2026-08-01")
-        self.assertEqual(insights["plan_total"], 85)
-        self.assertEqual(insights["actual_total"], 80)
-        self.assertEqual(insights["difference_total"], -5)
-        self.assertEqual(insights["team_summary"][0]["team"], "大件组")
-        self.assertEqual(insights["batch_summary"][0]["batch"], "批次A")
-        self.assertEqual(len(result["sheets"][0]["table_rows"]), 10)
+        self.assertEqual(insights["focus_date"], "2026-08-01")  # 焦点日期
+        self.assertEqual(insights["plan_total"], 85)  # 计划总量聚合
+        self.assertEqual(insights["actual_total"], 80)  # 实际总量聚合
+        self.assertEqual(insights["difference_total"], -5)  # 差异合计
+        self.assertEqual(insights["team_summary"][0]["team"], "大件组")  # 班组排序
+        self.assertEqual(insights["batch_summary"][0]["batch"], "批次A")  # 批次排序
+        self.assertEqual(len(result["sheets"][0]["table_rows"]), 10)  # 表格行数
 
     def test_unreported_shift_is_not_treated_as_shortfall(self):
         """尚未填报实际产量的班次应单独提示，不能虚构为计划欠产。"""
@@ -129,15 +129,15 @@ class DailyProductionPlanCoreTests(unittest.TestCase):
             result = daily_production_plan_core.analyze(target, report_date="2026-08-03")
 
         insights = result["insights"]
-        self.assertEqual(insights["plan_total"], 90)
-        self.assertEqual(insights["actual_total"], 41)
-        self.assertEqual(insights["difference_total"], -4)
-        self.assertEqual(insights["reported_plan_total"], 45)
-        self.assertEqual(insights["unreported_plan_total"], 45)
-        self.assertEqual(insights["unreported_shift_count"], 1)
-        self.assertFalse(insights["shift_summary"][1]["actual_reported"])
-        self.assertTrue(any("夜班尚未填报实际产量" in item for item in insights["highlights"]))
-        self.assertNotIn("夜班较计划少完成", "；".join(insights["highlights"]))
+        self.assertEqual(insights["plan_total"], 90)  # 两班计划合计
+        self.assertEqual(insights["actual_total"], 41)  # 仅已填报实际
+        self.assertEqual(insights["difference_total"], -4)  # 只统计已填报差异
+        self.assertEqual(insights["reported_plan_total"], 45)  # 已填报计划
+        self.assertEqual(insights["unreported_plan_total"], 45)  # 未填报计划
+        self.assertEqual(insights["unreported_shift_count"], 1)  # 一个班次未填报
+        self.assertFalse(insights["shift_summary"][1]["actual_reported"])  # 夜班未报
+        self.assertTrue(any("夜班尚未填报实际产量" in item for item in insights["highlights"]))  # 单独提示
+        self.assertNotIn("夜班较计划少完成", "；".join(insights["highlights"]))  # 不算欠产
 
     def test_order_ledger_groups_merged_rows_and_sporadic_pallets(self):
         """订单主行与续行应合并缺件/危包，零星订单续行托数也需累计。"""
@@ -164,12 +164,12 @@ class DailyProductionPlanCoreTests(unittest.TestCase):
             result = daily_production_plan_core.analyze(target, report_date="2026-08-06")
 
         ledger = result["insights"]["order_ledger"]
-        self.assertEqual(len(ledger["formal_orders"]), 1)
-        self.assertEqual(len(ledger["formal_orders"][0]["missing_parts"]), 2)
-        self.assertEqual(ledger["formal_orders"][0]["outstanding_missing_count"], 1)
-        self.assertEqual(len(ledger["sporadic_orders"]), 1)
-        self.assertEqual(ledger["sporadic_orders"][0]["pallet_count"], 3)
-        self.assertEqual(ledger["sporadic_orders"][0]["shipment_date"], "2026-08-04")
+        self.assertEqual(len(ledger["formal_orders"]), 1)  # 主行与续行合并为一单
+        self.assertEqual(len(ledger["formal_orders"][0]["missing_parts"]), 2)  # 缺件明细两条
+        self.assertEqual(ledger["formal_orders"][0]["outstanding_missing_count"], 1)  # 未完成缺件一条
+        self.assertEqual(len(ledger["sporadic_orders"]), 1)  # 零星订单合并
+        self.assertEqual(ledger["sporadic_orders"][0]["pallet_count"], 3)  # 托数累计
+        self.assertEqual(ledger["sporadic_orders"][0]["shipment_date"], "2026-08-04")  # 发运日期
 
 
 if __name__ == "__main__":

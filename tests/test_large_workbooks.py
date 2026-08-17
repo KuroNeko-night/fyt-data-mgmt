@@ -24,7 +24,7 @@ def _break_dimension(path):
             if info.filename == "xl/worksheets/sheet1.xml":
                 text = payload.decode("utf-8")
                 text = re.sub(r'<dimension ref="[^"]+"\s*/>',
-                              '<dimension ref="A1"/>', text, count=1)
+                              '<dimension ref="A1"/>', text, count=1)  # 伪造维度为单格
                 payload = text.encode("utf-8")
             target.writestr(info, payload)
     return broken_path
@@ -38,7 +38,7 @@ class TestLargeWorkbookStreaming(unittest.TestCase):
 
         self.temp_dir = tempfile.TemporaryDirectory()
         self.old_catalog = os.environ.get("FYT_CATALOG_PATH")
-        os.environ["FYT_CATALOG_PATH"] = os.path.join(self.temp_dir.name, "catalog.json")
+        os.environ["FYT_CATALOG_PATH"] = os.path.join(self.temp_dir.name, "catalog.json")  # 主数据库隔离
         source_path = os.path.join(self.temp_dir.name, "源表.xlsx")
         wb = openpyxl.Workbook()
         ws = wb.active
@@ -46,7 +46,7 @@ class TestLargeWorkbookStreaming(unittest.TestCase):
         ws.append(["版本序号", "材料编号", "材料名称", "规格", "数量", "单位",
                    "最终采购数量"])
         for index in range(1, 121):
-            ws.append([1, "M%04d" % index, "材料%d" % index, "S", 1, "个", index])
+            ws.append([1, "M%04d" % index, "材料%d" % index, "S", 1, "个", index])  # 120 行数据
         wb.save(source_path)
         wb.close()
         self.path = _break_dimension(source_path)
@@ -68,8 +68,8 @@ class TestLargeWorkbookStreaming(unittest.TestCase):
             rows = list(wb.active.iter_rows(values_only=True))
         finally:
             wb.close()
-        self.assertEqual(len(rows), 121)
-        self.assertEqual(rows[-1][1], "M0120")
+        self.assertEqual(len(rows), 121)  # 表头 + 120 行全读
+        self.assertEqual(rows[-1][1], "M0120")  # 最后一行正确
 
     def test_read_helpers_skip_external_link_relationships(self):
         """只读业务加载和公式检查不得解析与当前计算无关的外部链接。"""
@@ -81,7 +81,7 @@ class TestLargeWorkbookStreaming(unittest.TestCase):
         ) as loader:
             workbook = common_core.load_data_only_stream(self.path)
             workbook.close()
-            common_workbook.detect_uncached_formula(self.path)
+            common_workbook.detect_uncached_formula(self.path)  # 公式检查不解析外链
 
         self.assertGreaterEqual(loader.call_count, 3)
         for call in loader.call_args_list:
@@ -89,17 +89,17 @@ class TestLargeWorkbookStreaming(unittest.TestCase):
                 call.kwargs.get("keep_links"),
                 False,
                 "只读 Excel 路径恢复了外部链接，会造成无意义的性能和内存开销",
-            )
+            )  # 保持不加载外链
 
     def test_pivot_analysis_keeps_all_rows(self):
         """销售表分析使用流式路径时不得因 A1 范围声明丢失业务行。"""
 
         plan = pivot_core.analyze_workbooks([self.path])
-        self.assertEqual(len(plan["sheets"]), 1)
+        self.assertEqual(len(plan["sheets"]), 1)  # 一个工作表
         sheet = plan["sheets"][0]
-        self.assertTrue(sheet["use"])
-        self.assertEqual(len(sheet["kept"]), 120)
-        self.assertEqual(sheet["kept"][-1][pivot_core.F_CODE], "M0120")
+        self.assertTrue(sheet["use"])  # 工作表被采用
+        self.assertEqual(len(sheet["kept"]), 120)  # 120 行全保留
+        self.assertEqual(sheet["kept"][-1][pivot_core.F_CODE], "M0120")  # 末行编码正确
 
     def test_readonly_conflicts_match_copy_and_mutate_path(self):
         """只读迭代计算应与复制后规范化结果一致，且不得修改原始行。"""
@@ -116,8 +116,8 @@ class TestLargeWorkbookStreaming(unittest.TestCase):
         canon, _groups, _sample = pivot_core.compute_spec_canon(rows)
         actual = pivot_core._compute_unit_best(lambda: iter(rows), spec_canon=canon)
 
-        self.assertEqual(actual, expected)
-        self.assertEqual(rows[0][pivot_core.F_SPEC], "500×300，20/包")
+        self.assertEqual(actual, expected)  # 只读算法与可变路径一致
+        self.assertEqual(rows[0][pivot_core.F_SPEC], "500×300，20/包")  # 原始行未被修改
 
 
 if __name__ == "__main__":

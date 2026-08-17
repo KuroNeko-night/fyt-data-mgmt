@@ -39,7 +39,7 @@ export function BatchTrackPage() {
     setBusy(true); setError(""); setSearched(true);
     try {
       const result = await batchTrack(keyword.trim());
-      setItems(result.items);
+      setItems(result.items);  // 服务端跨任务匹配，前端只展示结果
     } catch (reason) { setError(reason instanceof Error ? reason.message : "搜索失败"); }
     finally { setBusy(false); }
   }

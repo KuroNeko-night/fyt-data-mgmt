@@ -11,7 +11,7 @@ interface IconProps {
 }
 
 // 键名是页面使用的稳定语义名称，值只保存路径数据，尺寸和颜色由组件统一控制。
-const paths: Record<string, string> = {
+const paths: Record<string, string> = {  // 语义名称到路径数据的稳定映射，尺寸和颜色由组件统一控制
   home: "M3 10.8 12 3l9 7.8V21h-6v-6H9v6H3V10.8Z",
   calendar: "M5 4h14a2 2 0 0 1 2 2v14H3V6a2 2 0 0 1 2-2Zm0 6h14M8 2v4m8-4v4",
   check: "M4 12.5 9.2 18 20 6",

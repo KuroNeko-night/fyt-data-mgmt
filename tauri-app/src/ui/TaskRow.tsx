@@ -38,7 +38,7 @@ export interface TaskRowProps {
  */
 export function TaskRow({ title, status, time, meta, error, actions, onOpen, className = "" }: TaskRowProps) {
   // 标题、时间和错误拼成紧凑内容片段；time/meta/error 按存在性渲染，空值不占节点。
-  const content = <><span className="fyt-task-title">{title}</span><span className="fyt-task-meta">{time ? <span>{time}</span> : null}{meta}</span>{error ? <span className="fyt-task-error">{error}</span> : null}</>;
+  const content = <><span className="fyt-task-title">{title}</span><span className="fyt-task-meta">{time ? <span>{time}</span> : null}{meta}</span>{error ? <span className="fyt-task-error">{error}</span> : null}</>;  // 标题、时间与错误拼成紧凑内容片段，空值不占节点
   return (
     <div className={`fyt-task-row ${className}`.trim()}>
       <StatusBadge status={status} />

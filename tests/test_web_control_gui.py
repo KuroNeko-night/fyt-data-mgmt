@@ -1,4 +1,4 @@
-﻿"""Web 服务控制台的标准库界面与运行逻辑测试。"""
+"""Web 服务控制台的标准库界面与运行逻辑测试。"""
 
 from __future__ import annotations
 
@@ -30,19 +30,19 @@ class WebControlGuiTests(unittest.TestCase):
         try:
             window = WebControlWindow(manage_existing=False)
         except tk.TclError as exc:
-            self.skipTest(f"当前运行环境没有可用桌面：{exc}")
-        self.assertEqual(window.windowTitle(), "峰运通 Web 服务控制台")
-        self.assertEqual(window._status.text(), "已停止")
-        self.assertTrue(window._start.isEnabled())
-        self.assertTrue(window._tunnel_start.isEnabled())
-        self.assertFalse(window._tunnel_stop.isEnabled())
-        self.assertFalse(window._stop.isEnabled())
+            self.skipTest(f"当前运行环境没有可用桌面：{exc}")  # 无桌面环境跳过
+        self.assertEqual(window.windowTitle(), "峰运通 Web 服务控制台")  # 窗口标题
+        self.assertEqual(window._status.text(), "已停止")  # 初始停止态
+        self.assertTrue(window._start.isEnabled())  # 启动可用
+        self.assertTrue(window._tunnel_start.isEnabled())  # 隧道启动可用
+        self.assertFalse(window._tunnel_stop.isEnabled())  # 隧道停止不可用
+        self.assertFalse(window._stop.isEnabled())  # 停止不可用
         self.assertIn(
             window._public_address.text(),
             {"启动公网访问后显示", "固定隧道已配置，绑定域名后可访问"},
         )
-        self.assertEqual(window._tunnel_token.text(), "")
-        self.assertNotIn("admin123456", window._log.toPlainText())
+        self.assertEqual(window._tunnel_token.text(), "")  # 令牌不显示
+        self.assertNotIn("admin123456", window._log.toPlainText())  # 日志不泄露
         self.assertNotIn("admin123456", window._address.text())
         self.assertNotIn("admin123456", window._public_address.text())
         window.closeEvent()
@@ -55,7 +55,7 @@ class WebControlGuiTests(unittest.TestCase):
             "访问地址 https://first.trycloudflare.com\n"
             "重新连接 https://latest.trycloudflare.com",
         )
-        self.assertEqual(value, "https://latest.trycloudflare.com")
+        self.assertEqual(value, "https://latest.trycloudflare.com")  # 取最近一次地址
 
     def test_builds_quick_and_token_tunnel_arguments(self):
         """快速与命名隧道必须生成彼此独立且不混入凭据的参数列表。"""
@@ -63,24 +63,24 @@ class WebControlGuiTests(unittest.TestCase):
         self.assertEqual(
             _tunnel_arguments(8787),
             ["tunnel", "--no-autoupdate", "--url", "http://127.0.0.1:8787"],
-        )
+        )  # 快速隧道参数
         self.assertEqual(
             _tunnel_arguments(8787, named=True),
             ["tunnel", "--no-autoupdate", "run"],
-        )
+        )  # 命名隧道参数
 
     def test_extracts_token_without_retaining_install_command(self):
         """只保存长令牌本体，不把用户粘贴的安装命令或登录命令持久化。"""
 
         token = "eyJ" + "a" * 120
-        self.assertEqual(_extract_tunnel_token(token), token)
+        self.assertEqual(_extract_tunnel_token(token), token)  # 纯令牌原样返回
         self.assertEqual(
             _extract_tunnel_token(f"cloudflared.exe service install {token}"), token
-        )
+        )  # 安装命令中提取
         self.assertEqual(
             _extract_tunnel_token(f"cloudflared tunnel run --token {token}"), token
-        )
-        self.assertEqual(_extract_tunnel_token("cloudflared tunnel login"), "")
+        )  # 运行命令中提取
+        self.assertEqual(_extract_tunnel_token("cloudflared tunnel login"), "")  # 登录命令不保存
 
     @unittest.skipUnless(sys.platform.startswith("win"), "仅验证 Windows DPAPI")
     def test_tunnel_token_is_encrypted_for_current_windows_user(self):
@@ -90,8 +90,8 @@ class WebControlGuiTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "token.bin"
             _save_tunnel_token(token, path)
-            self.assertEqual(_load_tunnel_token(path), token)
-            self.assertNotIn(token.encode("ascii"), path.read_bytes())
+            self.assertEqual(_load_tunnel_token(path), token)  # 加解密往返一致
+            self.assertNotIn(token.encode("ascii"), path.read_bytes())  # 明文不落盘
 
     def test_tunnel_url_is_not_ready_before_connection_registration(self):
         """日志出现临时网址但尚未注册边缘连接时，界面不能提前宣告可用。"""
@@ -100,8 +100,8 @@ class WebControlGuiTests(unittest.TestCase):
             "Your quick Tunnel has been created: "
             "https://pending.trycloudflare.com"
         )
-        self.assertEqual(url, "https://pending.trycloudflare.com")
-        self.assertFalse(connected)
+        self.assertEqual(url, "https://pending.trycloudflare.com")  # 提取待连接地址
+        self.assertFalse(connected)  # 未注册连接不可用
 
     def test_tunnel_connection_state_follows_latest_event(self):
         """连接状态应服从最后一个成功或失败事件，而不是历史成功日志。"""
@@ -110,32 +110,32 @@ class WebControlGuiTests(unittest.TestCase):
             "https://ready.trycloudflare.com\nRegistered tunnel connection"
         )
         self.assertEqual(url, "https://ready.trycloudflare.com")
-        self.assertTrue(connected)
+        self.assertTrue(connected)  # 注册后可用
         _, connected = _tunnel_log_state(
             "https://ready.trycloudflare.com\nRegistered tunnel connection\n"
             "ERR Serve tunnel error"
         )
-        self.assertFalse(connected)
+        self.assertFalse(connected)  # 最新错误事件置为不可用
 
     @unittest.skipUnless(sys.platform.startswith("win"), "仅验证 Windows 无控制台解释器")
     def test_service_uses_windowless_python(self):
         """源码 GUI 启动服务时必须选择 pythonw，防止额外命令窗口出现。"""
 
-        self.assertTrue(_windowless_python().lower().endswith("pythonw.exe"))
+        self.assertTrue(_windowless_python().lower().endswith("pythonw.exe"))  # 必须使用无控制台解释器
 
     def test_initial_admin_password_policy_matches_server(self):
         """控制台首次密码校验要与服务端长度及字母数字规则保持一致。"""
 
-        self.assertTrue(_password_policy_error("short1"))
-        self.assertTrue(_password_policy_error("只有中文没有数字"))
-        self.assertEqual(_password_policy_error("安全密码2026abc"), "")
+        self.assertTrue(_password_policy_error("short1"))  # 太短报错
+        self.assertTrue(_password_policy_error("只有中文没有数字"))  # 缺数字报错
+        self.assertEqual(_password_policy_error("安全密码2026abc"), "")  # 合规返回空
 
     def test_tauri_sidecar_is_built_without_console_window(self):
         """桌面 sidecar 的 spec 必须保持无控制台子系统配置。"""
 
         spec = Path(__file__).resolve().parents[1] / "packaging" / "tauri_bridge.spec"
         source = spec.read_text(encoding="utf-8")
-        self.assertIn("console=False", source)
+        self.assertIn("console=False", source)  # sidecar 无控制台
         self.assertNotIn("console=True", source)
 
     def test_dependency_manifests_do_not_restore_removed_ui_runtime(self):
@@ -146,9 +146,9 @@ class WebControlGuiTests(unittest.TestCase):
             (root / name).read_text(encoding="utf-8")
             for name in ("requirements.txt", "pyproject.toml", "scripts/run-web-gui.ps1")
         ).lower()
-        self.assertNotIn("py" + "side", source)
-        self.assertNotIn("qt" + "py", source)
-        self.assertFalse((root / "assets" / "_gen_logo.py").exists())
+        self.assertNotIn("py" + "side", source)  # 不依赖 PySide
+        self.assertNotIn("qt" + "py", source)  # 不依赖 QtPy
+        self.assertFalse((root / "assets" / "_gen_logo.py").exists())  # 旧生成器不存在
 
     def test_tauri_release_app_uses_windows_gui_subsystem(self):
         """Rust 正式入口必须使用 Windows GUI 子系统，避免安装版启动时弹出终端。"""
@@ -161,7 +161,7 @@ class WebControlGuiTests(unittest.TestCase):
             / "main.rs"
         )
         source = main_rs.read_text(encoding="utf-8")
-        self.assertIn('windows_subsystem = "windows"', source)
+        self.assertIn('windows_subsystem = "windows"', source)  # GUI 子系统不弹终端
 
 
 if __name__ == "__main__":

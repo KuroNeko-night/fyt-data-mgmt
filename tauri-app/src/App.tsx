@@ -15,16 +15,16 @@ const MODE_KEY = "fyt-desktop-mode";
  */
 export default function App() {
   const [mode, setMode] = useState<"local" | "server" | null>(() => {
-    const saved = localStorage.getItem(MODE_KEY);
+    const saved = localStorage.getItem(MODE_KEY);  // 惰性初始化只读一次本地存储，避免每次渲染访问同步存储
     return saved === "local" || saved === "server" ? saved : null;
   });
   if (mode === null) {
     // 用户明确选择后才持久化，避免未完成首次引导时错误锁定模式。
-    return <ModePicker onPick={(next) => { localStorage.setItem(MODE_KEY, next); setMode(next); }} />;
+    return <ModePicker onPick={(next) => { localStorage.setItem(MODE_KEY, next); setMode(next); }} />;  // 用户明确选择后才持久化，避免锁定错误模式
   }
   if (mode === "server") {
     // 返回本地模式同时更新持久偏好，下次启动无需再次经过选择页。
-    return <RemoteWorkbench onBack={() => { localStorage.setItem(MODE_KEY, "local"); setMode("local"); }} />;
+    return <RemoteWorkbench onBack={() => { localStorage.setItem(MODE_KEY, "local"); setMode("local"); }} />;  // 返回本地同时更新持久偏好，下次启动无需再选择
   }
   return <LocalWorkbench />;
 }

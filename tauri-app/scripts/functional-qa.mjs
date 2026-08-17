@@ -68,34 +68,38 @@ async function createMockPage(browser, { settingsDelay = 0 } = {}) {
       result, logs: [], task_id: `mock-${Date.now()}`, out_dir: outDir,
     });
     // 桥接动作按真实白名单逐一返回合成结果；未声明的动作抛错，保证测试与桥接同步演进。
-    const bridge = async (request) => {
-      const { action, payload = {} } = request;
-      if (action === "system.health") return { app_name: "峰运通数据管理系统", version: "1.3.0", python: "mock", platform: "win32", project_root: "C:\\mock", features: [] };
-      if (action === "settings.get") {
+    const actionHandlers = {
+      "system.health": () => ({ app_name: "峰运通数据管理系统", version: "1.3.0", python: "mock", platform: "win32", project_root: "C:\\mock", features: [] }),
+      "settings.get": async () => {
         // 延迟发生在设置数据返回前，用来覆盖页面先渲染、数据后抵达的真实启动时序。
         if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
         return settings;
-      }
-      if (action === "settings.update") return Object.assign(settings, payload.values || {});
-      if (action === "library.summary") return { counts: { a: 2, b: 2 }, storage: { files: 3, bytes: 1024 }, titles: {}, items: [], library_dir: "C:\\mock\\library" };
-      if (action === "system.sheets") {
+      },
+      "settings.update": (payload) => Object.assign(settings, payload.values || {}),
+      "library.summary": () => ({ counts: { a: 2, b: 2 }, storage: { files: 3, bytes: 1024 }, titles: {}, items: [], library_dir: "C:\\mock\\library" }),
+      "system.sheets": (payload) => {
         const path = String(payload.path || "");
         // 新旧 A 表返回不同工作表，确保换文件后不能误用上一份文件的选项。
         return { sheets: path.includes("A-old") || path.includes("B.xlsx") ? ["总览", "数据"] : ["新数据"] };
-      }
-      if (action === "compare.prepare") return { headers1: ["旧编号"], headers2: ["旧编号"], common: ["旧编号"] };
-      if (action === "rename.preview") return { items: [{ old_path: payload.paths[0], old_name: "原文件.txt", new_name: "新_原文件.txt", status: "ok", note: "" }], summary: { ok: 1, blocked: 0, same: 0, total: 1 } };
-      if (action === "pdf.info") return { pages: 2 };
-      if (action === "pdf.run") {
+      },
+      "compare.prepare": () => ({ headers1: ["旧编号"], headers2: ["旧编号"], common: ["旧编号"] }),
+      "rename.preview": (payload) => ({ items: [{ old_path: payload.paths[0], old_name: "原文件.txt", new_name: "新_原文件.txt", status: "ok", note: "" }], summary: { ok: 1, blocked: 0, same: 0, total: 1 } }),
+      "pdf.info": () => ({ pages: 2 }),
+      "pdf.run": async () => {
         pdfRuns += 1;
         // 第二次运行故意放慢，以便断言任务开始时旧成功结果已经被清空。
         if (pdfRuns > 1) await new Promise((resolve) => setTimeout(resolve, 300));
         return task({ out_file: "C:\\mock\\output\\merged.pdf", out_files: ["C:\\mock\\output\\merged.pdf"], out_dir: "C:\\mock\\output" });
-      }
-      if (action === "cache.stats") return { entries: 0, hits: 0, bytes: 0 };
-      if (action === "system.paths") return { app_data_dir: "C:\\mock", library_dir: "C:\\mock\\library", default_output_root: "C:\\mock\\output", crash_log: "C:\\mock\\crash.log", crash_log_exists: false };
-      if (action === "tasks.list") return { summary: { total: 0, running: 0, ok: 0, failed: 0, interrupted: 0 }, items: [] };
-      throw new Error(`未模拟桥接动作：${action}`);
+      },
+      "cache.stats": () => ({ entries: 0, hits: 0, bytes: 0 }),
+      "system.paths": () => ({ app_data_dir: "C:\\mock", library_dir: "C:\\mock\\library", default_output_root: "C:\\mock\\output", crash_log: "C:\\mock\\crash.log", crash_log_exists: false }),
+      "tasks.list": () => ({ summary: { total: 0, running: 0, ok: 0, failed: 0, interrupted: 0 }, items: [] }),
+    };
+    const bridge = async (request) => {
+      const { action, payload = {} } = request;
+      const handler = actionHandlers[action];
+      if (!handler) throw new Error(`未模拟桥接动作：${action}`);
+      return handler(payload);
     };
 
     // 仅实现当前页面实际调用的 Tauri 命令；出现新命令时主动报错，避免测试静默失真。

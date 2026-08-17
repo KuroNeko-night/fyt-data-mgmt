@@ -227,36 +227,72 @@ function adminPayload(pathname) {
   }[pathname];
 }
 
+/** 用统一 JSON 响应包裹 Playwright 的 fulfill，避免每个处理分支重复状态与头信息。 */
+async function fulfillJson(route, body) {
+  await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+}
+
+// 管理端接口固定路径，用于避免在 mockApi 中重复书写长条件表达式。
+const adminApiPaths = new Set([
+  "/api/admin/data",
+  "/api/admin/announcements",
+  "/api/admin/audit",
+  "/api/admin/backups",
+  "/api/admin/trash",
+]);
+
+// 有序路由表：match 只做路径判断，body 延迟到命中后才构造，避免无关接口触发现有合成数据。
+const apiResponseHandlers = [
+  { match: (pathname) => pathname === "/api/auth/me", body: () => ({ user: currentUser() }) },
+  {
+    match: (pathname) => pathname === "/api/overview",
+    body: () => ({ user: currentUser(), features, metrics: { pending_users: smokeRole === "admin" ? 2 : 0, approved_users: 4, output_jobs: 1 } }),
+  },
+  {
+    match: (pathname) => pathname === "/api/dashboard",
+    body: () => ({ ...dashboard, user: currentUser(), metrics: { ...dashboard.metrics, pending_users: smokeRole === "admin" ? 2 : 0 } }),
+  },
+  { match: (pathname) => pathname === "/api/daily-report", body: () => dailyReportData },
+  { match: (pathname) => pathname === "/api/jobs", body: () => ({ jobs: [arrivalJob] }) },
+  { match: (pathname) => pathname === `/api/jobs/${arrivalJob.id}`, body: () => ({ job: arrivalJob }) },
+  { match: (pathname) => pathname === "/api/templates", body: () => ({ templates: [] }) },
+  { match: (pathname) => pathname === "/api/notifications", body: () => ({ notifications: dashboard.notifications, unread_count: 4 }) },
+  {
+    match: (pathname) => pathname === "/api/batch-track",
+    body: (url) => ({ keyword: url.searchParams.get("q") || "", items: [{ job_id: "smoke-batch-1", action: "delivery.run", title: "批次 26036-02 送货计划", status: "completed", created_at: "2026-08-04T09:10:00+08:00", files: ["送货结果.xlsx"] }] }),
+  },
+  {
+    match: (pathname) => pathname === "/api/library/files",
+    body: () => ({ files: [], pagination: { page: 1, page_size: 20, total: 0, pages: 1 }, summary: { visible_count: 0, team_count: 0, own_count: 0, own_bytes: 0, quota_bytes: 1, category_counts: {} }, categories: [] }),
+  },
+  { match: (pathname) => adminApiPaths.has(pathname), body: (url) => adminPayload(url.pathname) },
+];
+
+/** 判断请求是否携带合成会话，优先请求头，其次兼容同源请求自动携带的会话 Cookie。 */
+function hasSession(request) {
+  if (request.headers()["x-session-token"]) return true;
+  const cookie = request.headers()["cookie"] || "";
+  return cookie.split("; ").some((part) => part.startsWith("fyt_session="));
+}
+
 /**
  * 拦截前端同源 API，并返回与服务端契约一致的合成 JSON。
  *
- * 未登录判定依赖请求头中的会话令牌；已登录响应统一读取 smokeRole。没有列入本脚本
- * 验收范围的接口继续交给 preview，使意外新增请求暴露为控制台或网络错误，而不是
- * 被一个宽泛的成功响应掩盖。
+ * 未登录判定依赖请求头或 Cookie 中的会话令牌；已登录响应统一读取 smokeRole。
+ * 路由表未覆盖的接口继续交给 preview，使意外新增请求暴露为控制台或网络错误，
+ * 而不是被一个宽泛的成功响应掩盖。
  */
 async function mockApi(route) {
   const request = route.request();
   const url = new URL(request.url());
   if (!url.pathname.startsWith("/api/")) return route.continue(); // 静态资源必须由真实构建产物提供。
-  if (url.pathname === "/api/auth/me" && !request.headers()["x-session-token"]) {
-    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ user: null }) });
+  if (url.pathname === "/api/auth/me" && !hasSession(request)) {
+    await fulfillJson(route, { user: null });
     return;
   }
-  const user = currentUser();
-  let body;
-  if (url.pathname === "/api/auth/me") body = { user };
-  else if (url.pathname === "/api/overview") body = { user, features, metrics: { pending_users: smokeRole === "admin" ? 2 : 0, approved_users: 4, output_jobs: 1 } };
-  else if (url.pathname === "/api/dashboard") body = { ...dashboard, user, metrics: { ...dashboard.metrics, pending_users: smokeRole === "admin" ? 2 : 0 } };
-  else if (url.pathname === "/api/daily-report") body = dailyReportData;
-  else if (url.pathname === "/api/jobs") body = { jobs: [arrivalJob] };
-  else if (url.pathname === `/api/jobs/${arrivalJob.id}`) body = { job: arrivalJob };
-  else if (url.pathname === "/api/templates") body = { templates: [] };
-  else if (url.pathname === "/api/notifications") body = { notifications: dashboard.notifications, unread_count: 4 };
-  else if (url.pathname === "/api/batch-track") body = { keyword: url.searchParams.get("q") || "", items: [{ job_id: "smoke-batch-1", action: "delivery.run", title: "批次 26036-02 送货计划", status: "completed", created_at: "2026-08-04T09:10:00+08:00", files: ["送货结果.xlsx"] }] };
-  else if (url.pathname === "/api/library/files") body = { files: [], pagination: { page: 1, page_size: 20, total: 0, pages: 1 }, summary: { visible_count: 0, team_count: 0, own_count: 0, own_bytes: 0, quota_bytes: 1, category_counts: {} }, categories: [] };
-  else if (url.pathname in { "/api/admin/data": true, "/api/admin/announcements": true, "/api/admin/audit": true, "/api/admin/backups": true, "/api/admin/trash": true }) body = adminPayload(url.pathname);
-  else return route.continue(); // 未声明接口不伪造结果，便于发现前端协议新增或路径拼写错误。
-  await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+  const handler = apiResponseHandlers.find(({ match }) => match(url.pathname));
+  if (!handler) return route.continue(); // 未声明接口不伪造结果，便于发现前端协议新增或路径拼写错误。
+  await fulfillJson(route, handler.body(url));
 }
 
 /** 记录单项验收结果；失败细节只写日志，汇总名称保持简洁。 */
@@ -290,11 +326,9 @@ async function verifyLoginAndWorkbench(page, failures) {
   });
   await page.screenshot({ path: path.join(screenshotDir, "web-login-1440.png") });
 
-  // 会话令牌只用于进入合成登录态；真实认证和 Cookie 安全由后端接口测试覆盖。
-  await page.evaluate(() => {
-    localStorage.setItem("fyt_web_session", "smoke-token");
-    localStorage.setItem("fyt-web-guide-v1", "1");
-  });
+  // 浏览器端会话由 HttpOnly Cookie 自动携带；这里只注入同源 Cookie 进入合成登录态。
+  await page.context().addCookies([{ name: "fyt_session", value: "smoke-token", url: base }]);
+  await page.evaluate(() => { localStorage.setItem("fyt-web-guide-v1", "1"); });
   await page.reload({ waitUntil: "networkidle" });
   await page.locator(".dsp-board").waitFor();
   await runChecks(failures, {

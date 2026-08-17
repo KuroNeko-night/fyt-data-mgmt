@@ -9,7 +9,7 @@ import type { NavItem } from "../data/navigation";
  * @returns 首页返回更贴近工作台的文案，其余页面直接复用导航业务文案。
  */
 export function getPageHeading(item: NavItem) {
-  if (item.key === "home") return { title: "工作台", description: "从当前任务、最近处理和常用业务开始。" };
+  if (item.key === "home") return { title: "工作台", description: "从当前任务、最近处理和常用业务开始。" };  // 首页用工作台文案，其余页面复用导航配置
   return { title: item.title, description: item.description };
 }
 
@@ -23,7 +23,7 @@ export function getPageHeading(item: NavItem) {
  * @returns 连续的侧栏分组；同组项只并入紧邻分组，不会跨组回收。
  */
 export function getNavigationGroups(items: NavItem[] = NAV_ITEMS) {
-  return items.reduce<Array<{ label: string; items: NavItem[] }>>((groups, item) => {
+  return items.reduce<Array<{ label: string; items: NavItem[] }>>((groups, item) => {  // 按声明顺序折叠相邻同组项，不全局重排
     const current = groups[groups.length - 1];
     if (!item.group) {
       groups.push({ label: "", items: [item] });

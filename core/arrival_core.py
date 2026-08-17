@@ -42,6 +42,13 @@ ALIAS_CODE   = ("物料编码", "物料编号", "材料编码", "材料编号", 
 ALIAS_NAME   = ("物料名称", "材料名称", "品名")
 ALIAS_DEMAND = ("需求数", "需求数量", "需求量", "计划需求", "计划数量")
 ALIAS_REMAIN = ("剩余未收数", "剩余未收", "未收数", "未收", "未到货", "未到", "缺料")
+# 普通字段按固定顺序识别，同类别名出现在多列时始终取最左列。
+_HEADER_FIELDS = (
+    ("code", ALIAS_CODE),
+    ("name", ALIAS_NAME),
+    ("demand", ALIAS_DEMAND),
+    ("remain", ALIAS_REMAIN),
+)
 CONFIG_PATH = os.path.join(os.path.expanduser("~"), ".arrival_table_config.json")
 
 # 批次号优先读取表内“订单 XXX 批次”标题，失败后才从文件名提取字母数字组合。
@@ -120,7 +127,7 @@ def _pick_data_ws(wb, log=None):
             % active.title)
     return active
 
-def _norm(v):
+def _normalize_header_text(v):
     """移除中英文空格、换行和制表符，生成表头匹配文本。
 
     参数 ``v`` 为任意单元格原始值；``None`` 一律归一为空字符串，调用方无需
@@ -133,7 +140,7 @@ def _norm(v):
         s = s.replace(ch, "")
     return s.strip()
 
-def _match(text, aliases):
+def _header_matches(text, aliases):
     """判断标准化表头是否包含任一受支持别名。
 
     参数 ``text`` 是已经过 :func:`_norm` 处理的表头文本，``aliases`` 为别名元组。
@@ -150,7 +157,7 @@ def _header_cells(ws, row, start_column=1, end_column=None):
     """
     last_column = min(ws.max_column or 1, end_column or (ws.max_column or 1))
     return [
-        (column, _norm(ws.cell(row=row, column=column).value))
+        (column, _normalize_header_text(ws.cell(row=row, column=column).value))
         for column in range(start_column, last_column + 1)
     ]
 
@@ -181,14 +188,9 @@ def _classify_header_cells(cells):
     for column, text in cells:
         if not text:
             continue
-        if not columns["code"] and _match(text, ALIAS_CODE):
-            columns["code"] = column
-        if not columns["name"] and _match(text, ALIAS_NAME):
-            columns["name"] = column
-        if not columns["demand"] and _match(text, ALIAS_DEMAND):
-            columns["demand"] = column
-        if not columns["remain"] and _match(text, ALIAS_REMAIN):
-            columns["remain"] = column
+        for field, aliases in _HEADER_FIELDS:
+            if not columns[field] and _header_matches(text, aliases):
+                columns[field] = column
         supplier_fallback = _classify_supplier_column(text, column, columns, supplier_fallback)
     columns["supplier"] = columns["supplier"] or supplier_fallback
     return columns
@@ -252,16 +254,19 @@ def detect_batch(path):
     """
     try:
         wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
-        a1 = _first_ws(wb)['A1'].value or ""
-        wb.close()
-        m = RE_TITLE.search(str(a1))
-        if m:
-            return m.group(1)
     except Exception:
-        # 文件仍可能通过正式处理路径给出更具体错误；批次预识别阶段只回退文件名。
-        pass
-    m = RE_NAME.search(os.path.basename(path))
-    return m.group(1) if m else ""
+        wb = None
+    if wb is not None:
+        try:
+            a1 = _first_ws(wb)['A1'].value or ""
+            m = RE_TITLE.search(str(a1))
+            if m:
+                return m.group(1)
+        except Exception:
+            # 文件仍可能通过正式处理路径给出更具体错误；批次预识别阶段只回退文件名。
+            pass
+        finally:
+            wb.close()  # 无论标题命中、解析异常还是正常返回，都释放只读工作簿句柄。
 
 
 def detect_report_date(path):
@@ -305,33 +310,45 @@ def _resolve_plan_columns(ws, log=None):
     }
 
 
+def _plan_row_material(ws, row, columns, code):
+    """读取一行计划数据，返回 ``(状态, 未收物料)``。
+
+    状态为 ``"data"`` 表示剩余未收数为非零数字；``"pending"`` 表示公式缓存缺失；
+    ``"skip"`` 表示布尔值、零值或非数字，不进入未收明细。
+    """
+    remain = ws.cell(row=row, column=columns["remain"]).value
+    if isinstance(remain, bool):
+        return "skip", None  # bool 是数字子类，但 TRUE/FALSE 不是有效的剩余未收数量。
+    if remain is None:
+        return "pending", None  # 公式缓存缺失不能静默当作零，留给人工核对。
+    if not isinstance(remain, numbers.Number) or remain == 0:
+        return "skip", None
+    return "data", [
+        str(code),
+        ws.cell(row=row, column=columns["name"]).value if columns["name"] else None,
+        ws.cell(row=row, column=columns["supplier"]).value if columns["supplier"] else None,
+        ws.cell(row=row, column=columns["demand"]).value if columns["demand"] else None,
+        remain,
+    ]
+
+
 def _scan_plan_rows(ws, columns):
     """读取完整送货计划，分别统计总类数、隐藏行、待核对行和未到明细。"""
     materials = []
     total = hidden = pending = 0
     for row in range(columns["header_row"] + 1, ws.max_row + 1):
         code = ws.cell(row=row, column=columns["code"]).value
-        if not _norm(code):
+        if not _normalize_header_text(code):
             continue
         total += 1  # 总类数必须来自完整数据行，不能受 Excel 当前筛选视图影响。
         row_dimension = ws.row_dimensions.get(row)
         if row_dimension is not None and row_dimension.hidden:
             hidden += 1  # 隐藏行仍参与业务计算，这里只为日志保留可审计数量。
-        remain = ws.cell(row=row, column=columns["remain"]).value
-        if isinstance(remain, bool):
-            continue  # bool 是数字子类，但 TRUE/FALSE 不是有效的剩余未收数量。
-        if remain is None:
-            pending += 1  # 公式缓存缺失不能静默当作零，留给人工核对。
-            continue
-        if not isinstance(remain, numbers.Number) or remain == 0:
-            continue
-        materials.append([
-            str(code),
-            ws.cell(row=row, column=columns["name"]).value if columns["name"] else None,
-            ws.cell(row=row, column=columns["supplier"]).value if columns["supplier"] else None,
-            ws.cell(row=row, column=columns["demand"]).value if columns["demand"] else None,
-            remain,
-        ])
+        state, material = _plan_row_material(ws, row, columns, code)
+        if state == "pending":
+            pending += 1
+        elif state == "data":
+            materials.append(material)
     return {"materials": materials, "total": total, "pending": pending, "hidden": hidden}
 
 
@@ -453,16 +470,44 @@ def build_workbook(batches, top_label, out_path):
                                      b.get("pending", 0))
         results.append((b["batch_no"], diff, arrived, b["total"]))
         col += BATCH_STRIDE  # 七个业务列后留两列间隔，避免相邻批次视觉粘连。
-    # 与 purchase/delivery 一致: 目标被 Excel 占用时给出友好提示
     try:
         wb.save(out_path)
     except PermissionError:
         # Windows 上最常见原因是用户正在 Excel 中打开同名输出文件。
         raise PermissionError("无法保存 %s —— 请先在 Excel 里关闭该文件后重试" % out_path)
+    finally:
+        wb.close()  # 保存失败时同样释放工作簿，便于用户关闭 Excel 后立即重试。
     return results
 
 
 # 以下入口同时供 Tauri 与 Web 桥接调用，输出目录必须由参数或统一 paths 系统解析。
+def _complete_batch_materials(materials, resolver, fill_counts):
+    """用主数据只补齐未收明细中的名称和供应商空值。"""
+    if resolver is None:
+        return
+    for material in materials:
+        additions = resolver.complete_material(
+            material[0], {"name": material[1], "supplier": material[2]},
+            fields=("name", "supplier"), counts=fill_counts,
+        )
+        if "name" in additions:
+            material[1] = additions["name"]
+        if "supplier" in additions:
+            material[2] = additions["supplier"]
+
+
+def _batch_total(row, auto_total):
+    """按人工值优先、自动识别值兜底解析批次总类数。"""
+    tv = row.get("total")
+    if tv in (None, ""):
+        return auto_total or DEFAULT_TOTAL
+    try:
+        # 界面可能提交带小数或千分位文本，统一转数值再取整，失败回退自动值。
+        return int(float(str(tv).replace(",", "")))
+    except (ValueError, TypeError):
+        return auto_total or DEFAULT_TOTAL
+
+
 def build_batches(rows_data, top_label, log=None, resolver=None, fill_counts=None):
     """把复核行整理成工作簿批次，同时读取未收明细和补充主数据。
 
@@ -477,26 +522,11 @@ def build_batches(rows_data, top_label, log=None, resolver=None, fill_counts=Non
             continue
         inspection = inspect_plan(row["path"], log=log)
         materials = inspection["materials"]
-        if resolver is not None:
-            # 主数据补全只填空值，源表已有名称/供应商必须保留原样。
-            for material in materials:
-                additions = resolver.complete_material(
-                    material[0], {"name": material[1], "supplier": material[2]},
-                    fields=("name", "supplier"), counts=fill_counts)
-                if "name" in additions:
-                    material[1] = additions["name"]
-                if "supplier" in additions:
-                    material[2] = additions["supplier"]
+        _complete_batch_materials(materials, resolver, fill_counts)
         bn = row.get("batch_no") or detect_batch(row["path"])  # 人工输入优先于自动识别。
-        # 界面留空时 total 可能为 None/""/带小数或千分位的文本; int("566.0")、
-        # int("5,66") 都会抛 ValueError, 统一 float() 兜一层再取整, 失败回退默认值
         auto_total = int(inspection.get("total", 0) or 0)
-        tv = row.get("total")
-        try:
-            # 人工值优先；未填写时使用本次完整源表识别值，只有空表才回退兼容默认数。
-            total = (auto_total or DEFAULT_TOTAL) if tv in (None, "") else int(float(str(tv).replace(",", "")))
-        except (ValueError, TypeError):
-            total = auto_total or DEFAULT_TOTAL
+        total = _batch_total(row, auto_total)
+        remark = row.get("remark", "")
         remark = row.get("remark", "")
         batches.append({"batch_no": bn, "materials": materials,
                         "total": total, "auto_total": auto_total, "remark": remark,
@@ -659,7 +689,7 @@ def _finished_metrics(ws, total_row, block_column):
     """读取批次区块的到货类数与差异类数，缺失项返回 ``None``。"""
     arrived = missing = None
     for row in range(total_row + 1, min(ws.max_row, total_row + 4) + 1):
-        label = _norm(ws.cell(row=row, column=block_column).value)
+        label = _normalize_header_text(ws.cell(row=row, column=block_column).value)
         if label in FINISHED_ARRIVED_LABELS:
             arrived = _value_right_of_label(ws, row, block_column)
         elif label in FINISHED_MISSING_LABELS:
@@ -674,7 +704,7 @@ def _finished_batch_from_anchor(ws, total_row, block_column):
     if total is None or columns is None:
         return None
     # 标准模板中批次号固定在“主料总类数”标签上一行，纵向布局与源表输出一致。
-    batch_no = _norm(ws.cell(row=max(1, total_row - 1), column=block_column).value)
+    batch_no = _normalize_header_text(ws.cell(row=max(1, total_row - 1), column=block_column).value)
     if not batch_no:
         raise ValueError(f"《{ws.title}》第 {block_column} 列的到料区块缺少批次号")
     materials = _finished_materials(ws, columns)
@@ -696,7 +726,7 @@ def _finished_batches_from_sheet(ws):
     # 成品表批次指标区只出现在工作表上部，限制行数可避免误扫底部说明文字。
     for row in range(1, min(ws.max_row, 20) + 1):
         for column in range(1, ws.max_column + 1):
-            if _norm(ws.cell(row=row, column=column).value) not in FINISHED_TOTAL_LABELS:
+            if _normalize_header_text(ws.cell(row=row, column=column).value) not in FINISHED_TOTAL_LABELS:
                 continue
             batch = _finished_batch_from_anchor(ws, row, column)
             if batch is not None:

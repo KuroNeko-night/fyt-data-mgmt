@@ -60,7 +60,7 @@ export function RenamePage() {
   async function apply() {
     const result = await task.run("rename.apply", { paths, rule });
     // 文件已在磁盘原地改名，受控路径必须切换为真实新路径，不能继续引用旧名称。
-    if (result) { setPaths(result.paths); await preview.run("rename.preview", { paths: result.paths, rule }); }
+    if (result) { setPaths(result.paths); await preview.run("rename.preview", { paths: result.paths, rule }); }  // 磁盘文件已改名，受控路径必须切换为真实新路径
   }
 
   /** 使用执行结果附带的反向路径映射撤销最近一次成功改名，再同步刷新页面状态。 */
@@ -70,7 +70,7 @@ export function RenamePage() {
     if (result) {
       // 映射元组的第二项是原始路径；撤销成功后它重新成为当前文件选择。
       const restored = task.result.undo_map.map(([, origin]) => origin);
-      setPaths(restored);
+      setPaths(restored);  // 撤销后恢复原始路径为当前选择
       await preview.run("rename.preview", { paths: restored, rule });
     }
   }
@@ -101,7 +101,7 @@ export function TextPage() {
 
   /** 运行单个文本动作；先清空旧结果，避免请求期间把上一次内容误认为本次输出。 */
   async function transform(operation: string) {
-    setResult("");
+    setResult("");  // 先清空旧结果，避免请求期间误认上一次内容
     const response = await action.run("text.transform", { text: source, operation, options });
     if (response) setResult(response.text);
   }
@@ -130,12 +130,12 @@ export function PdfPage() {
     let active = true;
     if (!paths[0] || mode === "merge") { setPages(null); return () => { active = false; }; }
     // 页数只用于辅助填写，不阻断主任务；读取失败时退回未知页数而非制造页面错误。
-    bridgeRequest<{ pages: number }>("pdf.info", { path: paths[0] }).then((response) => { if (active) setPages(response.pages); }).catch(() => { if (active) setPages(null); });
+    bridgeRequest<{ pages: number }>("pdf.info", { path: paths[0] }).then((response) => { if (active) setPages(response.pages); }).catch(() => { if (active) setPages(null); });  // 页数只辅助填写，读取失败退回未知页数
     // 文件或模式快速切换时忽略旧请求结果，避免旧 PDF 页数覆盖当前选择。
     return () => { active = false; };
   }, [paths, mode]);
   const needsSpec = mode === "extract" || mode === "delete" || (mode === "split" && splitMode === "ranges");
-  const canRun = mode === "merge" ? paths.length >= 2 : Boolean(paths.length && (!needsSpec || spec.trim()));
+  const canRun = mode === "merge" ? paths.length >= 2 : Boolean(paths.length && (!needsSpec || spec.trim()));  // 合并至少两个文件，其余模式需文件且范围必填时非空
   return <div className="fyt-page-flow fyt-wide-flow"><section className="fyt-feature-form"><section className="fyt-option-card"><div className="fyt-segmented fyt-four">{[["merge", "合并"], ["split", "拆分"], ["extract", "提取页"], ["delete", "删除页"]].map(([key, label]) => <button key={key} className={mode === key ? "active" : ""} onClick={() => changeMode(key)}>{label}</button>)}</div></section><FilePickerField label="PDF 文件" description="合并时按选择顺序；其他操作仅处理第一个文件。" value={paths} onChange={(next) => { setPaths(next); task.reset(); }} multiple filters={pdfFilters} />
     <section className="fyt-option-card">{mode === "split" ? <FieldRow label="拆分方式"><select value={splitMode} onChange={(event) => { setSplitMode(event.target.value); setSpec(""); task.reset(); }}><option value="each">每页一个文件</option><option value="ranges">按范围分段</option></select></FieldRow> : null}{needsSpec ? <FieldRow label="页码范围" hint="例如 1,3,5-8,12-"><input value={spec} onChange={(event) => { setSpec(event.target.value); task.reset(); }} /></FieldRow> : null}{pages !== null ? <p className="fyt-field-help">{fileName(paths[0])} 共 {pages} 页</p> : null}</section>
     <TaskPanel busy={task.busy} error={task.error} logs={task.logs} progress={task.progress} onCancel={() => void task.cancel()} canRun={canRun} runLabel="开始处理" onRun={() => void task.run("pdf.run", { paths, mode, split_mode: splitMode, spec })} outDir={task.outDir}>{task.result ? <ResultSummary><strong>已生成 {task.result.out_files.length} 个 PDF</strong></ResultSummary> : null}</TaskPanel></section></div>;
@@ -150,7 +150,7 @@ export function ExcelToolsPage() {
   const [keepFormula, setKeepFormula] = useState(false);
   const task = useBridgeTask<FileToolResult>();
   const changeMode = (next: string) => { setMode(next); task.reset(); };
-  const canRun = mode === "merge" || mode === "stack" ? paths.length >= 2 : paths.length >= 1;
+  const canRun = mode === "merge" || mode === "stack" ? paths.length >= 2 : paths.length >= 1;  // 合并与纵向合并至少两个文件，拆分转换一个即可
   return <div className="fyt-page-flow fyt-wide-flow"><section className="fyt-feature-form"><section className="fyt-option-card"><div className="fyt-segmented fyt-four">{[["merge", "多簿合并"], ["split", "按 Sheet 拆分"], ["convert", "格式转换"], ["stack", "纵向合并"]].map(([key, label]) => <button key={key} className={mode === key ? "active" : ""} onClick={() => changeMode(key)}>{label}</button>)}</div></section><FilePickerField label="表格文件" description="支持 xlsx、xlsm、xls、csv，可多选。" value={paths} onChange={(next) => { setPaths(next); task.reset(); }} multiple filters={excelFilters} />
     <section className="fyt-option-card">{mode === "convert" ? <FieldRow label="转换目标"><select value={target} onChange={(event) => setTarget(event.target.value)}><option value="xlsx">xlsx</option><option value="csv">CSV（每个 Sheet 一个文件）</option></select></FieldRow> : null}{mode === "merge" ? <label className="fyt-check-row"><input type="checkbox" checked={keepFormula} onChange={(event) => setKeepFormula(event.target.checked)} />保留公式</label> : null}{mode === "stack" ? <label className="fyt-check-row"><input type="checkbox" checked={hasHeader} onChange={(event) => setHasHeader(event.target.checked)} />首行是表头，仅保留一次并添加来源文件列</label> : null}</section>
     <TaskPanel busy={task.busy} error={task.error} logs={task.logs} progress={task.progress} onCancel={() => void task.cancel()} canRun={canRun} runLabel="开始处理" onRun={() => void task.run("excel.run", { paths, mode, target, has_header: hasHeader, keep_formula: keepFormula })} outDir={task.outDir}>{task.result ? <ResultSummary><strong>已生成 {task.result.out_files.length} 个文件</strong></ResultSummary> : null}</TaskPanel></section></div>;
@@ -192,14 +192,14 @@ export function ComparePage() {
   const sheets2 = useSheets(file2[0] || "");
   const prepare = useBridgeAction<ComparePrepare>();
   const task = useBridgeTask<CompareResult>();
-  const resetComparison = () => { setKeyColumn(""); setCompareColumns([]); prepare.reset(); task.reset(); };
+  const resetComparison = () => { setKeyColumn(""); setCompareColumns([]); prepare.reset(); task.reset(); };  // 文件或工作表变化后旧比对范围全部作废
 
   /** 读取公共列，并尽量保留当前仍合法的关键列与比较列选择。 */
   async function loadColumns() {
     const result = await prepare.run("compare.prepare", { file1, file2, sheet1, sheet2 });
     if (!result) return;
-    const nextKey = result.common.includes(keyColumn) ? keyColumn : result.common[0] || "";
-    const selectable = result.common.filter((column) => column !== nextKey);
+    const nextKey = result.common.includes(keyColumn) ? keyColumn : result.common[0] || "";  // 当前关键列仍合法时保留，否则回退首个公共列
+    const selectable = result.common.filter((column) => column !== nextKey);  // 比较列候选必须排除关键列
     setKeyColumn(nextKey);
     setCompareColumns((current) => {
       // 用户原选择仍存在时优先保留；全部失效或首次读取时默认比较其余所有公共列。
@@ -211,7 +211,7 @@ export function ComparePage() {
 
   /** 更换配对关键列，并从比较列中移除新关键列，防止同一列承担两种角色。 */
   function changeKeyColumn(nextKey: string) {
-    const selectable = (prepare.result?.common || []).filter((column) => column !== nextKey);
+    const selectable = (prepare.result?.common || []).filter((column) => column !== nextKey);  // 新关键列不能同时作为比较列
     setKeyColumn(nextKey);
     setCompareColumns((current) => {
       const retained = current.filter((column) => selectable.includes(column));
@@ -225,7 +225,7 @@ export function ComparePage() {
     setCompareColumns((current) => current.includes(column)
       ? current.filter((item) => item !== column)
       : [...current, column]);
-    task.reset();
+    task.reset();  // 比较列变化后旧差异结果失效
   }
   return <div className="fyt-page-flow fyt-wide-flow"><section className="fyt-feature-form"><FilePickerField label="A 表" description="通常放程序输出或新版。" value={file1} onChange={(next) => { setFile1(next); setSheet1(""); resetComparison(); }} filters={excelFilters} />{sheets1.length > 1 ? <FieldRow label="A 表工作表"><select value={sheet1} onChange={(event) => { setSheet1(event.target.value); resetComparison(); }}><option value="">自动识别</option>{sheets1.map((sheet) => <option key={sheet}>{sheet}</option>)}</select></FieldRow> : null}<FilePickerField label="B 表" description="通常放手工结果或旧版。" value={file2} onChange={(next) => { setFile2(next); setSheet2(""); resetComparison(); }} filters={excelFilters} />{sheets2.length > 1 ? <FieldRow label="B 表工作表"><select value={sheet2} onChange={(event) => { setSheet2(event.target.value); resetComparison(); }}><option value="">自动识别</option>{sheets2.map((sheet) => <option key={sheet}>{sheet}</option>)}</select></FieldRow> : null}
     <section className="fyt-option-card"><div className="fyt-section-heading fyt-compact"><div><h3>比对范围</h3><p>先读取两表公共列，再选择配对依据与需要核对的字段。</p></div><button className="fyt-secondary-button" disabled={!file1.length || !file2.length || prepare.busy} onClick={() => void loadColumns()}>{prepare.busy ? "读取中…" : "读取公共列"}</button></div>{prepare.error ? <div className="fyt-page-notice error">{prepare.error}</div> : null}{prepare.result ? <><FieldRow label="按此列配对"><select value={keyColumn} onChange={(event) => changeKeyColumn(event.target.value)}>{prepare.result.common.map((column) => <option key={column}>{column}</option>)}</select></FieldRow><div className="fyt-review-toolbar"><strong>比较列</strong><span>已选 {compareColumns.length} 列</span><div><button className="fyt-text-button" type="button" onClick={() => { setCompareColumns(selectableColumns); task.reset(); }}>全选</button><button className="fyt-text-button" type="button" onClick={() => { setCompareColumns([]); task.reset(); }}>清空</button></div></div>{selectableColumns.length ? <div className="fyt-review-list">{selectableColumns.map((column) => <label key={column}><input type="checkbox" checked={compareColumns.includes(column)} onChange={() => toggleCompareColumn(column)} /><span>{column}</span></label>)}</div> : <p className="fyt-empty-message">除关键列外没有其他公共列可比较。</p>}</> : null}</section>

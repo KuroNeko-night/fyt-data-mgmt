@@ -29,7 +29,7 @@ class _Tmp(unittest.TestCase):
 
         self._tmp = tempfile.mkdtemp(prefix="fyt_arr_")
         self._old_catalog = os.environ.get("FYT_CATALOG_PATH")
-        os.environ["FYT_CATALOG_PATH"] = os.path.join(self._tmp, "catalog.json")
+        os.environ["FYT_CATALOG_PATH"] = os.path.join(self._tmp, "catalog.json")  # 隔离主数据库
 
     def tearDown(self):
         """恢复主数据库环境并删除合成到料表。"""
@@ -50,7 +50,7 @@ class _Tmp(unittest.TestCase):
             ws = wb.create_sheet(title=name)
             for row in rows:
                 ws.append(row)
-        wb.active = active_idx
+        wb.active = active_idx  # 指定活动表索引
         wb.save(p)
         return p
 
@@ -73,7 +73,7 @@ class TestPickDataWs(_Tmp):
         """单工作表直接使用且不产生多余纠偏日志。"""
 
         name, logs = self._pick([("零件到货计划", [HDR, DATA])])
-        self.assertEqual(name, "零件到货计划")
+        self.assertEqual(name, "零件到货计划")  # 单表直接使用
         self.assertEqual([l for l in logs if "子表" in l], [])   # 单表无噪音
 
     def test_active_valid_is_used(self):
@@ -83,7 +83,7 @@ class TestPickDataWs(_Tmp):
         name, logs = self._pick(
             [("Sheet2", [["空"], []]), ("零件到货计划", [HDR, DATA])],
             active_idx=1)
-        self.assertEqual(name, "零件到货计划")
+        self.assertEqual(name, "零件到货计划")  # 活动表有效时保留选择
 
     def test_wrong_active_auto_corrects(self):
         """活动表无有效字段时应改读其他有效子表并记录原因。"""
@@ -92,7 +92,7 @@ class TestPickDataWs(_Tmp):
         name, logs = self._pick(
             [("Sheet2", [["空表"], ["x"]]), ("零件到货计划", [HDR, DATA])],
             active_idx=0)
-        self.assertEqual(name, "零件到货计划")
+        self.assertEqual(name, "零件到货计划")  # 自动纠偏到有效子表
         self.assertTrue(any("改读" in l for l in logs), "应记录纠偏")
 
     def test_extract_reads_correct_sheet(self):
@@ -103,7 +103,7 @@ class TestPickDataWs(_Tmp):
                      ("零件到货计划", [HDR, DATA])], active_idx=0)
         rows = A.extract_unreceived(p)
         self.assertEqual(len(rows), 1)         # 若误读空表会得 0
-        self.assertEqual(rows[0][0], "8892602000")
+        self.assertEqual(rows[0][0], "8892602000")  # 未收物料编码
 
     def test_full_plan_counts_hidden_rows_and_supports_manual_total(self):
         """完整源表应自动统计总类数，并把隐藏行中的非零未收数纳入明细。"""
@@ -115,30 +115,30 @@ class TestPickDataWs(_Tmp):
             ["C-03", "负数缺料", "供应商丙", 8, -1],
         ])])
         workbook = openpyxl.load_workbook(path)
-        workbook.active.row_dimensions[3].hidden = True
+        workbook.active.row_dimensions[3].hidden = True  # 隐藏第二行数据
         workbook.save(path)
         workbook.close()
 
         inspection = A.inspect_plan(path)
-        self.assertEqual(inspection["total"], 3)
-        self.assertEqual(inspection["hidden"], 1)
+        self.assertEqual(inspection["total"], 3)  # 总类数含隐藏行
+        self.assertEqual(inspection["hidden"], 1)  # 隐藏行计数
         self.assertEqual(
             [item[0] for item in inspection["materials"]],
             ["B-02", "C-03"],
-        )
+        )  # 未收物料含隐藏行
 
         automatic, _ = A.build_batches([{
             "path": path, "batch_no": "AUTO", "remark": "", "include": True,
         }], A.DEFAULT_TOP_LABEL)
-        self.assertEqual(automatic[0]["total"], 3)
+        self.assertEqual(automatic[0]["total"], 3)  # 自动总数
         self.assertEqual(automatic[0]["auto_total"], 3)
 
         overridden, _ = A.build_batches([{
             "path": path, "batch_no": "MANUAL", "total": 5,
             "remark": "人工核对", "include": True,
         }], A.DEFAULT_TOP_LABEL)
-        self.assertEqual(overridden[0]["total"], 5)
-        self.assertEqual(overridden[0]["auto_total"], 3)
+        self.assertEqual(overridden[0]["total"], 5)  # 人工总数覆盖
+        self.assertEqual(overridden[0]["auto_total"], 3)  # 自动值保留
 
     def test_result_batches_keep_missing_material_and_quantity_gap(self):
         """结构化批次结果必须保留物料明细和实收到需求的数量缺口。"""
@@ -149,11 +149,11 @@ class TestPickDataWs(_Tmp):
             "materials": [["A-01", "固定螺栓", "供应商甲", 12, 3]],
         }]
         details = A.build_result_batches(batches, [("26035-01", 1, 9, 10)])
-        self.assertEqual(details[0]["missing_count"], 1)
+        self.assertEqual(details[0]["missing_count"], 1)  # 缺料条数
         material = details[0]["missing_materials"][0]
-        self.assertEqual(material["material_code"], "A-01")
-        self.assertEqual(material["received_quantity"], 9)
-        self.assertEqual(material["shortage_quantity"], 3)
+        self.assertEqual(material["material_code"], "A-01")  # 物料编码保留
+        self.assertEqual(material["received_quantity"], 9)  # 实收数量
+        self.assertEqual(material["shortage_quantity"], 3)  # 短缺数量
 
     def test_finished_report_reads_embedded_batch_metrics(self):
         """直接上传成品日报时应从各横向批次块解析总类数、到货数和缺料。"""
@@ -167,17 +167,17 @@ class TestPickDataWs(_Tmp):
             (12, "GMIDR26178A", 478, 477, 1, "B-02"),
         ):
             sheet.cell(1, start, "截止16点的数据")
-            sheet.cell(2, start, batch_no)
+            sheet.cell(2, start, batch_no)  # 批次号
             sheet.cell(3, start, "主料总共类")
-            sheet.cell(3, start + 2, total)
+            sheet.cell(3, start + 2, total)  # 总类数
             sheet.cell(4, start, "到货数量")
-            sheet.cell(4, start + 2, arrived)
+            sheet.cell(4, start + 2, arrived)  # 到货数
             sheet.cell(5, start, "差异")
-            sheet.cell(5, start + 2, missing)
+            sheet.cell(5, start + 2, missing)  # 差异数
             for offset, title in enumerate(("序号", "物料编码", "物料名称", "供应商信息", "需求数", "剩余未收数", "备注")):
-                sheet.cell(7, start + offset, title)
+                sheet.cell(7, start + offset, title)  # 明细表头
             sheet.cell(8, start, 1)
-            sheet.cell(8, start + 1, code)
+            sheet.cell(8, start + 1, code)  # 缺料编码
             sheet.cell(8, start + 2, "测试物料")
             sheet.cell(8, start + 3, "供应商甲")
             sheet.cell(8, start + 4, 10)
@@ -186,13 +186,13 @@ class TestPickDataWs(_Tmp):
         workbook.close()
 
         result = A.analyze_finished_report(path)
-        self.assertEqual(result["report_date"], "2026-08-05")
+        self.assertEqual(result["report_date"], "2026-08-05")  # 日期从文件名解析
         self.assertEqual(result["results"], [
             ("GMMYR26163A", 1, 473, 474),
             ("GMIDR26178A", 1, 477, 478),
-        ])
-        self.assertEqual(result["batches"][0]["missing_materials"][0]["shortage_quantity"], 2)
-        self.assertEqual(result["batches"][0]["missing_materials"][0]["received_quantity"], 8)
+        ])  # 两个批次汇总
+        self.assertEqual(result["batches"][0]["missing_materials"][0]["shortage_quantity"], 2)  # 短缺数量
+        self.assertEqual(result["batches"][0]["missing_materials"][0]["received_quantity"], 8)  # 实收数量
 
 
 if __name__ == "__main__":

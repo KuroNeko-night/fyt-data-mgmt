@@ -19,8 +19,8 @@ import os
 import glob
 
 # tests/ -> 峰运通数据管理系统/ -> 程序重构/
-_PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-REPO_ROOT = os.path.dirname(_PROJ)
+_PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # 上溯到项目根
+REPO_ROOT = os.path.dirname(_PROJ)  # 再上溯到仓库根
 
 
 def repo(*parts):
@@ -32,7 +32,7 @@ def _first(pattern):
     """返回按名称排序后的首个匹配样本，缺失时返回空值。"""
 
     hits = sorted(glob.glob(pattern))
-    return hits[0] if hits else None
+    return hits[0] if hits else None  # 缺失返回 None 便于测试跳过
 
 
 def _find(pattern, contains=None, exclude=None):
@@ -41,11 +41,11 @@ def _find(pattern, contains=None, exclude=None):
     for p in sorted(glob.glob(pattern)):
         base = os.path.basename(p)
         if base.startswith("~$"):
-            continue
+            continue  # 跳过 Excel 临时锁文件
         if contains and contains not in base:
-            continue
+            continue  # 文件名必须含关键子串
         if exclude and exclude in base:
-            continue
+            continue  # 排除答案表等干扰样本
         out.append(p)
     return out
 

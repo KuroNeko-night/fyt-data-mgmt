@@ -346,6 +346,22 @@ def _collect_labor_candidates(path, roles, header, data_start, wanted_sheet, log
     return candidates, skipped
 
 
+def _labor_days(row, day_cols, skip):
+    """解析一行劳务逐日工时，未命中或假/休标记的日期不进入结果。"""
+    return {
+        day: value
+        for day, column in day_cols.items()
+        if column < len(row) and (value := _to_num(row[column], skip=skip)) is not None
+    }
+
+
+def _labor_stated_total(row, total_col, skip):
+    """读取表内合计列；缺列或非数值时返回 ``None``。"""
+    if total_col is None or total_col >= len(row):
+        return None
+    return _to_num(row[total_col], skip=skip)
+
+
 def _parse_labor_rows(rows, layout, skip):
     """按已确认的劳务表布局解析人员逐日工时，并统计合计口径不一致人数。
 
@@ -365,16 +381,8 @@ def _parse_labor_rows(rows, layout, skip):
         name = _norm_name(row[name_col])
         if not name or name in ("合计", "合计：", "总计", "总出勤工时"):
             continue
-        days = {
-            day: value
-            for day, column in day_cols.items()
-            if column < len(row) and (value := _to_num(row[column], skip=skip)) is not None
-        }
-        stated_total = (
-            _to_num(row[total_col], skip=skip)
-            if total_col is not None and total_col < len(row)
-            else None
-        )
+        days = _labor_days(row, day_cols, skip)
+        stated_total = _labor_stated_total(row, total_col, skip)
         day_sum = round(sum(days.values()), 2) if days else None
         if stated_total is not None and day_sum is not None and abs(stated_total - day_sum) > TOL:
             mismatch += 1

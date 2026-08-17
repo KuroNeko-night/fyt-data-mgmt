@@ -212,10 +212,21 @@ sudo bash /opt/fyt/server/backup.sh
 
 ## HTTPS 与公网访问
 
-正式公网访问建议采用以下任一方式：
+正式公网访问推荐以下流程（零基础分步操作见 `docs/运维部署完全指南.md`）：
 
-1. Caddy/Nginx 监听 80/443，反向代理到 `127.0.0.1:8787`，由代理负责证书和 HTTPS。
-2. Cloudflare Named Tunnel 连接到本机 Web 服务，域名路由和 Tunnel 服务由 Cloudflare 管理。
+1. 域名 DNS 托管到 Cloudflare，添加 A 记录指向服务器公网 IP，并开启橙色云代理。
+2. 在 Cloudflare `SSL/TLS → Origin Server` 创建源站证书和私钥，加密模式设为 `Full (strict)`。
+3. 阿里云安全组只对 Cloudflare 的 IP 段放行 80/443，`8787` 不对公网开放。
+4. Caddy 监听 443，使用上述源站证书和私钥反向代理到 `127.0.0.1:8787`；80 端口只负责跳转 HTTPS：
+
+```text
+fyt.example.com {
+    tls /etc/caddy/certs/fyt.example.com.pem /etc/caddy/certs/fyt.example.com.key
+    reverse_proxy 127.0.0.1:8787
+}
+```
+
+备选方案：Cloudflare Named Tunnel 连接到本机 Web 服务，服务器无需开放 80/443 入站，域名路由和 Tunnel 服务由 Cloudflare 管理。
 
 临时 Quick Tunnel 适合测试，不适合作为固定入口；每次重启或重新建立连接都可能更换 `trycloudflare.com` 地址。无论使用代理还是 Tunnel，都应让 Web 服务只监听回环地址，并在 Cloudflare、反向代理和应用层分别配置访问控制。
 
@@ -365,6 +376,7 @@ npm --prefix web-app run build
 ## 相关文档
 
 - [项目全景：模块与实现](docs/项目全景-模块与实现.md)
+- [运维部署完全指南（零基础版）](docs/运维部署完全指南.md)
 - [源码注释与编码风格规范](docs/源码注释与编码风格规范.md)
 - [仓库维护与目录规范](docs/仓库维护与目录规范.md)
 - [Docker 运行与 GitHub 同步](docs/docker与github同步.md)

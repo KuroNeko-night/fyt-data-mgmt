@@ -25,7 +25,7 @@ export interface StatusBadgeProps {
  */
 export function StatusBadge({ status, className = "" }: StatusBadgeProps) {
   // StatusKey 来自 STATUS_DEFINITIONS 的键集合，不会出现查不到定义的情况。
-  const definition = STATUS_DEFINITIONS[status];
+  const definition = STATUS_DEFINITIONS[status];  // StatusKey 由状态定义推导，查表结果必然存在
   return (
     <span className={`fyt-status-badge ${className}`.trim()} data-tone={definition.tone}>
       {/* 符号是视觉提示，aria-hidden 避免读屏重复朗读。 */}

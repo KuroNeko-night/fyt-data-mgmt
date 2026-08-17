@@ -22,22 +22,22 @@ class DailySafetyCheckCoreTests(unittest.TestCase):
             target = Path(temp_name) / "安全检查记录.xlsx"
             workbook = Workbook()
             sheet = workbook.active
-            sheet["A1"] = "安全检查日报"
-            sheet["H1"] = date(2026, 8, 4)
+            sheet["A1"] = "安全检查日报"  # 标题用于识别表种
+            sheet["H1"] = date(2026, 8, 4)  # 日期写入模板指定位置
             sheet.append(["检查类别", "序号", "检查项目", "安全标准要求", "检查结果", "问题描述", "整改措施", "责任人"])
             sheet.append(["人员安全", 1, "劳保用品", "按规定佩戴", "合格", "佩戴规范", "持续检查", "张工"])
             # 第二条分类为空，模拟模板中的纵向合并单元格，解析后仍应归入“人员安全”。
             sheet.append([None, 2, "作业规范", "无违章作业", "不合格", "隔离带缺失", "当天补齐", "李工"])
             workbook.save(target)
-            workbook.close()
+            workbook.close()  # 关闭工作簿释放文件
 
             result = daily_safety_check_core.analyze(target, image_dir=Path(temp_name) / "images")
 
-        self.assertEqual(result["report_date"], "2026-08-04")
-        self.assertEqual(result["total_checks"], 2)
-        self.assertEqual(result["qualified_count"], 1)
-        self.assertEqual(result["unqualified_count"], 1)
-        self.assertEqual(result["records"][1]["category"], "人员安全")
+        self.assertEqual(result["report_date"], "2026-08-04")  # 日期从模板位置读取
+        self.assertEqual(result["total_checks"], 2)  # 两条检查记录都解析
+        self.assertEqual(result["qualified_count"], 1)  # 合格计数
+        self.assertEqual(result["unqualified_count"], 1)  # 不合格计数
+        self.assertEqual(result["records"][1]["category"], "人员安全")  # 空分类续行继承
 
 
 if __name__ == "__main__":

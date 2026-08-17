@@ -238,6 +238,34 @@ class _SheetFillStats:
             totals[key] += getattr(self, key)
 
 
+@dataclass
+class _AttendanceRowContext:
+    """一行考勤处理所需的共享工作簿、位置、统计与异常容器。"""
+
+    ws: object
+    row: int
+    cols: dict[str, int]
+    name: str
+    day: tuple[int, int, int]
+    stats: _SheetFillStats
+    anomalies: list[dict[str, object]]
+    log: object
+
+
+@dataclass
+class _AttendanceFillContext:
+    """单个考勤页签填充阶段所需的全部输入。"""
+
+    ws: object
+    start: int
+    cols: dict[str, int]
+    source_data: dict[object, object]
+    opts: Options
+    skip: object
+    anomalies: list[dict[str, object]]
+    log: object
+
+
 def _select_target_sheets(workbook, target_path, opts):
     """应用管理员的页签选择；未指定时返回工作簿全部页签。
 
@@ -252,17 +280,18 @@ def _select_target_sheets(workbook, target_path, opts):
     return selected
 
 
-def _write_matched_times(ws, row, cols, on_text, off_text, opts, stats):
+def _write_matched_times(ctx: _AttendanceRowContext, on_text, off_text, opts):
     """写入系统打卡时间，并按设置生成实际时间。
 
     系统时间只在有值且不是 ``-``/``—`` 占位符时写入；自动生成实际时间时，
     上班按半小时向上取整、下班按半小时向下取整，与考勤制度保持一致。写入计数
-    累加到 ``stats``，本函数不返回业务结果。
+    累加到 ``ctx.stats``，本函数不返回业务结果。
     """
+    ws, row, cols = ctx.ws, ctx.row, ctx.cols
     # 横线是模板占位符而非真实打卡，跳过以免把占位符当成有效时间写入。
     if cols["sys_on"] and on_text and on_text not in ("-", "—"):
         ws.cell(row, cols["sys_on"]).value = on_text
-        stats.filled_time += 1
+        ctx.stats.filled_time += 1
     if cols["sys_off"] and off_text and off_text not in ("-", "—"):
         ws.cell(row, cols["sys_off"]).value = off_text
     if not opts.auto_actual:
@@ -272,30 +301,20 @@ def _write_matched_times(ws, row, cols, on_text, off_text, opts, stats):
         rounded_on = cc.round_half_hour(parse_time(on_text), "up")
         if rounded_on is not None:
             ws.cell(row, cols["act_on"]).value = cc.fmt_time(rounded_on)
-            stats.filled_actual += 1
+            ctx.stats.filled_actual += 1
     if cols["act_off"]:
         rounded_off = cc.round_half_hour(parse_time(off_text), "down")
         if rounded_off is not None:
             ws.cell(row, cols["act_off"]).value = cc.fmt_time(rounded_off)
 
-
-def _compute_row_work(
-    ws,
-    row,
-    cols,
-    name,
-    day,
-    opts,
-    stats,
-    anomalies,
-    log,
-):
+def _compute_row_work(ctx: _AttendanceRowContext, opts):
     """根据实际上下班时间计算工时；返回该行是否具备完整可计算时间。
 
     工时写入“实际工作时间”列；无异常且开启加班时才写“加班”列，异常行只标黄
     并进入核对报告，不生成加班值，避免把可疑数据直接当成有效结果。休息时间列
     缺失时按 0 处理。
     """
+    ws, row, cols = ctx.ws, ctx.row, ctx.cols
     if not (cols["work"] and cols["act_on"] and cols["act_off"]):
         return False
     actual_on = parse_time(ws.cell(row, cols["act_on"]).value)
@@ -305,11 +324,10 @@ def _compute_row_work(
     rest = parse_rest(ws.cell(row, cols["rest"]).value) if cols["rest"] else 0.0
     hours, reason, shift, base = compute_shift(actual_on, actual_off, rest, opts)
     ws.cell(row, cols["work"]).value = hours
-    stats.computed_work += 1
+    ctx.stats.computed_work += 1
     if reason:
         _record_shift_anomaly(
-            ws, row, cols, name, day, actual_on, actual_off,
-            rest, hours, shift, reason, stats, anomalies, log,
+            ctx, actual_on, actual_off, rest, hours, shift, reason,
         )
     elif opts.overtime and cols["ot"]:
         # 仅无异常时进入此分支；异常行不生成加班值，避免把待核对数据直接当有效结果。
@@ -319,33 +337,27 @@ def _compute_row_work(
 
 
 def _record_shift_anomaly(
-    ws,
-    row,
-    cols,
-    name,
-    day,
+    ctx: _AttendanceRowContext,
     actual_on,
     actual_off,
     rest,
     hours,
     shift,
     reason,
-    stats,
-    anomalies,
-    log,
 ):
     """标记工时异常并添加到跨页签核对报告。
 
     异常行会在原表标黄，并把工作簿、行号、姓名、日期及计算结果写入统一报告，
     供人工从报告页快速定位复核；本函数只记录和提示，不修正任何数据。
     """
+    ws, row, cols = ctx.ws, ctx.row, ctx.cols
     _highlight_row(ws, row, cols)
-    stats.anomalies += 1
-    anomalies.append({
+    ctx.stats.anomalies += 1
+    ctx.anomalies.append({
         "sheet": ws.title,
         "row": row,
-        "name": name,
-        "date": "%04d-%02d-%02d" % day,
+        "name": ctx.name,
+        "date": "%04d-%02d-%02d" % ctx.day,
         "shift": shift,
         "act_on": cc.fmt_time(actual_on),
         "act_off": cc.fmt_time(actual_off),
@@ -353,36 +365,27 @@ def _record_shift_anomaly(
         "hours": hours,
         "reason": reason,
     })
-    log(
+    ctx.log(
         "    ! 异常：%s 第%d行 %s(%s) —— %s"
-        % (ws.title, row, name, shift, reason)
+        % (ws.title, row, ctx.name, shift, reason)
     )
 
 
-def _record_missing_punch_anomaly(
-    ws,
-    row,
-    cols,
-    name,
-    day,
-    skip,
-    stats,
-    anomalies,
-    log,
-):
+def _record_missing_punch_anomaly(ctx: _AttendanceRowContext, skip):
     """源数据未命中且无完整人工实际时间时，记录缺卡异常。
 
     “假、休、调休”等非工时标记视为合理缺卡，不误报；其余行标黄并写入核对报告。
     """
+    ws, row, cols = ctx.ws, ctx.row, ctx.cols
     if _row_rest_mark(ws, row, cols, skip):
         return
     _highlight_row(ws, row, cols)
-    stats.anomalies += 1
-    anomalies.append({
+    ctx.stats.anomalies += 1
+    ctx.anomalies.append({
         "sheet": ws.title,
         "row": row,
-        "name": name,
-        "date": "%04d-%02d-%02d" % day,
+        "name": ctx.name,
+        "date": "%04d-%02d-%02d" % ctx.day,
         "shift": "-",
         "act_on": "",
         "act_off": "",
@@ -390,48 +393,39 @@ def _record_missing_punch_anomaly(
         "hours": "",
         "reason": "未匹配到打卡数据（系统数据中查无此人此日，或姓名/日期不一致、缺卡）",
     })
-    log("    ! 异常：%s 第%d行 %s —— 未匹配到打卡数据" % (ws.title, row, name))
+    ctx.log("    ! 异常：%s 第%d行 %s —— 未匹配到打卡数据" % (ws.title, row, ctx.name))
 
 
-def _fill_attendance_sheet(
-    ws,
-    start,
-    cols,
-    source_data,
-    opts,
-    skip,
-    anomalies,
-    log,
-):
+def _fill_attendance_sheet(fill_ctx: _AttendanceFillContext):
     """处理一个有效数据页签，返回该页签独立统计。
 
     从 ``start`` 起逐行扫描到工作表末尾；姓名或日期为空的行跳过，避免把表尾
     说明文字误当业务行。匹配、写入、工时计算和缺卡异常全部累加到本页签统计中。
     """
+    ws = fill_ctx.ws
+    cols = fill_ctx.cols
     stats = _SheetFillStats()
-    for row in range(start, ws.max_row + 1):
+    for row in range(fill_ctx.start, ws.max_row + 1):
         name = norm_name(ws.cell(row, cols["name"]).value)
         day = norm_date(ws.cell(row, cols["date"]).value)
         # 姓名或日期为空的行不是业务行，跳过可避免把表尾说明误配为缺卡。
         if not name or day is None:
             continue
         key = (name, day)
-        matched = key in source_data
+        ctx = _AttendanceRowContext(
+            ws=ws, row=row, cols=cols, name=name, day=day,
+            stats=stats, anomalies=fill_ctx.anomalies, log=fill_ctx.log,
+        )
+        matched = key in fill_ctx.source_data
         if matched:
-            on_text, off_text = source_data[key]
+            on_text, off_text = fill_ctx.source_data[key]
             stats.matched += 1
-            _write_matched_times(
-                ws, row, cols, on_text, off_text, opts, stats,
-            )
+            _write_matched_times(ctx, on_text, off_text, fill_ctx.opts)
         else:
             stats.unmatched += 1
-        computed = _compute_row_work(
-            ws, row, cols, name, day, opts, stats, anomalies, log,
-        )
+        computed = _compute_row_work(ctx, fill_ctx.opts)
         if not matched and not computed:
-            _record_missing_punch_anomaly(
-                ws, row, cols, name, day, skip, stats, anomalies, log,
-            )
+            _record_missing_punch_anomaly(ctx, fill_ctx.skip)
     return stats
 
 
@@ -484,16 +478,16 @@ def fill_workbook(target_path, source_data, out_path, opts=None, log=None):
                 log("跳过工作表 '%s'（未找到姓名/日期列）" % ws.title)
                 continue
             # 数据起始行未配置时按“表头行 + 1”处理，确保表头本身不会进入业务行。
-            sheet_stats = _fill_attendance_sheet(
-                ws,
-                data_start if data_start else header_row + 1,
-                cols,
-                source_data,
-                opts,
-                skip,
-                anomalies,
-                log,
-            )
+            sheet_stats = _fill_attendance_sheet(_AttendanceFillContext(
+                ws=ws,
+                start=data_start if data_start else header_row + 1,
+                cols=cols,
+                source_data=source_data,
+                opts=opts,
+                skip=skip,
+                anomalies=anomalies,
+                log=log,
+            ))
             totals["sheets"].append((
                 ws.title,
                 sheet_stats.matched,

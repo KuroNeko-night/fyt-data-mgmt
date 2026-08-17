@@ -15,7 +15,7 @@ interface RemoteWorkbenchProps {
  * iframe 只授予写入剪贴板这一项 Web 业务需要的能力，不获得本地 Tauri 命令权限。
  * 顶栏始终显示当前服务器地址，便于用户确认连接目标并在异常时重新加载。
  */
-export default function RemoteWorkbench({ url = serverUrlOrDefault(), onBack }: RemoteWorkbenchProps) {
+export default function RemoteWorkbench({ url = serverUrlOrDefault(), onBack }: RemoteWorkbenchProps) {  // iframe 只授予 clipboard-write，不获得本地 Tauri 命令权限
   return (
     <main className="fyt-tauri-remote-workbench">
       <header className="fyt-tauri-remote-toolbar">

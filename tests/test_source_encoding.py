@@ -26,7 +26,7 @@ def iter_python_sources():
         if source_root.is_file():
             yield source_root
         elif source_root.is_dir():
-            yield from sorted(source_root.rglob("*.py"))
+            yield from sorted(source_root.rglob("*.py"))  # 排序保证检查顺序稳定
 
 
 def iter_docstrings(tree):
@@ -41,7 +41,7 @@ def iter_docstrings(tree):
             and isinstance(first.value, ast.Constant)
             and isinstance(first.value.value, str)
         ):
-            yield first.value
+            yield first.value  # 仅取模块/类/函数首个常量表达式
 
 
 class SourceEncodingTests(unittest.TestCase):
@@ -54,7 +54,7 @@ class SourceEncodingTests(unittest.TestCase):
         for path in iter_python_sources():
             relative = path.relative_to(ROOT)
             try:
-                text = path.read_bytes().decode("utf-8-sig")
+                text = path.read_bytes().decode("utf-8-sig")  # 容忍 BOM 头
             except UnicodeDecodeError as exc:
                 failures.append(f"{relative}: 不是有效的 UTF-8 文件：{exc}")
                 continue
@@ -64,7 +64,7 @@ class SourceEncodingTests(unittest.TestCase):
                 tokens = tokenize.generate_tokens(io.StringIO(text).readline)
                 for token in tokens:
                     if token.type != tokenize.COMMENT:
-                        continue
+                        continue  # 只检查注释 token
                     if "?" in token.string or "\ufffd" in token.string:
                         failures.append(
                             f"{relative}:{token.start[0]}: 注释含 ASCII 问号或 Unicode 替换字符"
@@ -85,7 +85,7 @@ class SourceEncodingTests(unittest.TestCase):
                         f"{relative}:{docstring.lineno}: 文档字符串含 ASCII 问号或 Unicode 替换字符"
                     )
 
-        self.assertFalse(failures, "\n" + "\n".join(failures))
+        self.assertFalse(failures, "\n" + "\n".join(failures))  # 有失败时一次输出全部
 
 
 if __name__ == "__main__":

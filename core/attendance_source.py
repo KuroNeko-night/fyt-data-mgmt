@@ -46,23 +46,24 @@ def _source_columns(row):
     （姓名/日期/上班打卡/下班打卡）全部命中时返回，否则返回 None。
     每个角色只采用首个命中列，防止“上班2打卡时间”覆盖第一组打卡记录。
     """
-
     headers = [cc.norm_name(value) for value in row]
-    has_name = any("姓名" in header for header in headers)
-    has_punch = any("上班" in header and "打卡" in header for header in headers)
-    if not has_name or not has_punch:
+    if not any("姓名" in header for header in headers):
         return None
+    if not any("上班" in header and "打卡" in header for header in headers):
+        return None
+    role_rules = (
+        ("name", lambda header: "姓名" in header),
+        ("date", lambda header: "日期" in header),
+        ("on", lambda header: "上班" in header and "打卡" in header),
+        ("off", lambda header: "下班" in header and "打卡" in header),
+    )
     columns = {}
     for column, header in enumerate(headers):
         # 每个角色只采用首个命中，避免“上班2打卡时间”覆盖第一组打卡记录。
-        if "name" not in columns and "姓名" in header:
-            columns["name"] = column
-        elif "date" not in columns and "日期" in header:
-            columns["date"] = column
-        elif "on" not in columns and "上班" in header and "打卡" in header:
-            columns["on"] = column
-        elif "off" not in columns and "下班" in header and "打卡" in header:
-            columns["off"] = column
+        for role, matches in role_rules:
+            if role not in columns and matches(header):
+                columns[role] = column
+                break
     return columns if all(role in columns for role in _SOURCE_ROLES) else None
 
 

@@ -48,8 +48,8 @@ export function FilePickerField({
   // WebView 监听器只在选择规则变化时重建；引用保存最新受控值，避免回调闭包使用旧文件列表。
   const valueRef = useRef(value);
   const onChangeRef = useRef(onChange);
-  valueRef.current = value;
-  onChangeRef.current = onChange;
+  valueRef.current = value;  // 每次渲染同步最新受控值，拖放回调不会读到旧列表
+  onChangeRef.current = onChange;  // 同步最新回调，避免闭包使用过期的 onChange
 
   useEffect(() => {
     if (!isTauriRuntime()) return;
@@ -60,7 +60,7 @@ export function FilePickerField({
     const contains = (position: { x: number; y: number }) => {
       const rect = fieldRef.current?.getBoundingClientRect();
       // 高分屏下 Tauri 拖放坐标按物理像素计数，而 DOMRect 使用 CSS 像素，必须除以缩放倍率。
-      const scale = window.devicePixelRatio || 1;
+      const scale = window.devicePixelRatio || 1;  // 物理像素换算为 CSS 像素，避免高分屏命中判断偏移
       const x = position.x / scale;
       const y = position.y / scale;
       return Boolean(rect && x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom);
@@ -74,7 +74,7 @@ export function FilePickerField({
       setDragActive(inside);
       if (event.payload.type !== "drop" || !inside) return;
       // 空扩展名集合表示不限制类型；比较时统一转成小写，兼容 Windows 大小写不敏感路径。
-      const extensions = new Set((filters || []).flatMap((filter) => filter.extensions).map((item) => item.toLowerCase()));
+      const extensions = new Set((filters || []).flatMap((filter) => filter.extensions).map((item) => item.toLowerCase()));  // 扩展名统一小写比较，兼容 Windows 大小写不敏感
       const accepted = directory
         ? event.payload.paths.slice(0, 1)
         : event.payload.paths.filter((path) => !extensions.size || extensions.has(path.split(".").pop()?.toLowerCase() || ""));
@@ -84,13 +84,13 @@ export function FilePickerField({
       }
       const next = multiple
         // Set 同时完成去重并保留已有文件在前、新拖入文件在后的稳定顺序。
-        ? Array.from(new Set([...valueRef.current, ...accepted]))
+        ? Array.from(new Set([...valueRef.current, ...accepted]))  // Set 去重并保持已有文件在前
         : accepted.slice(0, 1);
       setPickerError("");
-      onChangeRef.current(next);
+      onChangeRef.current(next);  // 用最新回调回传，避免闭包使用过期的 onChange
     }).then((remove) => {
       // 监听注册是异步的；组件若已卸载，应立即执行刚取得的清理函数，不能遗留全局监听器。
-      if (disposed) remove(); else unlisten = remove;
+      if (disposed) remove(); else unlisten = remove;  // 异步注册完成后立即清理已卸载组件的监听器
     }).catch((reason) => setPickerError(reason instanceof Error ? reason.message : String(reason)));
     return () => { disposed = true; unlisten(); };
   }, [directory, filters, multiple]);
@@ -101,7 +101,7 @@ export function FilePickerField({
     try {
       const selected = await chooseFiles({ title: `选择${label}`, multiple, directory, filters });
       if (!selected.length) return;
-      const next = multiple ? Array.from(new Set([...value, ...selected])) : selected.slice(0, 1);
+      const next = multiple ? Array.from(new Set([...value, ...selected])) : selected.slice(0, 1);  // 选择器结果同样去重并保持已有文件在前
       onChange(next);
     } catch (reason) {
       setPickerError(reason instanceof Error ? reason.message : String(reason));
@@ -188,13 +188,13 @@ export function TaskPanel({
 }: TaskPanelProps) {
   const [actionError, setActionError] = useState("");
   // 只有任务已停止、无业务错误且存在可访问结果时，才把流程判定为完整成功。
-  const succeeded = !busy && !error && Boolean(outputPath || outDir);
+  const succeeded = !busy && !error && Boolean(outputPath || outDir);  // 只有任务停止且无错误且有结果时才算完整成功
   // step 决定高亮到哪一步，done 决定哪些步骤显示完成勾；两者由同一批状态派生，保持视觉一致。
-  const step = succeeded || busy ? 3 : canRun ? 2 : 1;
+  const step = succeeded || busy ? 3 : canRun ? 2 : 1;  // 阶段由 busy/canRun/succeeded 派生，保持视觉一致
   const done = succeeded ? 3 : busy ? 2 : canRun ? 1 : 0;
 
   // 新结果替换旧结果时清除此前的“打开路径”错误，避免误导用户认为新产物也不可访问。
-  useEffect(() => setActionError(""), [outDir, outputPath]);
+  useEffect(() => setActionError(""), [outDir, outputPath]);  // 新结果替换旧结果时清除旧打开错误
 
   /** 调用桌面系统打开结果文件或目录，并把系统调用错误限制在当前任务面板内。 */
   async function openResult(path: string) {

@@ -182,14 +182,14 @@ export function AdminPage({ currentUserId, onChanged }: { currentUserId: number;
     setLoading(true);
     try {
       // 五组接口互不依赖，并行请求可显著减少管理员中心首次加载等待时间。
-      const [nextData, nextAnnouncements, nextAudit, nextBackups, nextTrash] = await Promise.all([adminData(), adminAnnouncements(), adminAudit(), adminBackups(), adminTrash()]);
+      const [nextData, nextAnnouncements, nextAudit, nextBackups, nextTrash] = await Promise.all([adminData(), adminAnnouncements(), adminAudit(), adminBackups(), adminTrash()]);  // 五组接口互不依赖，并行加载减少等待
       setData(nextData);
       setAnnouncements(nextAnnouncements.announcements);
       setAudit(nextAudit.audit);
       setBackups(nextBackups.backups);
       setTrash(nextTrash.trash);
       // 姓名编辑使用独立草稿表，避免输入过程中直接改写服务端数据快照。
-      setNames(Object.fromEntries(nextData.users.map((user) => [user.id, user.display_name])));
+      setNames(Object.fromEntries(nextData.users.map((user) => [user.id, user.display_name])));  // 姓名草稿独立于服务端快照，避免编辑时直接改写数据
       setError("");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "管理数据加载失败");
@@ -205,7 +205,7 @@ export function AdminPage({ currentUserId, onChanged }: { currentUserId: number;
    * 返回布尔值让需要清空表单的调用方只在服务端真正成功后执行收尾。
    */
   async function run(key: string, action: () => Promise<unknown>) {
-    setBusy(key);
+    setBusy(key);  // 统一互斥写操作，同一时间只允许一个管理动作进行
     setNotice("");
     setError("");
     try {
@@ -250,7 +250,7 @@ export function AdminPage({ currentUserId, onChanged }: { currentUserId: number;
       title: announcementTitle.trim(),
       content: announcementContent.trim(),
       // date 输入没有时区信息，明确拼接 +08:00 才能保证中国时区的截止日完整显示一天。
-      ...(announcementExpiry ? { expires_at: new Date(`${announcementExpiry}T23:59:59+08:00`).toISOString() } : {}),
+      ...(announcementExpiry ? { expires_at: new Date(`${announcementExpiry}T23:59:59+08:00`).toISOString() } : {}),  // 明确中国时区截止时间，避免 date 输入被当 UTC
     }));
     if (sent) { setAnnouncementTitle(""); setAnnouncementContent(""); setAnnouncementExpiry(""); }
   }
@@ -284,7 +284,7 @@ export function AdminPage({ currentUserId, onChanged }: { currentUserId: number;
     try {
       await restoreAdminBackup(restoreTarget.id, restoreConfirmation);
       // 恢复完成后不再执行普通 load，强制浏览器重新建立与新数据状态一致的会话。
-      window.location.reload();
+      window.location.reload();  // 恢复后数据库与会话都可能变化，整页刷新比局部修补更可靠
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "备份恢复失败");
       setBusy("");
@@ -333,7 +333,7 @@ export function AdminPage({ currentUserId, onChanged }: { currentUserId: number;
   }
 
   // 定向消息只发给其他正常账号，排除自己和待审核、拒绝、停用账号。
-  const recipients = useMemo(() => (data?.users || []).filter((user) => user.id !== currentUserId && user.status === "approved"), [data, currentUserId]);
+  const recipients = useMemo(() => (data?.users || []).filter((user) => user.id !== currentUserId && user.status === "approved"), [data, currentUserId]);  // 定向消息只发给其他正常账号
   const filteredAudit = useMemo(() => {
     const query = auditQuery.trim().toLowerCase();
     if (!query) return audit;

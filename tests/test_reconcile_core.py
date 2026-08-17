@@ -43,9 +43,9 @@ class TestReconcileComparison(unittest.TestCase):
         self.assertEqual(
             [item["异常类型"] for item in anomalies],
             ["仅我司名单有", "仅劳务公司有", "总工时不一致", "逐日工时不一致"],
-        )
-        self.assertEqual(anomalies[2]["差异"], 1.0)
-        self.assertEqual(anomalies[3]["差异明细"], "2日:我司8/劳务7")
+        )  # 异常按业务顺序排列
+        self.assertEqual(anomalies[2]["差异"], 1.0)  # 总工时差异
+        self.assertEqual(anomalies[3]["差异明细"], "2日:我司8/劳务7")  # 逐日差异明细
 
 
 class TestReconcileWorkflow(unittest.TestCase):
@@ -58,7 +58,7 @@ class TestReconcileWorkflow(unittest.TestCase):
         self.target_path = os.path.join(self.temp.name, "待对总表.xlsx")
         self.source_path = os.path.join(self.temp.name, "我司来源.xlsx")
         self.labor_path = os.path.join(self.temp.name, "劳务考勤.xlsx")
-        self.out_dir = os.path.join(self.temp.name, "输出")
+        self.out_dir = os.path.join(self.temp.name, "输出")  # 输出目录隔离
         self._write_target()
         self._write_source()
         self._write_labor()
@@ -117,20 +117,20 @@ class TestReconcileWorkflow(unittest.TestCase):
             progress=progress.append,
         )
 
-        self.assertEqual(result["anomalies"], [])
-        self.assertEqual(result["metrics"]["matched_pairs"], 1)
+        self.assertEqual(result["anomalies"], [])  # 人工配对后无异常
+        self.assertEqual(result["metrics"]["matched_pairs"], 1)  # 一对匹配
         self.assertEqual(result["metrics"]["only_us"], 0)
         self.assertEqual(result["metrics"]["only_labor"], 0)
-        self.assertTrue(os.path.isfile(result["filled_path"]))
-        self.assertTrue(os.path.isfile(result["summary_path"]))
-        self.assertEqual(progress[-1], 100)
-        self.assertEqual(progress, sorted(progress))
+        self.assertTrue(os.path.isfile(result["filled_path"]))  # 已填写表输出
+        self.assertTrue(os.path.isfile(result["summary_path"]))  # 汇总报告输出
+        self.assertEqual(progress[-1], 100)  # 进度最终到 100
+        self.assertEqual(progress, sorted(progress))  # 进度单调递增
 
         filled = openpyxl.load_workbook(result["filled_path"], data_only=True)
         try:
             worksheet = filled["总表"]
-            self.assertEqual(worksheet.cell(2, 13).value, 80)
-            self.assertIsNotNone(worksheet.cell(2, 14).value)
+            self.assertEqual(worksheet.cell(2, 13).value, 80)  # 出勤工时填写
+            self.assertIsNotNone(worksheet.cell(2, 14).value)  # 对账时间填写
         finally:
             filled.close()
 
@@ -148,8 +148,8 @@ class TestLaborMergePolicy(unittest.TestCase):
             merged, incoming, "后.xlsx", "first", logs.append,
         )
 
-        self.assertEqual(duplicates, 1)
-        self.assertEqual(merged["张三"]["total"], 8)
+        self.assertEqual(duplicates, 1)  # 重复计数
+        self.assertEqual(merged["张三"]["total"], 8)  # 先者优先保留
         self.assertIn("先者优先", logs[0])
 
 

@@ -43,7 +43,7 @@ function statusTone(status: MasterDataImportStatus) {
 /** 汇总候选关系在原工作簿中的来源位置，最多直接列出四处以控制卡片高度。 */
 function CandidateSource({ candidate }: { candidate: MasterDataCandidate }) {
   // 一个候选关系可能包含多个可选值，每个值又有多个单元格来源，此处合并为扁平来源清单。
-  const sources = candidate.values.flatMap((item) => item.sources);
+  const sources = candidate.values.flatMap((item) => item.sources);  // 多个可选值的来源合并为扁平清单
   return <small className="fyt-master-source">
     来源：{sources.slice(0, 4).map((item) => `${item.sheet} 第 ${item.row} 行`).join("、")}
     {sources.length > 4 ? ` 等 ${sources.length} 处` : ""}
@@ -93,7 +93,7 @@ export function CatalogPanel() {
   async function mutate(key: string, op: "upsert_supplier" | "delete_supplier" | "upsert_material" | "delete_material", params: Record<string, string>) {
     setBusy(key); setError(""); setNotice("");
     try {
-      setData(await catalogMutate(op, params));
+      setData(await catalogMutate(op, params));  // 以服务端返回的完整快照替换本地主数据
       setNotice(op.startsWith("delete") ? "主数据已删除。" : "主数据已保存。");
     } catch (reason) { setError(reason instanceof Error ? reason.message : "操作失败"); }
     finally { setBusy(""); }
@@ -138,7 +138,7 @@ export function CatalogPanel() {
     try {
       const result = await masterDataImport(id);
       setSelectedBatch(result.batch);
-      setManualValues({});
+      setManualValues({});  // 清空上一个批次遗留的手动输入草稿
     } catch (reason) { setError(reason instanceof Error ? reason.message : "批次详情加载失败"); }
     finally { setBusy(""); }
   }
@@ -153,7 +153,7 @@ export function CatalogPanel() {
     setBusy(key); setError(""); setNotice("");
     try {
       const result = await resolveMasterDataConflict(selectedBatch.id, candidate.id, decision, value);
-      setSelectedBatch(result.batch);
+      setSelectedBatch(result.batch);  // 冲突决定只写入批次审查记录，正式主数据仍隔离
       setNotice("冲突处理已保存。");
       await refreshImports();
     } catch (reason) { setError(reason instanceof Error ? reason.message : "冲突处理失败"); }
@@ -182,7 +182,7 @@ export function CatalogPanel() {
       setSelectedBatch(result.batch);
       setNotice(result.message);
       // 合并同时改变两块数据，两个刷新请求可并行执行。
-      await Promise.all([refreshImports(), refreshCatalog()]);
+      await Promise.all([refreshImports(), refreshCatalog()]);  // 合并同时改变正式库与批次状态，并行刷新保持一致
     } catch (reason) { setError(reason instanceof Error ? reason.message : "主数据合并失败"); }
     finally { setBusy(""); }
   }
@@ -201,7 +201,7 @@ export function CatalogPanel() {
   }
 
   // 使用中文本地排序，让供应商名称和材料编号在每次刷新后保持可预测顺序。
-  const suppliers = useMemo(() => Object.entries(data?.suppliers || {}).sort(([a], [b]) => a.localeCompare(b, "zh-CN")), [data]);
+  const suppliers = useMemo(() => Object.entries(data?.suppliers || {}).sort(([a], [b]) => a.localeCompare(b, "zh-CN")), [data]);  // 中文本地排序保持刷新后可预测顺序
   const query = materialQuery.trim().toLowerCase();
   const materials = useMemo(() => Object.entries(data?.materials || {})
     .filter(([code, item]) => !query || `${code} ${item.name || ""} ${item.supplier || ""}`.toLowerCase().includes(query))

@@ -20,7 +20,7 @@ class ShippingReviewCoreTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix="fyt_shipping_review_")
         self.package = self.path("包装日计划.xlsx")
         self.review = self.path("发运评审.xlsx")
-        self.catalog = self.path("主数据.json")
+        self.catalog = self.path("主数据.json")  # 主数据库隔离
 
     def tearDown(self):
         self.temp.cleanup()
@@ -36,7 +36,7 @@ class ShippingReviewCoreTests(unittest.TestCase):
             worksheet = workbook.create_sheet(title)
             for row in rows:
                 worksheet.append(row)
-        workbook.active = active
+        workbook.active = active  # 指定保存时的活动页签
         workbook.save(path)
         workbook.close()
 
@@ -75,17 +75,17 @@ class ShippingReviewCoreTests(unittest.TestCase):
         self._save_book(self.package, [("包装日计划", self._package_rows())])
         self._save_book(self.review, [("评审", self._review_rows())])
         result = self._run()
-        self.assertEqual(result["source_rows"], 5)
-        self.assertEqual(result["kept_rows"], 4)
-        self.assertEqual(result["obsolete_rows"], 1)
-        self.assertEqual(result["package_materials"], 3)
-        self.assertEqual(result["review_materials"], 3)
-        self.assertEqual(result["counts"]["quantity_diff"], 0)
-        self.assertEqual(result["counts"]["full_match"], 2)
-        self.assertEqual(result["counts"]["name_issues"], 1)
+        self.assertEqual(result["source_rows"], 5)  # 源表总行数
+        self.assertEqual(result["kept_rows"], 4)  # 过滤后保留行数
+        self.assertEqual(result["obsolete_rows"], 1)  # 作废行数
+        self.assertEqual(result["package_materials"], 3)  # 包装侧物料数
+        self.assertEqual(result["review_materials"], 3)  # 评审侧物料数
+        self.assertEqual(result["counts"]["quantity_diff"], 0)  # 数量差异
+        self.assertEqual(result["counts"]["full_match"], 2)  # 完全匹配
+        self.assertEqual(result["counts"]["name_issues"], 1)  # 名称问题
         a_row = next(row for row in result["details"] if row["code"] == "A-01")
-        self.assertEqual(a_row["package_quantity"], 10)
-        self.assertEqual(a_row["review_quantity"], 10)
+        self.assertEqual(a_row["package_quantity"], 10)  # 重复 BOX 累加
+        self.assertEqual(a_row["review_quantity"], 10)  # 评审拆行累加
         self.assertEqual(a_row["review_rows"], 2)
 
     def test_saved_active_review_sheet_is_used(self):
@@ -97,7 +97,7 @@ class ShippingReviewCoreTests(unittest.TestCase):
             ("评审A", self._review_rows()),
         ], active=1)
         result = self._run()
-        self.assertEqual(result["review_sheet"], "评审A")
+        self.assertEqual(result["review_sheet"], "评审A")  # 使用保存时的活动页签
         self.assertEqual(result["counts"]["quantity_diff"], 0)
 
     def test_requested_review_sheet_overrides_saved_active_sheet(self):
@@ -109,7 +109,7 @@ class ShippingReviewCoreTests(unittest.TestCase):
             ("正式版", self._review_rows(a_total=10)),
         ], active=0)
         result = self._run(review_sheet="正式版")
-        self.assertEqual(result["review_sheet"], "正式版")
+        self.assertEqual(result["review_sheet"], "正式版")  # 人工页签覆盖活动页签
         self.assertEqual(result["counts"]["quantity_diff"], 0)
 
     def test_quantity_difference_and_missing_name_have_distinct_status(self):
@@ -121,10 +121,10 @@ class ShippingReviewCoreTests(unittest.TestCase):
         self._save_book(self.review, [("评审", review_rows)])
         result = self._run()
         statuses = {row["code"]: row["status"] for row in result["details"]}
-        self.assertEqual(statuses["A-01"], "数量差异")
-        self.assertEqual(statuses["B-02"], "评审名称缺失")
+        self.assertEqual(statuses["A-01"], "数量差异")  # 数量差异状态
+        self.assertEqual(statuses["B-02"], "评审名称缺失")  # 名称缺失状态
         self.assertEqual(result["counts"]["quantity_diff"], 1)
-        self.assertEqual(result["counts"]["name_issues"], 2)
+        self.assertEqual(result["counts"]["name_issues"], 2)  # 名称问题计数
 
     def test_report_contains_four_auditable_sheets(self):
         """正式报告必须包含总表、异常、包装透视和过滤审计四个页签。"""
@@ -132,13 +132,13 @@ class ShippingReviewCoreTests(unittest.TestCase):
         self._save_book(self.package, [("包装日计划", self._package_rows())])
         self._save_book(self.review, [("评审", self._review_rows())])
         result = self._run()
-        self.assertTrue(os.path.isfile(result["report_path"]))
+        self.assertTrue(os.path.isfile(result["report_path"]))  # 报告落盘
         workbook = openpyxl.load_workbook(result["report_path"], data_only=False)
         try:
-            self.assertEqual(workbook.sheetnames, ["对比总表", "异常明细", "包装透视", "过滤审计"])
+            self.assertEqual(workbook.sheetnames, ["对比总表", "异常明细", "包装透视", "过滤审计"])  # 四个审计页签
             self.assertEqual(workbook["过滤审计"]["A1"].value, "包装日计划过滤审计")
             values = [cell.value for row in workbook["过滤审计"].iter_rows() for cell in row]
-            self.assertIn("BOX-X", values)
+            self.assertIn("BOX-X", values)  # 作废行进入审计
         finally:
             workbook.close()
 
@@ -148,7 +148,7 @@ class ShippingReviewCoreTests(unittest.TestCase):
         self._save_book(self.package, [("包装日计划", [["物料号", "物料描述", "实际包装数量"], ["A", "螺栓", 1]])])
         self._save_book(self.review, [("评审", self._review_rows())])
         with self.assertRaisesRegex(ValueError, "BOX状态"):
-            self._run()
+            self._run()  # 缺列给出中文字段错误
 
 
 if __name__ == "__main__":

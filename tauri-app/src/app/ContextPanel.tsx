@@ -28,7 +28,7 @@ function taskStatusText(status: string) {
   if (status === "running") return "处理中";
   if (status === "failed") return "处理失败";
   if (status === "interrupted") return "已中断";
-  return "等待处理";
+  return "等待处理";  // 未知状态不暴露内部键，统一按待处理展示
 }
 
 /**

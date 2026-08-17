@@ -36,7 +36,7 @@ export function AuthScreen({ onAuthed }: { onAuthed: (user: User) => void }) {
       } else {
         const result = await login(username, password);
         // 先写入令牌再通知父组件加载数据，确保紧随其后的 API 请求都带认证头。
-        setToken(result.token);
+        setToken(result.token);  // 先写令牌再通知父组件，确保后续请求带认证头
         onAuthed(result.user);
       }
     } catch (error) {

@@ -38,9 +38,9 @@ class TestProgress(unittest.TestCase):
         p.stage("a")                     # 进入 a:0
         p.stage("b")                     # 进入 b:50
         p.done()                         # 100
-        self.assertEqual(seen[0], 0)
-        self.assertIn(50, seen)
-        self.assertEqual(seen[-1], 100)
+        self.assertEqual(seen[0], 0)  # 起点为零
+        self.assertIn(50, seen)  # 阶段边界
+        self.assertEqual(seen[-1], 100)  # 终点为一百
 
     def test_tick_interpolates_within_stage(self):
         """阶段内完成比例应映射到该阶段在总进度中的区间。"""
@@ -50,8 +50,8 @@ class TestProgress(unittest.TestCase):
         p.stage("a")
         p.tick(1, 2)                     # a 区间 [0,40) 的一半 → 20
         p.tick(2, 2)                     # a 末尾 → 40
-        self.assertIn(20, seen)
-        self.assertIn(40, seen)
+        self.assertIn(20, seen)  # 阶段内插值
+        self.assertIn(40, seen)  # 阶段末边界
 
     def test_monotonic_never_decreases(self):
         """乱序或重复业务回调不能让用户看到进度倒退。"""
@@ -63,7 +63,7 @@ class TestProgress(unittest.TestCase):
         p.tick(5, 10)                    # 50
         p.tick(1, 10)                    # 想回退到 10 → 被丢弃
         p.tick(8, 10)                    # 80
-        self.assertEqual(seen, sorted(seen))
+        self.assertEqual(seen, sorted(seen))  # 进度单调不降
         self.assertNotIn(10, seen)
 
     def test_weights_normalize(self):
@@ -86,7 +86,7 @@ class TestE2EProgress(unittest.TestCase):
 
         self._tmp = tempfile.mkdtemp(prefix="fyt_prog_")
         self._old_catalog = os.environ.get("FYT_CATALOG_PATH")
-        os.environ["FYT_CATALOG_PATH"] = os.path.join(self._tmp, "catalog.json")
+        os.environ["FYT_CATALOG_PATH"] = os.path.join(self._tmp, "catalog.json")  # 主数据库隔离
 
     def tearDown(self):
         """恢复环境并删除端到端业务产物。"""
@@ -106,10 +106,10 @@ class TestE2EProgress(unittest.TestCase):
     def _assert_clean(self, seq):
         """统一断言业务进度非空、从零开始、单调并以一百结束。"""
 
-        self.assertTrue(seq, "未收到任何进度")
-        self.assertEqual(seq[0], 0, "起点非 0：%s" % seq)
-        self.assertEqual(seq[-1], 100, "终点非 100：%s" % seq)
-        self.assertEqual(seq, sorted(seq), "进度非单调：%s" % seq)
+        self.assertTrue(seq, "未收到任何进度")  # 必须有进度
+        self.assertEqual(seq[0], 0, "起点非 0：%s" % seq)  # 起点为零
+        self.assertEqual(seq[-1], 100, "终点非 100：%s" % seq)  # 终点为一百
+        self.assertEqual(seq, sorted(seq), "进度非单调：%s" % seq)  # 单调不降
 
     def test_compare_progress(self):
         """表格对比使用合成文件也应完整报告零到一百。"""
@@ -132,7 +132,7 @@ class TestE2EProgress(unittest.TestCase):
         seq, cb = self._cap()
         compare_core.run(a, b, key="物料编码", out_dir=self._tmp,
                          log=lambda *a, **k: None, progress=cb)
-        self._assert_clean(seq)
+        self._assert_clean(seq)  # 对比业务进度契约
 
     def test_purchase_progress(self):
         """存在真实样本时验证采购对账进度契约。"""
@@ -140,7 +140,7 @@ class TestE2EProgress(unittest.TestCase):
         from tests import sample_data as sd
         f1, f2 = sd.purchase_ours(), sd.purchase_supplier()
         if not (f1 and f2):
-            self.skipTest("缺少采购对账样本")
+            self.skipTest("缺少采购对账样本")  # 样本缺失跳过
         from core import purchase_core
         seq, cb = self._cap()
         purchase_core.run(f1, f2, out_dir=self._tmp,
@@ -153,7 +153,7 @@ class TestE2EProgress(unittest.TestCase):
         from tests import sample_data as sd
         tgt, src = sd.attendance_target(), sd.attendance_source()
         if not (tgt and src):
-            self.skipTest("缺少考勤填报样本")
+            self.skipTest("缺少考勤填报样本")  # 样本缺失跳过
         from core import attendance_core
         seq, cb = self._cap()
         attendance_core.run([tgt], [src], out_dir=self._tmp,
@@ -166,7 +166,7 @@ class TestE2EProgress(unittest.TestCase):
         from tests import sample_data as sd
         plans = sd.arrival_plans()
         if not plans:
-            self.skipTest("缺少到料明细样本")
+            self.skipTest("缺少到料明细样本")  # 样本缺失跳过
         from core import arrival_core
         rows = [{"path": p, "batch_no": "", "total": 566,
                  "remark": "", "include": True} for p in plans]
@@ -181,7 +181,7 @@ class TestE2EProgress(unittest.TestCase):
         from tests import sample_data as sd
         folder = sd.invoice_folder()
         if not folder:
-            self.skipTest("缺少发票样本")
+            self.skipTest("缺少发票样本")  # 样本缺失跳过
         from core import invoice_core
         seq, cb = self._cap()
         invoice_core.scan(folder, log=lambda *a, **k: None, progress=cb)
@@ -193,7 +193,7 @@ class TestE2EProgress(unittest.TestCase):
         from tests import sample_data as sd
         srcs = sd.pivot_sources()
         if not srcs:
-            self.skipTest("缺少透视样本")
+            self.skipTest("缺少透视样本")  # 样本缺失跳过
         from core import pivot_core
         seq, cb = self._cap()
         pivot_core.run(srcs, out_dir=self._tmp,
@@ -207,7 +207,7 @@ class TestE2EProgress(unittest.TestCase):
         tgt, src, lab = (sd.reconcile_target(), sd.reconcile_sources(),
                          sd.reconcile_labor())
         if not (tgt and src and lab):
-            self.skipTest("缺少对账样本")
+            self.skipTest("缺少对账样本")  # 样本缺失跳过
         from core import reconcile_core
         seq, cb = self._cap()
         reconcile_core.run(tgt, src, lab, out_dir=self._tmp,

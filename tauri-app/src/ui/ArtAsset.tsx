@@ -31,10 +31,10 @@ function fallbackName(name: string) {
  * @returns 成功时返回 img 元素，加载失败一次后返回 CSS 降级 span。
  */
 export function ArtAsset({ name, alt = "", className = "", loading = "lazy" }: Props) {
-  const [failed, setFailed] = useState(false);
+  const [failed, setFailed] = useState(false);  // 失败状态只在当前资源生命周期内维护
   const assetName = fallbackName(name);
   const fallbackClass = `fyt-art-fallback fyt-art-${assetName} fyt-art-fallback-${assetName}`;
-  if (failed) {
+  if (failed) {  // 失败一次后切换 CSS 降级，不触发重复加载循环
     return <span className={`${fallbackClass} ${className}`.trim()} aria-hidden={alt ? undefined : "true"} role={alt ? "img" : undefined} aria-label={alt || undefined}><i /><b /></span>;
   }
   return <img className={`fyt-art-asset fyt-art-${assetName} ${className}`.trim()} src={`/illustrations/generated/${name}`} alt={alt} loading={loading} decoding="async" aria-hidden={alt ? undefined : "true"} onError={() => setFailed(true)} />;

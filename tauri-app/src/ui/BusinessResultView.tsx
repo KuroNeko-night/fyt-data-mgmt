@@ -25,7 +25,7 @@ function noticeTone(tone: string): "info" | "success" | "warning" | "error" {
 export function BusinessResultView({ presentation }: { presentation: BusinessResultPresentation }) {
   const quality = presentation.quality;
   // 兼容尚未提供可调参数投影的旧业务结果，避免参数区渲染失败。
-  const parameters = presentation.parameters || [];
+  const parameters = presentation.parameters || [];  // 兼容旧业务结果未提供参数投影的情况
   return <section className="fyt-business-result" aria-label={presentation.title}>
     <header className="fyt-business-result-head">
       <div><span>业务结果</span><h3>{presentation.title}</h3></div>

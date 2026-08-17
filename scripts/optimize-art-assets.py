@@ -39,7 +39,7 @@ def selected_ids(value: str | None) -> set[str]:
     if not value:
         # 文件名约定为“编号-资源名.png”，这里只取首段编号并去重，且限制在本阶段 A01～A07 范围内。
         return {path.stem.split("-", 1)[0] for path in CACHE_ROOT.glob("A0[1-7]-*.png")}
-    return {item.strip() for item in value.split(",") if item.strip()}
+    return {item.strip() for item in value.split(",") if item.strip()}  # 手动指定时去空白与空项
 
 
 def remove_chroma_key(source: Path, target: Path) -> None:
@@ -58,8 +58,8 @@ def remove_chroma_key(source: Path, target: Path) -> None:
     """
 
     if not REMOVE_CHROMA_KEY.exists():
-        raise RuntimeError("找不到本地抠图工具 remove_chroma_key.py")
-    target.parent.mkdir(parents=True, exist_ok=True)
+        raise RuntimeError("找不到本地抠图工具 remove_chroma_key.py")  # 工具缺失不进入半处理
+    target.parent.mkdir(parents=True, exist_ok=True)  # 预先创建输出父目录
     command = [
         sys.executable,
         str(REMOVE_CHROMA_KEY),
@@ -93,11 +93,11 @@ def validate_transparency(path: Path) -> None:
     """
 
     with Image.open(path) as image:
-        rgba = image.convert("RGBA")
+        rgba = image.convert("RGBA")  # 统一转 RGBA 读取 alpha
         # 四角通常只包含纯背景；检查透明通道不会误判主体内部需要保留的半透明边缘。
-        corners = [rgba.getpixel(point)[3] for point in [(0, 0), (rgba.width - 1, 0), (0, rgba.height - 1), (rgba.width - 1, rgba.height - 1)]]
+        corners = [rgba.getpixel(point)[3] for point in [(0, 0), (rgba.width - 1, 0), (0, rgba.height - 1), (rgba.width - 1, rgba.height - 1)]]  # 采集四角 alpha
         if not all(alpha == 0 for alpha in corners):
-            raise RuntimeError(f"{path.name} 四角没有完全透明")
+            raise RuntimeError(f"{path.name} 四角没有完全透明")  # 四角未全透明即抠图残留
 
 
 def write_webp(source: Path, target: Path) -> None:
@@ -129,10 +129,10 @@ def output_targets(asset: dict, base_name: str) -> list[Path]:
     """
 
     extension = str(asset.get("output", "png")).lower()
-    targets = [OUTPUT_ROOT / "web" / f"{base_name}.{extension}"]
+    targets = [OUTPUT_ROOT / "web" / f"{base_name}.{extension}"]  # Web 端总是输出
     # 只有明确标记桌面使用场景的资源才复制到 Tauri，避免无关资产扩大安装包。
     if "tauri-home" in asset["usage"] or "tauri-task-center" in asset["usage"] or "tauri-mode-picker" in asset["usage"]:
-        targets.append(OUTPUT_ROOT / "tauri" / f"{base_name}.{extension}")
+        targets.append(OUTPUT_ROOT / "tauri" / f"{base_name}.{extension}")  # 桌面端按用途追加
     return targets
 
 
@@ -151,7 +151,7 @@ def clear_old_outputs(base_name: str) -> None:
 
     for directory in (OUTPUT_ROOT / "web", OUTPUT_ROOT / "tauri"):
         for path in directory.glob(f"{base_name}.*"):
-            path.unlink()
+            path.unlink()  # 删除同名旧格式，防止同步脚本拾取
 
 
 def save_primary(source: Path, target: Path, chroma_key: bool) -> None:
@@ -170,44 +170,62 @@ def save_primary(source: Path, target: Path, chroma_key: bool) -> None:
     """
 
     with Image.open(source) as image:
-        prepared = image.convert("RGBA" if chroma_key else "RGB")
+        prepared = image.convert("RGBA" if chroma_key else "RGB")  # 透明资源保留 alpha，其余丢弃
         prepared.save(target, target.suffix.lstrip(".").upper(), optimize=True)
+
+
+def _asset_source_path(asset_id: str, asset: dict):
+    """定位对话生成图；允许中文说明变化，但编号必须稳定唯一。"""
+    source_path = CACHE_ROOT / f"{asset_id}-{asset['name']}.png"
+    if not source_path.exists():
+        source_path = next(CACHE_ROOT.glob(f"{asset_id}-*.png"), None)  # 中文名变化时按编号兜底
+    if not source_path or not source_path.exists():
+        raise RuntimeError(f"缺少 {asset_id} 的对话生成图片，请先复制到 {CACHE_ROOT}")
+    return source_path
+
+
+def _prepare_asset_image(asset: dict, source_path):
+    """按资源是否透明生成或直接返回待输出图片路径。"""
+    if not asset["chromaKey"]:
+        return source_path  # 不透明资源直接用原图
+    prepared = CACHE_ROOT / f"{source_path.stem}-alpha.png"
+    remove_chroma_key(source_path, prepared)  # 调用抠图生成透明版
+    validate_transparency(prepared)
+    return prepared
+
+
+def _asset_final_files(base_name: str) -> list[str]:
+    """列出输出目录中该资源名的全部版本，并统一为正斜杠相对路径。"""
+    return [
+        str(path.relative_to(OUTPUT_ROOT)).replace("\\", "/")
+        for path in sorted(OUTPUT_ROOT.rglob(f"{base_name}.*"))
+    ]
 
 
 def _process_asset(asset_id: str, asset: dict, prompt_manifest: dict) -> dict:
     """处理单个美术资源并返回清单记录。"""
     if not asset or not asset_id.startswith("A0") or int(asset_id[1:]) > 7:
-        raise RuntimeError(f"本阶段不处理资源 {asset_id}")
-    source_path = CACHE_ROOT / f"{asset_id}-{asset['name']}.png"
-    if not source_path.exists():
-        # 允许原图文件名的中文说明发生变化，但编号必须保持稳定且唯一。
-        source_path = next(CACHE_ROOT.glob(f"{asset_id}-*.png"), None)
-    if not source_path or not source_path.exists():
-        raise RuntimeError(f"缺少 {asset_id} 的对话生成图片，请先复制到 {CACHE_ROOT}")
+        raise RuntimeError(f"本阶段不处理资源 {asset_id}")  # 仅允许 A01～A07
+    source_path = _asset_source_path(asset_id, asset)
     with Image.open(source_path) as source_image:
-        source_size = f"{source_image.width}x{source_image.height}"
+        source_size = f"{source_image.width}x{source_image.height}"  # 记录原始尺寸供审计
     generated_at = datetime.fromtimestamp(source_path.stat().st_mtime, timezone.utc).isoformat()
     base_name = asset["name"]
     clear_old_outputs(base_name)  # 在写新格式前清理旧后缀，保证清单只列出当前有效版本。
-    if asset["chromaKey"]:
-        prepared = CACHE_ROOT / f"{asset_id}-{base_name}-alpha.png"
-        remove_chroma_key(source_path, prepared)
-        validate_transparency(prepared)
-    else:
-        prepared = source_path
+    prepared = _prepare_asset_image(asset, source_path)
     for target in output_targets(asset, base_name):
         target.parent.mkdir(parents=True, exist_ok=True)
         if target.suffix.lower() == ".png":
-            save_primary(prepared, target, asset["chromaKey"])
+            save_primary(prepared, target, asset["chromaKey"])  # PNG 走主文件保存
         else:
-            write_webp(prepared, target)
+            write_webp(prepared, target)  # 其他格式转 WebP
     if str(asset.get("output", "png")).lower() == "png":
         # PNG 作为无损主文件时额外生成 WebP，让不同前端可按体积与兼容性选择。
         for directory in (OUTPUT_ROOT / "web", OUTPUT_ROOT / "tauri"):
             if directory.exists() and (directory / f"{base_name}.png").exists():
-                write_webp(prepared, directory / f"{base_name}.webp")
+                write_webp(prepared, directory / f"{base_name}.webp")  # 附加 WebP 供前端选择
     # 清单统一使用正斜杠，确保在 Windows 生成后仍可被 Linux 和前端工具稳定解析。
-    final_files = [str(path.relative_to(OUTPUT_ROOT)).replace("\\", "/") for path in sorted(OUTPUT_ROOT.rglob(f"{base_name}.*"))]
+    final_files = _asset_final_files(base_name)
     return {
         "id": asset_id,
         "version": prompt_manifest["version"],
@@ -258,10 +276,10 @@ def main() -> None:
     args = parser.parse_args()
     # 资源清单是本脚本唯一事实源；读取失败会直接抛出 JSON/OSError，不进入半处理状态。
     prompt_manifest = json.loads((ROOT / "scripts" / "art-prompts" / "manifest.json").read_text(encoding="utf-8"))
-    assets = {item["id"]: item for item in prompt_manifest["assets"]}
+    assets = {item["id"]: item for item in prompt_manifest["assets"]}  # 编号索引便于按参数取用
     records = [
         _process_asset(asset_id, assets.get(asset_id), prompt_manifest)
-        for asset_id in sorted(selected_ids(args.assets))
+        for asset_id in sorted(selected_ids(args.assets))  # 排序保证处理顺序稳定
     ]
     _write_manifest(records)
     print(f"已优化 {len(records)} 个资源，并写入 {OUTPUT_ROOT / 'manifest.json'}")

@@ -76,6 +76,16 @@ def _reconcile_parameters(result: Mapping[str, object]) -> list[dict[str, object
     ]
 
 
+def _reconcile_metrics(level, score, tone, matched, diff_people, only_us, only_labor):
+    """组装工时对账的四项核心指标。"""
+    return [
+        _metric("credibility", "可信度", f"{level} · {score}/100", tone=tone),
+        _metric("matched", "成功匹配", matched, note="双方名单成功配对人数", tone="success"),
+        _metric("diff_people", "工时差异人数", diff_people, tone="danger" if diff_people else "success"),
+        _metric("single_side", "单方名单", only_us + only_labor, note=f"我司独有 {only_us}，劳务独有 {only_labor}", tone="warning" if only_us + only_labor else "success"),
+    ]
+
+
 def _present_reconcile(value: object, limit: int) -> dict[str, object] | None:
     """生成工时对账投影，整合异常、双方独有名单和可信度检查。"""
     result = unwrap_result(value)
@@ -106,12 +116,9 @@ def _present_reconcile(value: object, limit: int) -> dict[str, object] | None:
         "kind": "reconcile",
         "title": "工时对账结果",
         "summary": f"可信度 {level}（{score}/100），匹配 {matched} 人，发现 {anomaly_count} 条异常。",
-        "metrics": [
-            _metric("credibility", "可信度", f"{level} · {score}/100", tone=tone),
-            _metric("matched", "成功匹配", matched, note="双方名单成功配对人数", tone="success"),
-            _metric("diff_people", "工时差异人数", diff_people, tone="danger" if diff_people else "success"),
-            _metric("single_side", "单方名单", only_us + only_labor, note=f"我司独有 {only_us}，劳务独有 {only_labor}", tone="warning" if only_us + only_labor else "success"),
-        ],
+        "metrics": _reconcile_metrics(
+            level, score, tone, matched, diff_people, only_us, only_labor,
+        ),
         "quality": _quality(score, "综合名单覆盖、重复姓名、工时差异和文件识别情况评估。", quality_checks, level=level),
         "parameters": display_parameters,
         "sections": [_section(
@@ -127,18 +134,8 @@ def _present_reconcile(value: object, limit: int) -> dict[str, object] | None:
     }
 
 
-def _present_pivot(value: object, limit: int) -> dict[str, object] | None:
-    """生成销售透视投影，展示工作表识别、人工恢复行和动态透视提示。"""
-    result = unwrap_result(value)
-    audit = [item for item in _sequence(result.get("audit")) if isinstance(item, Mapping)]
-    if not audit and "groups" not in result and "score" not in result:
-        return None
-    used = [item for item in audit if bool(item.get("use"))]  # “纳入”以人工复核后的 use 为准。
-    score = _integer(result.get("score"))
-    level = _text(result.get("level")) or "未评级"
-    groups = _integer(result.get("groups"))
-    total = result.get("total", 0)
-    issues = _sequence(result.get("issues"))
+def _pivot_quality_checks(issues):
+    """把销售透视的结构风险转换为前端可信度检查。"""
     checks = []
     for item in issues:
         values = _sequence(item)
@@ -152,6 +149,33 @@ def _present_pivot(value: object, limit: int) -> dict[str, object] | None:
         ))
     if not checks:
         checks.append(_quality_check("success", "识别与汇总", "没有发现需要额外提示的结构风险。"))
+    return checks
+
+
+def _pivot_metrics(result, used, audit, groups, total, review):
+    """组装销售透视的五个核心指标。"""
+    return [
+        _metric("files", "源文件", result.get("files", 0), tone="info"),
+        _metric("sheets", "纳入工作表", len(used), note=f"共识别 {len(audit)} 张", tone="success"),
+        _metric("groups", "物料分组", groups, tone="success"),
+        _metric("total", "采购数量合计", total, tone="neutral"),
+        _metric("held", "人工恢复行", review.get("held_kept_n", 0), tone="info"),
+    ]
+
+
+def _present_pivot(value: object, limit: int) -> dict[str, object] | None:
+    """生成销售透视投影，展示工作表识别、人工恢复行和动态透视提示。"""
+    result = unwrap_result(value)
+    audit = [item for item in _sequence(result.get("audit")) if isinstance(item, Mapping)]
+    if not audit and "groups" not in result and "score" not in result:
+        return None
+    used = [item for item in audit if bool(item.get("use"))]  # “纳入”以人工复核后的 use 为准。
+    score = _integer(result.get("score"))
+    level = _text(result.get("level")) or "未评级"
+    groups = _integer(result.get("groups"))
+    total = result.get("total", 0)
+    issues = _sequence(result.get("issues"))
+    checks = _pivot_quality_checks(issues)
     rows = [{
         "file": _basename(item.get("file")),
         "sheet": item.get("sheet"),
@@ -172,13 +196,7 @@ def _present_pivot(value: object, limit: int) -> dict[str, object] | None:
         "kind": "pivot",
         "title": "销售透视结果",
         "summary": f"已从 {len(used)} 张工作表汇总 {groups} 个物料分组，采购数量合计 {_text(total)}。",
-        "metrics": [
-            _metric("files", "源文件", result.get("files", 0), tone="info"),
-            _metric("sheets", "纳入工作表", len(used), note=f"共识别 {len(audit)} 张", tone="success"),
-            _metric("groups", "物料分组", groups, tone="success"),
-            _metric("total", "采购数量合计", total, tone="neutral"),
-            _metric("held", "人工恢复行", review.get("held_kept_n", 0), tone="info"),
-        ],
+        "metrics": _pivot_metrics(result, used, audit, groups, total, review),
         "quality": _quality(score, "评分依据逐表类型识别、关键字段完整度、采购数量勾稽和人工复核结果。", checks, level=level),
         "parameters": [],
         "sections": [_section(
@@ -337,6 +355,41 @@ def _purchase_sections(
     return sections
 
 
+def _purchase_metrics(
+    pairs, rate, base_total, left_name, right_name,
+    left_unmatched, right_unmatched, conflict_rows,
+):
+    """组装采购对账的五项核心指标。"""
+    return [
+        _metric("pairs", "成功配对", len(pairs), tone="success"),
+        _metric(
+            "match_rate",
+            "匹配率",
+            f"{rate:.1f}%",
+            note=f"以双方较大有效行数 {base_total} 为分母",
+            tone="success" if rate >= 95 else "warning",
+        ),
+        _metric(
+            "left_unmatched",
+            f"{left_name}未配对",
+            left_unmatched,
+            tone="danger" if left_unmatched else "success",
+        ),
+        _metric(
+            "right_unmatched",
+            f"{right_name}未配对",
+            right_unmatched,
+            tone="danger" if right_unmatched else "success",
+        ),
+        _metric(
+            "quantity_conflicts",
+            "数量疑点",
+            len(conflict_rows),
+            tone="warning" if conflict_rows else "success",
+        ),
+    ]
+
+
 def _present_purchase(value: object, limit: int) -> dict[str, object] | None:
     """生成采购数量对账投影，展示配对率、数量疑点和单侧记录。
 
@@ -363,6 +416,7 @@ def _present_purchase(value: object, limit: int) -> dict[str, object] | None:
     right_name = _text(result.get("name2")) or "供方"
     base_total = max(len(left_rows), len(right_rows), 1)
     rate = round(len(pairs) / base_total * 100, 1)
+    # 弱依据只按第三列可信度是否 <=1 判断，保留精确阈值便于审计调整。
     weak_pairs = sum(
         1
         for item in pairs
@@ -380,6 +434,7 @@ def _present_purchase(value: object, limit: int) -> dict[str, object] | None:
     )
     left_unmatched = max(0, len(left_rows) - sum(matched_left))
     right_unmatched = max(0, len(right_rows) - sum(matched_right))
+    # 评分从匹配率起步，疑点与弱依据仅按占比扣分，不把业务差异判为失败。
     quality_score = round(max(
         0.0,
         rate
@@ -394,34 +449,10 @@ def _present_purchase(value: object, limit: int) -> dict[str, object] | None:
             f"成功配对 {len(pairs)} 对，匹配率 {rate:.1f}%，"
             f"发现 {len(conflict_rows)} 处数量疑点。"
         ),
-        "metrics": [
-            _metric("pairs", "成功配对", len(pairs), tone="success"),
-            _metric(
-                "match_rate",
-                "匹配率",
-                f"{rate:.1f}%",
-                note=f"以双方较大有效行数 {base_total} 为分母",
-                tone="success" if rate >= 95 else "warning",
-            ),
-            _metric(
-                "left_unmatched",
-                f"{left_name}未配对",
-                left_unmatched,
-                tone="danger" if left_unmatched else "success",
-            ),
-            _metric(
-                "right_unmatched",
-                f"{right_name}未配对",
-                right_unmatched,
-                tone="danger" if right_unmatched else "success",
-            ),
-            _metric(
-                "quantity_conflicts",
-                "数量疑点",
-                len(conflict_rows),
-                tone="warning" if conflict_rows else "success",
-            ),
-        ],
+        "metrics": _purchase_metrics(
+            pairs, rate, base_total, left_name, right_name,
+            left_unmatched, right_unmatched, conflict_rows,
+        ),
         "quality": _quality(
             quality_score,
             "评分反映配对依据与数据覆盖，不会把真实业务差异判为程序错误。",
@@ -444,6 +475,43 @@ def _present_purchase(value: object, limit: int) -> dict[str, object] | None:
     }
 
 
+def _shipping_review_metrics(
+    total, full_match, match_rate, quantity_match, quantity_diff,
+    name_issues, only_package, only_review, obsolete,
+):
+    """组装发运评审的七项核心指标。"""
+    return [
+        _metric("total", "核对物料", total, tone="info"),
+        _metric("full_match", "完整一致", full_match, note=f"一致率 {match_rate:.1f}%", tone="success" if full_match == total else "warning"),
+        _metric("quantity_match", "数量一致", quantity_match, tone="success" if quantity_diff == 0 else "warning"),
+        _metric("quantity_diff", "数量差异", quantity_diff, tone="danger" if quantity_diff else "success"),
+        _metric("name_issues", "名称问题", name_issues, tone="warning" if name_issues else "success"),
+        _metric("one_side", "单侧物料", only_package + only_review, tone="danger" if only_package + only_review else "success"),
+        _metric("obsolete", "已排除作废", obsolete, tone="info"),
+    ]
+
+
+def _shipping_review_checks(quantity_diff, name_issues, only_package, only_review):
+    """生成数量、名称和双方覆盖三类核对结果。"""
+    return [
+        _quality_check(
+            "success" if quantity_diff == 0 else "warning",
+            "数量核对",
+            "双方汇总数量全部一致。" if quantity_diff == 0 else f"有 {quantity_diff} 个物料汇总数量不一致。",
+        ),
+        _quality_check(
+            "success" if name_issues == 0 else "warning",
+            "名称核对",
+            "双方名称全部一致。" if name_issues == 0 else f"有 {name_issues} 个物料存在名称缺失或不一致。",
+        ),
+        _quality_check(
+            "success" if only_package + only_review == 0 else "warning",
+            "双方覆盖",
+            "两侧物料范围完全对应。" if only_package + only_review == 0 else f"有 {only_package + only_review} 个物料只出现在一侧。",
+        ),
+    ]
+
+
 def _present_shipping_review(value: object, limit: int) -> dict[str, object] | None:
     """生成发运评审对比投影，在线展示数量差异、名称问题和单侧物料。"""
 
@@ -461,6 +529,7 @@ def _present_shipping_review(value: object, limit: int) -> dict[str, object] | N
     only_review = _integer(counts.get("only_review"))
     obsolete = _integer(result.get("obsolete_rows"))
     exceptions = [item for item in details if _text(item.get("status")) != "一致"]
+    # 完整一致率以核对物料数为分母，避免空表出现除零。
     match_rate = _ratio(full_match, max(total, 1))
     return {
         "kind": "shipping_review",
@@ -469,35 +538,16 @@ def _present_shipping_review(value: object, limit: int) -> dict[str, object] | N
             f"共核对 {total} 个物料，完整一致 {full_match} 个，"
             f"数量差异 {quantity_diff} 个，名称问题 {name_issues} 个。"
         ),
-        "metrics": [
-            _metric("total", "核对物料", total, tone="info"),
-            _metric("full_match", "完整一致", full_match, note=f"一致率 {match_rate:.1f}%", tone="success" if full_match == total else "warning"),
-            _metric("quantity_match", "数量一致", quantity_match, tone="success" if quantity_diff == 0 else "warning"),
-            _metric("quantity_diff", "数量差异", quantity_diff, tone="danger" if quantity_diff else "success"),
-            _metric("name_issues", "名称问题", name_issues, tone="warning" if name_issues else "success"),
-            _metric("one_side", "单侧物料", only_package + only_review, tone="danger" if only_package + only_review else "success"),
-            _metric("obsolete", "已排除作废", obsolete, tone="info"),
-        ],
+        "metrics": _shipping_review_metrics(
+            total, full_match, match_rate, quantity_match, quantity_diff,
+            name_issues, only_package, only_review, obsolete,
+        ),
         "quality": _quality(
             round(match_rate),
             "评分表示物料数量、名称与双方覆盖的完整一致比例，不代表生产或交付绩效。",
-            [
-                _quality_check(
-                    "success" if quantity_diff == 0 else "warning",
-                    "数量核对",
-                    "双方汇总数量全部一致。" if quantity_diff == 0 else f"有 {quantity_diff} 个物料汇总数量不一致。",
-                ),
-                _quality_check(
-                    "success" if name_issues == 0 else "warning",
-                    "名称核对",
-                    "双方名称全部一致。" if name_issues == 0 else f"有 {name_issues} 个物料存在名称缺失或不一致。",
-                ),
-                _quality_check(
-                    "success" if only_package + only_review == 0 else "warning",
-                    "双方覆盖",
-                    "两侧物料范围完全对应。" if only_package + only_review == 0 else f"有 {only_package + only_review} 个物料只出现在一侧。",
-                ),
-            ],
+            _shipping_review_checks(
+                quantity_diff, name_issues, only_package, only_review,
+            ),
         ),
         "parameters": [
             _parameter("package_sheet", "包装工作表", result.get("package_sheet")),
@@ -540,6 +590,7 @@ def _delivery_quality(
     """
     supplier_rate = _ratio(matched, rows) if supplier_used else 0.0
     case_rate = _ratio(case_hit, rows) if case_used else 0.0
+    # 无供应商来源时保留 75 分历史基准，表达“可生成但需人工维护”。
     score = 75 if rows else 0
     if supplier_used:
         score = round(supplier_rate)
@@ -580,6 +631,16 @@ def _delivery_missing_sections(missing: list[str], limit: int) -> list[dict[str,
     )]
 
 
+def _delivery_metrics(rows, matched, missing, supplier_used, case_used, case_hit):
+    """组装送货计划的四项核心指标。"""
+    return [
+        _metric("rows", "计划行数", rows, tone="success"),
+        _metric("supplier", "供应商匹配", f"{matched} / {rows}" if supplier_used else "待补充", tone="success" if supplier_used and not missing else "warning"),
+        _metric("missing", "待补物料", len(missing), tone="danger" if missing else "success"),
+        _metric("case", "CASE/班组命中", f"{case_hit} / {rows}" if case_used else "未使用参考计划", tone="info"),
+    ]
+
+
 def _present_delivery(value: object, limit: int) -> dict[str, object] | None:
     """生成送货计划投影，聚焦供应商补全和参考计划字段覆盖。
 
@@ -607,12 +668,9 @@ def _present_delivery(value: object, limit: int) -> dict[str, object] | None:
         "kind": "delivery",
         "title": "送货计划结果",
         "summary": f"已生成 {rows} 行送货计划" + (f"，供应商匹配率 {supplier_rate:.1f}%" if supplier_used else "，供应商信息按可用主数据补全") + "。",
-        "metrics": [
-            _metric("rows", "计划行数", rows, tone="success"),
-            _metric("supplier", "供应商匹配", f"{matched} / {rows}" if supplier_used else "待补充", tone="success" if supplier_used and not missing else "warning"),
-            _metric("missing", "待补物料", len(missing), tone="danger" if missing else "success"),
-            _metric("case", "CASE/班组命中", f"{case_hit} / {rows}" if case_used else "未使用参考计划", tone="info"),
-        ],
+        "metrics": _delivery_metrics(
+            rows, matched, missing, supplier_used, case_used, case_hit,
+        ),
         "quality": _quality(score, "评分聚焦供应商及参考计划字段的自动补全覆盖，空白项仍保留给人工维护。", checks),
         "parameters": [
             _parameter("order_type", "订单类型", result.get("order_type") or "未指定"),

@@ -12,14 +12,14 @@ import path from "node:path";
 
 // 从模块 URL 定位仓库根目录，保证脚本被 npm 或任意工作目录调用时都操作同一组版本文件。
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const versionPy = readFileSync(path.join(root, "core", "version.py"), "utf8");
+const versionPy = readFileSync(path.join(root, "core", "version.py"), "utf8");  // 读取唯一版本源文件，避免各端版本各自为政
 // 只读取 VERSION 常量；VERSION_TUPLE 和构建日期仍由 Python 版本模块自身维护。
 const match = /VERSION\s*=\s*"([^"]+)"/.exec(versionPy);
 if (!match) {
   console.error("[错误] 无法从 core/version.py 读取 VERSION");
   process.exit(1);
 }
-const version = match[1];
+const version = match[1];  // 提取到的版本号供 JSON 与 Cargo 同步
 
 // JSON 目标可安全解析后重写；锁文件由各自包管理器根据主清单更新，不手工替换字符串。
 const jsonTargets = [
@@ -34,7 +34,7 @@ const cargoVersion = /^version\s*=\s*"([^"]+)"/m.exec(cargoText)?.[1]; // 锚定
 const changed = [];
 for (const relative of jsonTargets) {
   const file = path.join(root, relative);
-  const json = JSON.parse(readFileSync(file, "utf8"));
+  const json = JSON.parse(readFileSync(file, "utf8"));  // 解析后按对象写回，保留 JSON 语义并统一缩进
   if (json.version !== version) {
     json.version = version;
     writeFileSync(file, JSON.stringify(json, null, 2) + "\n"); // 固定两空格与末尾换行，减少无关格式差异。
@@ -62,10 +62,10 @@ if (process.argv.includes("--build")) {
   // 构建是可选的耗时步骤；默认模式只做快速版本同步，便于发布前单独审阅变更。
   // Windows 下 npm 是批处理文件，需显式使用 npm.cmd；其余平台用 npm，避免 shell:true
   // 引入额外的 shell 解析层和潜在的参数拼接风险。
-  const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
+  const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";  // Windows 下 npm 是批处理文件，显式调用 npm.cmd 才可被 spawnSync 执行
   for (const dir of ["web-app", "tauri-app"]) {
     console.log(`\n[构建] ${dir} ...`);
-    const result = spawnSync(npmCommand, ["run", "build"], {
+    const result = spawnSync(npmCommand, ["run", "build"], {  // 同步构建避免脚本在产物未生成前提前退出
       cwd: path.join(root, dir),
       stdio: "inherit",
       shell: false,

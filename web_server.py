@@ -16,6 +16,7 @@ import json
 import os
 import sqlite3
 import subprocess
+import sys
 import threading
 from datetime import date, datetime, timedelta, timezone
 from http import HTTPStatus
@@ -1217,8 +1218,41 @@ def _server_runtime_dependencies() -> server_runtime.ServerRuntimeDependencies:
     )
 
 
+def _reset_admin_password_from_env() -> None:
+    """从环境变量读取新密码并重置内置 admin 账号密码。
+
+    密码只允许通过 ``FYT_NEW_ADMIN_PASSWORD``/``FYT_ADMIN_PASSWORD`` 环境变量传入，
+    不进入命令行参数、日志或配置文件。本入口供冻结后的 Windows 部署包在停止服务后
+    调用（``web_server.exe --reset-admin-password``），也兼容源码部署的同一用法。
+    """
+    password = os.environ.get("FYT_NEW_ADMIN_PASSWORD") or os.environ.get("FYT_ADMIN_PASSWORD")
+    if not password:
+        print("未提供新密码：请通过 FYT_NEW_ADMIN_PASSWORD 环境变量传入。", file=sys.stderr)
+        raise SystemExit(2)
+    policy_error = password_policy_error(password)
+    if policy_error:
+        print(f"密码不符合要求：{policy_error}", file=sys.stderr)
+        raise SystemExit(2)
+    salt, digest = hash_password(password)
+    init_db()
+    connection = db()
+    try:
+        # 参数绑定与 Windows PowerShell 重置脚本保持同一 SQL 形状，避免双份实现漂移。
+        connection.execute(
+            "UPDATE users SET salt = ?, password_hash = ? WHERE username = ?",
+            (salt, digest, "admin"),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+    print("[完成] 管理员密码已更新。")
+
+
 def main() -> None:
-    """通过独立运行时模块启动 Web HTTP 服务。"""
+    """按命令行参数选择密码重置入口或正常 Web 服务启动。"""
+    if "--reset-admin-password" in sys.argv:
+        _reset_admin_password_from_env()
+        return
     server_runtime.run_server(_server_runtime_dependencies())
 
 

@@ -20,13 +20,13 @@ class InitialAdminPasswordSourceTests(unittest.TestCase):
             "FYT_ADMIN_PASSWORD": "EnvPassword123",
             "FYT_ADMIN_PASSWORD_FILE": "Z:/不存在/secret.txt",
         }, clear=False):
-            self.assertEqual(_load_initial_admin_password(), "EnvPassword123")
+            self.assertEqual(_load_initial_admin_password(), "EnvPassword123")  # 环境变量优先级最高
 
     def test_password_can_be_read_from_secret_file(self):
         """Docker secret 末尾允许一个文本换行，但不把换行作为密码内容。"""
         with tempfile.TemporaryDirectory() as folder:
             source = Path(folder) / "admin-password.txt"
-            source.write_text("DockerPassword123\n", encoding="utf-8")
+            source.write_text("DockerPassword123\n", encoding="utf-8")  # 末尾一个换行应被剥离
             with patch.dict(os.environ, {
                 "FYT_ADMIN_PASSWORD": "",
                 "FYT_ADMIN_PASSWORD_FILE": str(source),
@@ -37,7 +37,7 @@ class InitialAdminPasswordSourceTests(unittest.TestCase):
         """拒绝多行 secret，避免编辑器意外附加内容进入管理员密码。"""
         with tempfile.TemporaryDirectory() as folder:
             source = Path(folder) / "admin-password.txt"
-            source.write_text("DockerPassword123\nSecondLine456", encoding="utf-8")
+            source.write_text("DockerPassword123\nSecondLine456", encoding="utf-8")  # 多行 secret 必须拒绝
             with patch.dict(os.environ, {
                 "FYT_ADMIN_PASSWORD": "",
                 "FYT_ADMIN_PASSWORD_FILE": str(source),

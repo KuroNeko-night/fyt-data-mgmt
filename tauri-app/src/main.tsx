@@ -23,7 +23,7 @@ import "./styles/visuals.css";
 import "./styles/finish.css";
 
 // `root` 由受控的 Vite HTML 模板提供；StrictMode 在开发期帮助发现非幂等副作用。
-createRoot(document.getElementById("root")!).render(
+createRoot(document.getElementById("root")!).render(  // root 由受控的 Vite HTML 模板提供
   <StrictMode>
     <div className="fyt-ui"><App /></div>
   </StrictMode>,

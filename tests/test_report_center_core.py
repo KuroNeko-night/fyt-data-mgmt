@@ -19,7 +19,7 @@ class ReportCenterCoreTests(unittest.TestCase):
         """为每个测试创建隔离输出目录。"""
 
         self.temp = tempfile.TemporaryDirectory(prefix="fyt_report_center_")
-        self.output = os.path.join(self.temp.name, "业务报表.xlsx")
+        self.output = os.path.join(self.temp.name, "业务报表.xlsx")  # 输出到临时目录
 
     def tearDown(self):
         """删除合成报表。"""
@@ -57,18 +57,18 @@ class ReportCenterCoreTests(unittest.TestCase):
 
         rows = report_center_core.build_report(items, self.output, "本日")
 
-        self.assertEqual(rows, 3)
+        self.assertEqual(rows, 3)  # 三条任务都进入报表
         workbook = openpyxl.load_workbook(self.output, data_only=True)
         try:
-            self.assertEqual(workbook.sheetnames, ["汇总", "明细"])
+            self.assertEqual(workbook.sheetnames, ["汇总", "明细"])  # 固定两个工作表
             summary = workbook["汇总"]
-            self.assertEqual(summary["B5"].value, 3)
-            self.assertEqual(summary["B6"].value, 1)
-            self.assertEqual(summary["B7"].value, 1)
+            self.assertEqual(summary["B5"].value, 3)  # 任务总数
+            self.assertEqual(summary["B6"].value, 1)  # 完成数
+            self.assertEqual(summary["B7"].value, 1)  # 失败数
             detail_values = [cell.value for row in workbook["明细"].iter_rows() for cell in row]
-            self.assertIn("送货计划", detail_values)
-            self.assertNotIn("internal-task", detail_values)
-            self.assertNotIn(r"C:\private\output", detail_values)
+            self.assertIn("送货计划", detail_values)  # 客户可见标题保留
+            self.assertNotIn("internal-task", detail_values)  # 内部任务 ID 不输出
+            self.assertNotIn(r"C:\private\output", detail_values)  # 绝对路径不输出
         finally:
             workbook.close()
 

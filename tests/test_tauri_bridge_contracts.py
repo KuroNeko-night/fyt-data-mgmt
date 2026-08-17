@@ -24,16 +24,16 @@ class TestTauriBridgeContracts(unittest.TestCase):
         self.old_env = {key: os.environ.get(key) for key in (
             "FYT_CONFIG_PATH", "FYT_TASK_HISTORY_PATH", "FYT_INCREMENTAL_CACHE_PATH",
             "FYT_MAPPING_STORE_PATH", "FYT_TEMPLATE_STORE_PATH")}
-        os.environ["FYT_CONFIG_PATH"] = self.path("配置.json")
-        os.environ["FYT_TASK_HISTORY_PATH"] = self.path("任务.db")
-        os.environ["FYT_INCREMENTAL_CACHE_PATH"] = self.path("缓存.json")
-        os.environ["FYT_MAPPING_STORE_PATH"] = self.path("映射.json")
-        os.environ["FYT_TEMPLATE_STORE_PATH"] = self.path("模板.json")
+        os.environ["FYT_CONFIG_PATH"] = self.path("配置.json")  # 配置隔离
+        os.environ["FYT_TASK_HISTORY_PATH"] = self.path("任务.db")  # 任务历史隔离
+        os.environ["FYT_INCREMENTAL_CACHE_PATH"] = self.path("缓存.json")  # 缓存隔离
+        os.environ["FYT_MAPPING_STORE_PATH"] = self.path("映射.json")  # 映射索引隔离
+        os.environ["FYT_TEMPLATE_STORE_PATH"] = self.path("模板.json")  # 模板索引隔离
         self.old_settings = settings_mod._instance
-        settings_mod._instance = None
+        settings_mod._instance = None  # 强制重建设置单例
         settings = settings_mod.get_settings()
         settings.set("output_mode", "custom")
-        settings.set("custom_output_root", self.path("输出"))
+        settings.set("custom_output_root", self.path("输出"))  # 输出根隔离
         settings.save()
         self.file_a = self.path("A.xlsx")
         self.file_b = self.path("B.xlsx")
@@ -79,10 +79,10 @@ class TestTauriBridgeContracts(unittest.TestCase):
         """系统级工作表枚举与预览动作应接受单路径并返回可 JSON 化结构。"""
 
         sheets = self.dispatch("system.sheets", {"path": self.file_a})
-        self.assertEqual(sheets["sheets"], ["数据"])
+        self.assertEqual(sheets["sheets"], ["数据"])  # 工作表枚举
         preview = self.dispatch("system.preview", {
             "path": self.file_a, "sheet": "数据", "max_rows": 3, "max_cols": 2})
-        self.assertIn("编号", str(preview))
+        self.assertIn("编号", str(preview))  # 预览内容含表头
 
     def test_six_business_action_payloads(self):
         """六类核心业务的列表、选项、人工复核选择和进度回调应准确转发。"""
@@ -92,19 +92,19 @@ class TestTauriBridgeContracts(unittest.TestCase):
             self.dispatch("attendance.run", {
                 "targets": [self.file_a], "sources": [self.file_b],
                 "options": {"workday_hours": 8}})
-            self.assertEqual(run.call_args.args[:2], ([self.file_a], [self.file_b]))
-            self.assertEqual(run.call_args.kwargs["opts"].workday_hours, 8)
-            self.assertTrue(callable(run.call_args.kwargs["progress"]))
+            self.assertEqual(run.call_args.args[:2], ([self.file_a], [self.file_b]))  # 目标与来源透传
+            self.assertEqual(run.call_args.kwargs["opts"].workday_hours, 8)  # 选项转为对象
+            self.assertTrue(callable(run.call_args.kwargs["progress"]))  # 进度回调存在
 
         with mock.patch("core.reconcile_core.analyze", return_value={"target": {}}) as analyze:
             self.dispatch("reconcile.analyze", {
                 "target": [self.file_a], "sources": [self.file_b], "labor": [self.file_b]})
-            self.assertEqual(analyze.call_args.args[:3], (self.file_a, [self.file_b], [self.file_b]))
+            self.assertEqual(analyze.call_args.args[:3], (self.file_a, [self.file_b], [self.file_b]))  # 目标单路径、来源列表
         with mock.patch("core.reconcile_core.run", return_value={"out_dir": self.temp.name}) as run:
             self.dispatch("reconcile.run", {
                 "target": [self.file_a], "sources": [self.file_b], "labor": [self.file_b],
                 "choices": {"aliases": {"甲": "乙"}}})
-            self.assertEqual(run.call_args.kwargs["choices"]["aliases"], {"甲": "乙"})
+            self.assertEqual(run.call_args.kwargs["choices"]["aliases"], {"甲": "乙"})  # 人工别名透传
 
         with mock.patch("core.arrival_core.detect_batch", return_value="46A"), mock.patch(
             "core.arrival_core.inspect_plan",

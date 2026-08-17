@@ -75,6 +75,76 @@ def _record_audit(
         )
 
 
+def _catalog_action(deps, operation, body):
+    """按固定白名单返回主数据维护操作，未知操作返回 ``None``。"""
+    operations = {  # 白名单映射替代 getattr，客户端不能调用 catalog_core 的任意内部方法。
+        "upsert_supplier": lambda: deps.catalog_core.upsert_supplier(
+            str(body.get("name") or ""), str(body.get("code") or ""),
+        ),
+        "delete_supplier": lambda: deps.catalog_core.delete_supplier(
+            str(body.get("name") or ""),
+        ),
+        "upsert_material": lambda: deps.catalog_core.upsert_material(
+            str(body.get("code") or ""),
+            str(body.get("name") or ""),
+            spec=str(body.get("spec") or ""),
+            unit=str(body.get("unit") or ""),
+            supplier=str(body.get("supplier") or ""),
+        ),
+        "delete_material": lambda: deps.catalog_core.delete_material(
+            str(body.get("code") or ""),
+        ),
+    }
+    return operations.get(operation)
+
+
+def _upload_name_and_length(handler, deps):
+    """校验上传文件名、扩展名和声明大小，返回规范化文件名与字节数。"""
+    query = parse_qs(urlparse(handler.path).query)
+    raw_name = query.get("name", [""])[0]
+    if not raw_name.strip():
+        raise ApiError(HTTPStatus.BAD_REQUEST, "请选择要学习的 Excel 表格")
+    name = deps.safe_name(raw_name)  # 去除目录片段和 Windows 非法字符，上传文件只能落在批次目录一层。
+    if Path(name).suffix.lower() not in deps.import_core.SUPPORTED_EXTENSIONS:
+        raise ApiError(HTTPStatus.BAD_REQUEST, "仅支持 .xlsx、.xlsm 和 .xls 表格")
+    try:
+        length = int(handler.headers.get("Content-Length", "0"))
+    except ValueError as exc:
+        raise ApiError(HTTPStatus.BAD_REQUEST, "文件大小无效") from exc
+    if length <= 0:
+        raise ApiError(HTTPStatus.BAD_REQUEST, "上传表格为空")
+    if length > deps.max_upload_bytes:
+        raise ApiError(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "主数据表格不能超过 50 MB")
+    return name, length
+
+
+def _receive_upload_stream(handler, temp_path, length):
+    """分块接收上传体并写入临时路径，直到收到声明的完整字节数。"""
+    remaining = length
+    with temp_path.open("wb") as stream:  # 分块接收，避免 50 MB 工作簿整体进入内存。
+        while remaining:
+            chunk = handler.rfile.read(min(1024 * 1024, remaining))
+            if not chunk:
+                raise ApiError(HTTPStatus.BAD_REQUEST, "表格上传不完整")
+            stream.write(chunk)
+            remaining -= len(chunk)
+
+
+def _analyze_uploaded_import(deps, target, name, batch_id, actor):
+    """在隔离环境中分析上传文件，并把 Core 异常转换为稳定 API 错误。"""
+    try:
+        with deps.environment():  # 临时切换主数据目录环境变量，保证 Web 数据与桌面本地数据隔离。
+            return deps.import_core.analyze(
+                str(target),
+                original_name=name,
+                batch_id=batch_id,
+                uploader_id=int(actor["id"]),
+                uploader_name=str(actor["display_name"]),
+            )
+    except ValueError as exc:
+        raise _api_error(exc, deps) from exc
+
+
 def admin_catalog(
     handler: Any,
     body: dict[str, object] | None,
@@ -92,25 +162,7 @@ def admin_catalog(
             handler.send_json(deps.catalog_core.list_all())
             return
         operation = str(body.get("op") or "")
-        operations = {  # 白名单映射替代 getattr，客户端不能调用 catalog_core 的任意内部方法。
-            "upsert_supplier": lambda: deps.catalog_core.upsert_supplier(
-                str(body.get("name") or ""), str(body.get("code") or ""),
-            ),
-            "delete_supplier": lambda: deps.catalog_core.delete_supplier(
-                str(body.get("name") or ""),
-            ),
-            "upsert_material": lambda: deps.catalog_core.upsert_material(
-                str(body.get("code") or ""),
-                str(body.get("name") or ""),
-                spec=str(body.get("spec") or ""),
-                unit=str(body.get("unit") or ""),
-                supplier=str(body.get("supplier") or ""),
-            ),
-            "delete_material": lambda: deps.catalog_core.delete_material(
-                str(body.get("code") or ""),
-            ),
-        }
-        action = operations.get(operation)
+        action = _catalog_action(deps, operation, body)
         if action is None:
             raise ApiError(HTTPStatus.BAD_REQUEST, "不支持的主数据操作")
         try:
@@ -130,21 +182,7 @@ def upload_import(handler: Any, deps: MasterDataDependencies) -> None:
     API 错误，任一步失败都会删除整个批次目录，避免留下未登记的原始业务表格。
     """
     actor = handler.require_user(admin=True)
-    query = parse_qs(urlparse(handler.path).query)
-    raw_name = query.get("name", [""])[0]
-    if not raw_name.strip():
-        raise ApiError(HTTPStatus.BAD_REQUEST, "请选择要学习的 Excel 表格")
-    name = deps.safe_name(raw_name)  # 去除目录片段和 Windows 非法字符，上传文件只能落在批次目录一层。
-    if Path(name).suffix.lower() not in deps.import_core.SUPPORTED_EXTENSIONS:
-        raise ApiError(HTTPStatus.BAD_REQUEST, "仅支持 .xlsx、.xlsm 和 .xls 表格")
-    try:
-        length = int(handler.headers.get("Content-Length", "0"))
-    except ValueError as exc:
-        raise ApiError(HTTPStatus.BAD_REQUEST, "文件大小无效") from exc
-    if length <= 0:
-        raise ApiError(HTTPStatus.BAD_REQUEST, "上传表格为空")
-    if length > deps.max_upload_bytes:
-        raise ApiError(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "主数据表格不能超过 50 MB")
+    name, length = _upload_name_and_length(handler, deps)
     batch_id = uuid.uuid4().hex  # 批次编号同时作为目录名和治理记录主键，便于追踪原始表格。
     # 导入表格按管理员账号隔离存放，与其他管理员及桌面端本地档案互不可见。
     folder = (
@@ -155,26 +193,12 @@ def upload_import(handler: Any, deps: MasterDataDependencies) -> None:
     target = folder / name
     folder.mkdir(parents=True, exist_ok=False)
     try:
-        remaining = length
-        with temp_path.open("wb") as stream:  # 分块接收，避免 50 MB 工作簿整体进入内存。
-            while remaining:
-                chunk = handler.rfile.read(min(1024 * 1024, remaining))
-                if not chunk:
-                    raise ApiError(HTTPStatus.BAD_REQUEST, "表格上传不完整")
-                stream.write(chunk)
-                remaining -= len(chunk)
+        _receive_upload_stream(handler, temp_path, length)
         os.replace(temp_path, target)  # 同一文件系统内原子改名，完成标志与文件可见性同步。
-        try:
-            with deps.environment():  # 临时切换主数据目录环境变量，保证 Web 数据与桌面本地数据隔离。
-                batch = deps.import_core.analyze(
-                    str(target),
-                    original_name=name,
-                    batch_id=batch_id,
-                    uploader_id=int(actor["id"]),
-                    uploader_name=str(actor["display_name"]),
-                )
-        except ValueError as exc:
-            raise _api_error(exc, deps) from exc
+        batch = _analyze_uploaded_import(deps, target, name, batch_id, actor)
+    except Exception:  # 上传或分析任一步失败都移除整个批次目录，防止留下无法治理的孤立数据。
+        shutil.rmtree(folder, ignore_errors=True)
+        raise
     except Exception:  # 上传或分析任一步失败都移除整个批次目录，防止留下无法治理的孤立数据。
         shutil.rmtree(folder, ignore_errors=True)
         raise

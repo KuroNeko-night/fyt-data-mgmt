@@ -559,6 +559,58 @@ def get_batch(batch_id: str, root: str | None = None) -> dict[str, object]:
     return _public(_read_json(_batch_path(batch_id, root)), detail=True)
 
 
+def _validated_extension(path, original_name):
+    """校验上传表格扩展名，并返回可用于后续判断的小写后缀。"""
+    # 优先校验用户上传时的原始文件名，避免临时保存路径丢失真实扩展名。
+    extension = Path(original_name or path).suffix.lower()
+    if extension not in SUPPORTED_EXTENSIONS:
+        raise ValueError("仅支持 .xlsx、.xlsm 和 .xls 表格")
+    return extension
+
+
+def _initial_batch_status(conflicts: int) -> str:
+    """根据冲突数量确定新批次初始状态。"""
+    return "needs_review" if conflicts else "ready_to_confirm"
+
+
+def _duplicate_batch_id(digest: str, root: str | None) -> str:
+    """返回尚未失效的同内容批次编号，不存在时返回空字符串。"""
+    for existing in _all_batches(root):
+        if existing.get("sha256") == digest and existing.get("status") not in {"rejected", "failed"}:
+            return str(existing.get("id") or "")
+    return ""
+
+
+def _new_batch(batch_id, original_name, path, meta, analysis):
+    """组装新分析批次的完整内部结构。"""
+    digest = meta["digest"]
+    size = meta["size"]
+    uploader_id = meta["uploader_id"]
+    uploader_name = meta["uploader_name"]
+    conflicts = sum(bool(item.get("conflict")) for item in analysis["candidates"])
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "id": batch_id,
+        "original_name": Path(original_name).name or Path(path).name,
+        "source_path": path,
+        "sha256": digest,
+        "size": size,
+        "uploader_id": int(uploader_id),
+        "uploader_name": _text(uploader_name) or "管理员",
+        "created_at": _now_iso(),
+        "status": _initial_batch_status(conflicts),
+        **analysis,
+        "confirmed_at": "",
+        "confirmed_by_id": None,
+        "confirmed_by_name": "",
+        "merged_at": "",
+        "merged_by_id": None,
+        "merged_by_name": "",
+        "merge_summary": {},
+        "last_error": "",
+    }
+
+
 def analyze(
     source_path: str,
     *,
@@ -577,10 +629,7 @@ def analyze(
     path = os.path.abspath(source_path)
     if not os.path.isfile(path):
         raise FileNotFoundError("上传表格不存在")
-    # 优先校验用户上传时的原始文件名，避免临时保存路径丢失真实扩展名。
-    extension = Path(original_name or path).suffix.lower()
-    if extension not in SUPPORTED_EXTENSIONS:
-        raise ValueError("仅支持 .xlsx、.xlsm 和 .xls 表格")
+    _validated_extension(path, original_name)
     digest = _file_sha256(path)
     analysis = _analyze_workbook(path, log=log)
     if not analysis["candidates"]:
@@ -589,34 +638,23 @@ def analyze(
     batch_id = str(batch_id or uuid.uuid4().hex).strip().lower()
     if not re.fullmatch(r"[0-9a-f]{32}", batch_id):
         raise ValueError("主数据导入批次编号无效")
-    conflicts = sum(bool(item.get("conflict")) for item in analysis["candidates"])
-    batch = {
-        "schema_version": SCHEMA_VERSION,
-        "id": batch_id,
-        "original_name": Path(original_name).name or Path(path).name,
-        "source_path": path,
-        "sha256": digest,
-        "size": os.path.getsize(path),
-        "uploader_id": int(uploader_id),
-        "uploader_name": _text(uploader_name) or "管理员",
-        "created_at": _now_iso(),
-        "status": "needs_review" if conflicts else "ready_to_confirm",
-        **analysis,
-        "confirmed_at": "",
-        "confirmed_by_id": None,
-        "confirmed_by_name": "",
-        "merged_at": "",
-        "merged_by_id": None,
-        "merged_by_name": "",
-        "merge_summary": {},
-        "last_error": "",
-    }
+    batch = _new_batch(
+        batch_id, original_name, path,
+        {
+            "digest": digest,
+            "size": os.path.getsize(path),
+            "uploader_id": uploader_id,
+            "uploader_name": uploader_name,
+        },
+        analysis,
+    )
     # 查重和落盘必须位于同一临界区，否则并发请求可能同时通过查重。
     with storage_lock.file_lock(_root_guard(root)):
-        for existing in _all_batches(root):
-            if existing.get("sha256") == digest and existing.get("status") not in {"rejected", "failed"}:
-                raise DuplicateImportError(str(existing.get("id") or ""))
+        duplicate_id = _duplicate_batch_id(digest, root)
+        if duplicate_id:
+            raise DuplicateImportError(duplicate_id)
         _atomic_write_json(_batch_path(batch_id, root), batch)
+    return _public(batch, detail=True)
     return _public(batch, detail=True)
 
 
@@ -661,10 +699,8 @@ def _select_conflict_value(target: dict, decision: str, value: str) -> str:
 def _apply_conflict_decision(
     batch: dict[str, object],
     candidate_id: str,
-    decision: str,
-    value: str,
-    actor_id: int,
-    actor_name: str,
+    decision_info: dict[str, object],
+    actor: dict[str, object],
 ) -> None:
     """在锁内校验批次状态、写入审计信息并重新计算未决冲突数。"""
     if batch.get("status") in {"ready", "merged", "rejected"}:
@@ -675,13 +711,13 @@ def _apply_conflict_decision(
     target = next((item for item in candidates if isinstance(item, dict) and item.get("id") == candidate_id), None)
     if not target or not target.get("conflict"):
         raise ValueError("没有找到需要处理的冲突")
-    selected = _select_conflict_value(target, decision, value)
+    selected = _select_conflict_value(target, decision_info["decision"], decision_info["value"])
     target["selected_value"] = selected
     target["decision"] = {
-        "type": decision,
+        "type": decision_info["decision"],
         "value": selected,
-        "actor_id": int(actor_id),
-        "actor_name": _text(actor_name) or "管理员",
+        "actor_id": int(actor["id"]),
+        "actor_name": _text(actor["name"]) or "管理员",
         "decided_at": _now_iso(),
     }
     # 决策时重新固定期望旧值，供最终合并执行乐观并发检查。
@@ -716,7 +752,9 @@ def resolve_conflict(
     def mutate(batch: dict[str, object]) -> None:
         """在锁内校验状态、写入审计信息并重新计算未决冲突数。"""
         _apply_conflict_decision(
-            batch, candidate_id, decision, value, actor_id, actor_name,
+            batch, candidate_id,
+            {"decision": decision, "value": value},
+            {"id": actor_id, "name": actor_name},
         )
 
     batch, _ = _mutate_batch(batch_id, mutate, root)
@@ -791,6 +829,40 @@ def _merge_relations(batch: dict[str, object]) -> list[dict[str, str]]:
     return relations
 
 
+def _reopen_conflicted_candidates(batch, exc):
+    """把确认后发生并发变化的候选恢复为待决状态。"""
+    conflicts_by_key = {
+        (item["relation_type"], item["key"]): item
+        for item in exc.conflicts
+    }
+    for candidate in batch.get("candidates", []):
+        if not isinstance(candidate, dict):
+            continue
+        conflict = conflicts_by_key.get((
+            candidate.get("relation_type"), candidate.get("key"),
+        ))
+        if not conflict:
+            continue
+        candidate["conflict"] = True
+        candidate["current_value"] = conflict["current_value"]
+        candidate["expected_current_value"] = conflict["current_value"]
+        candidate["conflict_reasons"] = ["确认后正式主数据库发生了变化"]
+        candidate["selected_value"] = ""
+        candidate["decision"] = None
+    batch["status"] = "needs_review"
+    batch["last_error"] = "正式主数据已更新，请重新处理新增冲突"
+
+
+def _mark_batch_merged(batch, actor_id, actor_name, summary):
+    """写入合并成功状态与审计信息。"""
+    batch["status"] = "merged"
+    batch["merged_at"] = _now_iso()
+    batch["merged_by_id"] = int(actor_id) if actor_id is not None else None
+    batch["merged_by_name"] = _text(actor_name) or "系统定期合并"
+    batch["merge_summary"] = summary
+    batch["last_error"] = ""
+
+
 def merge_batch(
     batch_id: str,
     *,
@@ -818,34 +890,12 @@ def merge_batch(
         try:
             summary = material_catalog.apply_relations(relations, backup_dir=backup_dir)
         except material_catalog.CatalogConflictError as exc:
-            # 只重开实际发生并发变化的候选，其余管理员决策保持不变。
-            conflicts_by_key = {
-                (item["relation_type"], item["key"]): item
-                for item in exc.conflicts
-            }
-            for candidate in batch.get("candidates", []):
-                if not isinstance(candidate, dict):
-                    continue
-                conflict = conflicts_by_key.get((candidate.get("relation_type"), candidate.get("key")))
-                if not conflict:
-                    continue
-                candidate["conflict"] = True
-                candidate["current_value"] = conflict["current_value"]
-                candidate["expected_current_value"] = conflict["current_value"]
-                candidate["conflict_reasons"] = ["确认后正式主数据库发生了变化"]
-                candidate["selected_value"] = ""
-                candidate["decision"] = None
-            batch["status"] = "needs_review"
-            batch["last_error"] = "正式主数据已更新，请重新处理新增冲突"
+            _reopen_conflicted_candidates(batch, exc)
             _atomic_write_json(path, batch)
             return _public(batch, detail=True)
-        batch["status"] = "merged"
-        batch["merged_at"] = _now_iso()
-        batch["merged_by_id"] = int(actor_id) if actor_id is not None else None
-        batch["merged_by_name"] = _text(actor_name) or "系统定期合并"
-        batch["merge_summary"] = summary
-        batch["last_error"] = ""
+        _mark_batch_merged(batch, actor_id, actor_name, summary)
         _atomic_write_json(path, batch)
+        return _public(batch, detail=True)
         return _public(batch, detail=True)
 
 
@@ -906,7 +956,9 @@ def export_catalog(out_path: str | None = None) -> dict[str, object]:
         worksheet.column_dimensions["A"].width = 24
         for column in "BCDE":
             worksheet.column_dimensions[column].width = 20
-    workbook.save(out_path)
-    # 保存成功后显式关闭工作簿，释放 openpyxl 持有的内存与文件资源。
-    workbook.close()
+    try:
+        workbook.save(out_path)
+    finally:
+        # 保存成功或失败都显式关闭工作簿，释放 openpyxl 持有的内存与文件资源。
+        workbook.close()
     return {"out_dir": os.path.dirname(out_path), "file": out_path}

@@ -85,60 +85,44 @@ function describeCandidate(element: HTMLElement) {
   const detail = element.dataset.tourDescription
     || visibleText(element.querySelector("p, small, .fyt-table-toolbar span, .fyt-panel-heading span"));
 
-  if (kind === "file-input") {
-    return {
+  const rules: Array<[(element: HTMLElement) => boolean, () => { title: string; description: string }]> = [
+    [() => kind === "file-input", () => ({
       title: `放置：${heading || "业务文件"}`,
       description: `${detail || "选择这里要求的业务文件。"} 可点击“选择文件”，也可把文件直接拖入虚线区域。`,
-    };
-  }
-  if (kind === "parameter") {
-    return {
+    })],
+    [() => kind === "parameter", () => ({
       title: `设置：${heading || "处理参数"}`,
       description: detail || "在这里选择工作表和需要使用的字段；不确定时保持自动识别即可。",
-    };
-  }
-  if (kind === "task-panel") {
-    return {
+    })],
+    [() => kind === "task-panel", () => ({
       title: `运行：${heading || "开始处理"}`,
       description: "输入准备完成后在这里开始处理。页面会显示进度，完成后可直接查看结果或打开保存位置。",
-    };
-  }
-  if (kind === "result-summary" || element.classList.contains("fyt-currency-result")) {
-    return {
+    })],
+    [() => kind === "result-summary" || element.classList.contains("fyt-currency-result"), () => ({
       title: "查看处理结果",
       description: "处理数量、异常提示和结果文件会显示在这里，您可以直接复制内容或打开文件。",
-    };
-  }
-  if (element.classList.contains("fyt-option-card")) {
-    return {
+    })],
+    [() => element.classList.contains("fyt-option-card"), () => ({
       title: heading ? `设置：${heading}` : "选择处理方式",
       description: detail || "在这里选择处理模式并调整业务参数；不确定时可保留默认值。",
-    };
-  }
-  if (element.classList.contains("fyt-editor-panel")) {
-    const isResult = heading.includes("结果");
-    return {
-      title: isResult ? "查看与复用文本结果" : "输入待处理文本",
-      description: isResult ? "处理后的文本显示在这里，可复制，也可回填到左侧继续下一步处理。" : "在这里粘贴或输入原始文本，再从下方选择需要的处理动作。",
-    };
-  }
-  if (element.classList.contains("fyt-tauri-home-section") || element.dataset.tour === "home-actions") {
-    return { title: "选择常用业务", description: "这里汇总常用业务入口，点击任一项目即可进入对应功能。" };
-  }
-  if (element.classList.contains("fyt-tauri-home-note") || element.dataset.tour === "home-notes") {
-    return { title: "查看处理信息", description: "这里显示当前处理方式、资料归档和任务留痕情况，开始处理前可快速确认。" };
-  }
-  if (element.classList.contains("fyt-table-card")) {
-    return { title: heading || "查看与管理数据", description: detail || "这里集中展示当前页面的数据、状态与操作入口，可通过筛选或表格列定位需要的记录。" };
-  }
-  if (element.classList.contains("fyt-settings-card")) {
-    return { title: `配置：${heading || "系统选项"}`, description: detail || "这里管理这一组运行偏好；修改后在页面底部点击“保存设置”即可生效。" };
-  }
-  if (element.classList.contains("fyt-template-list-panel")) {
-    return { title: "选择模板", description: "左侧显示已保存的模板和版本，选择后可在右侧查看详细内容。" };
-  }
-  if (element.classList.contains("fyt-template-detail-panel")) {
-    return { title: "查看和调整模板", description: "右侧可以查看不同版本，并设置列名调整、删除列或默认值；保存后同类文件会沿用设置。" };
+    })],
+    [() => element.classList.contains("fyt-editor-panel"), () => {
+      const isResult = heading.includes("结果");
+      return {
+        title: isResult ? "查看与复用文本结果" : "输入待处理文本",
+        description: isResult ? "处理后的文本显示在这里，可复制，也可回填到左侧继续下一步处理。" : "在这里粘贴或输入原始文本，再从下方选择需要的处理动作。",
+      };
+    }],
+    [() => element.classList.contains("fyt-tauri-home-section") || element.dataset.tour === "home-actions", () => ({ title: "选择常用业务", description: "这里汇总常用业务入口，点击任一项目即可进入对应功能。" })],
+    [() => element.classList.contains("fyt-tauri-home-note") || element.dataset.tour === "home-notes", () => ({ title: "查看处理信息", description: "这里显示当前处理方式、资料归档和任务留痕情况，开始处理前可快速确认。" })],
+    [() => element.classList.contains("fyt-table-card"), () => ({ title: heading || "查看与管理数据", description: detail || "这里集中展示当前页面的数据、状态与操作入口，可通过筛选或表格列定位需要的记录。" })],
+    [() => element.classList.contains("fyt-settings-card"), () => ({ title: `配置：${heading || "系统选项"}`, description: detail || "这里管理这一组运行偏好；修改后在页面底部点击“保存设置”即可生效。" })],
+    [() => element.classList.contains("fyt-template-list-panel"), () => ({ title: "选择模板", description: "左侧显示已保存的模板和版本，选择后可在右侧查看详细内容。" })],
+    [() => element.classList.contains("fyt-template-detail-panel"), () => ({ title: "查看和调整模板", description: "右侧可以查看不同版本，并设置列名调整、删除列或默认值；保存后同类文件会沿用设置。" })],
+  ];
+
+  for (const [matches, build] of rules) {
+    if (matches(element)) return build();
   }
   return {
     title: heading || "了解这个区域",
@@ -168,8 +152,8 @@ function collectTourSteps(pageKey: string, pageTitle: string, pageDescription: s
   const candidates = Array.from(content.querySelectorAll<HTMLElement>(CANDIDATE_SELECTOR));
   candidates.forEach((element, index) => {
     // 隐藏节点没有可靠的测量结果；重复节点和父卡已覆盖的参数行也不应形成独立步骤。
-    if (seen.has(element) || element.offsetWidth === 0 || element.offsetHeight === 0) return;
-    if (element.dataset.tour === "parameter" && element.closest(".fyt-option-card")) return;
+    if (seen.has(element) || element.offsetWidth === 0 || element.offsetHeight === 0) return;  // 隐藏节点和已覆盖节点不生成步骤
+    if (element.dataset.tour === "parameter" && element.closest(".fyt-option-card")) return;  // 父卡片已统一介绍，避免参数行重复聚光
     if (element.classList.contains("fyt-currency-result") && !visibleText(element)) return;
     seen.add(element);
     const copy = describeCandidate(element);
@@ -231,7 +215,7 @@ export default function GuidedTour({
     // 等待本轮 React DOM 提交完成后再查询节点，避免采集到上一个页面尚未卸载的内容。
     const frame = window.requestAnimationFrame(() => {
       setStepIndex(0);
-      setSteps(collectTourSteps(pageKey, pageTitle, pageDescription));
+      setSteps(collectTourSteps(pageKey, pageTitle, pageDescription));  // 等待本轮 DOM 提交后再采集，避免拿到上一页内容
     });
     return () => window.cancelAnimationFrame(frame);
   }, [open, pageDescription, pageKey, pageTitle, refreshKey]);
@@ -242,14 +226,14 @@ export default function GuidedTour({
     const scrollContainer = target.closest<HTMLElement>(".fyt-tauri-content-scroll, .content-scroll");
     // 先清空旧矩形，防止平滑滚动期间聚光灯短暂指向上一步的位置。
     setTargetRect(EMPTY_RECT);
-    target.scrollIntoView({ block: "center", inline: "nearest", behavior: reduceMotion ? "auto" : "smooth" });
+    target.scrollIntoView({ block: "center", inline: "nearest", behavior: reduceMotion ? "auto" : "smooth" });  // 先把目标滚到视野中央再计算聚光位置
 
     const updateTarget = () => {
       if (!target.isConnected) return;
       const rect = target.getBoundingClientRect();
       const bounds = scrollContainer?.getBoundingClientRect();
       // 聚光区域取目标与实际滚动视口的交集，避免遮罩“照亮”已被容器裁掉的部分。
-      const left = Math.max(rect.left, bounds?.left ?? 0);
+      const left = Math.max(rect.left, bounds?.left ?? 0);  // 聚光区域取目标与滚动视口的交集
       const top = Math.max(rect.top, bounds?.top ?? 0);
       const right = Math.min(rect.right, bounds?.right ?? window.innerWidth);
       const bottom = Math.min(rect.bottom, bounds?.bottom ?? window.innerHeight);

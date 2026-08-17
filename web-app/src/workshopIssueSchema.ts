@@ -73,7 +73,7 @@ export const WORKSHOP_CATEGORY_OPTIONS = [
  */
 export const ISSUE_CATEGORY_LABELS: Record<WorkshopIssueCategory, string> = Object.fromEntries(
   WORKSHOP_CATEGORY_OPTIONS,
-) as Record<WorkshopIssueCategory, string>;
+) as Record<WorkshopIssueCategory, string>;  // 由选项一次性生成，下拉框与看板共用同一套中文名
 
 /** 新建问题时的空表单值；补齐全部字段可避免受控输入在切换类别时出现未定义值。 */
 export const EMPTY_WORKSHOP_TEMPLATE_FIELDS: WorkshopTemplateFields = {
@@ -194,7 +194,7 @@ export function workshopCategoryLabel(category: WorkshopIssueCategory) {
  * @returns `[字段标签, 负责人文本]` 元组；文本可能为空，由调用方决定是否显示占位。
  */
 export function workshopIssueOwnerLabel(issue: Pick<WorkshopIssue, "category" | "responsible_person" | "primary_owner" | "responsibility_party" | "discoverer">) {
-  if (issue.category === "overseas") return ["负责人", issue.responsible_person || issue.primary_owner];
+  if (issue.category === "overseas") return ["负责人", issue.responsible_person || issue.primary_owner];  // 海外可回退旧版 primary_owner
   if (issue.category === "error_proofing") return ["责任人", issue.responsible_person || issue.primary_owner];
   if (issue.category === "packaging") return ["责任方", issue.responsibility_party];
   return ["发现人", issue.discoverer];

@@ -96,6 +96,33 @@ def _validate_files(values, label: str) -> list[str]:
     return result
 
 
+def _record_header_match(columns, strengths, role, column_index, strength):
+    """在单个角色中只保留当前扫描行里的最强别名匹配列。"""
+    if strength > strengths.get(role, 0):
+        strengths[role] = strength
+        columns[role] = column_index
+
+
+def _row_layout(values):
+    """扫描一行表头，返回字段列映射和每个角色的别名强度。"""
+    columns: dict[str, int] = {}
+    strengths: dict[str, int] = {}
+    for column_index, value in enumerate(values, start=1):
+        text = _header(value)
+        if not text:
+            continue
+        for role, aliases in _ROLE_ALIASES.items():
+            for alias_index, alias in enumerate(aliases):
+                if alias in text:
+                    # 越靠前的别名越具体，分值越高；同一角色只保留当前行中最强匹配列。
+                    _record_header_match(
+                        columns, strengths, role, column_index,
+                        len(aliases) - alias_index,
+                    )
+                    break
+    return columns, strengths
+
+
 def _detect_layout(worksheet) -> dict[str, object] | None:
     """
     扫描工作表前十二行，返回字段覆盖完整且别名匹配质量最高的表头布局。
@@ -110,24 +137,9 @@ def _detect_layout(worksheet) -> dict[str, object] | None:
     for row_index, values in enumerate(
         worksheet.iter_rows(min_row=1, max_row=scan_rows, values_only=True), start=1
     ):
-        columns: dict[str, int] = {}
-        strengths: dict[str, int] = {}
-        for column_index, value in enumerate(values, start=1):
-            text = _header(value)
-            if not text:
-                continue
-            for role, aliases in _ROLE_ALIASES.items():
-                for alias_index, alias in enumerate(aliases):
-                    if alias in text:
-                        # 越靠前的别名越具体，分值越高；同一角色只保留当前行中最强匹配列。
-                        strength = len(aliases) - alias_index
-                        if strength > strengths.get(role, 0):
-                            strengths[role] = strength
-                            columns[role] = column_index
-                        break
+        columns, strengths = _row_layout(values)
         # 缺少任一必要角色时即使分数较高也不能安全生成采购明细。
-        required = {"code", "name", "unit", "qty"}
-        if not required.issubset(columns):
+        if not {"code", "name", "unit", "qty"}.issubset(columns):
             continue
         # 供应商列对本功能尤其关键，给予足够加分，优先采用无需外部映射的完整表头。
         score = sum(strengths.values()) + (20 if "supplier" in columns else 0)
@@ -198,6 +210,23 @@ def _infer_file_supplier(path: str) -> str:
     return _supplier(matched.group(1) if matched else "")
 
 
+def _merge_history_sheet(worksheet, layout, file_supplier, mapping, conflicts):
+    """把一张历史明细页签中的有效 JBC 供应关系并入映射并统计冲突。"""
+    columns = layout["columns"]
+    for values in _iter_data_rows(worksheet, layout):
+        code = _text(_cell(values, columns, "code"))
+        # 供应商批次表只处理项目约定的 JBC 辅料编号，排除标题、合计和其他物料。
+        if not code.upper().startswith("JBC"):
+            continue
+        # 文件级供应商可覆盖表内空列和错误公式；无法推断时再使用每行供应商。
+        supplier = file_supplier or _supplier(_cell(values, columns, "supplier"))
+        if not supplier:
+            continue
+        if code in mapping and mapping[code] != supplier:
+            conflicts.add(code)
+        mapping[code] = supplier  # 冲突时按约定让后读取文件成为本次有效记录。
+
+
 def _history_mapping(history_paths: list[str], log=None) -> tuple[dict[str, str], int]:
     """
     读取历史采购明细，建立 ``材料编号 -> 供应商`` 映射并统计冲突编号数。
@@ -215,26 +244,54 @@ def _history_mapping(history_paths: list[str], log=None) -> tuple[dict[str, str]
         try:
             for worksheet in workbook.worksheets:
                 layout = _detect_layout(worksheet)
-                if not layout:
-                    continue
-                columns = layout["columns"]
-                for values in _iter_data_rows(worksheet, layout):
-                    code = _text(_cell(values, columns, "code"))
-                    # 供应商批次表只处理项目约定的 JBC 辅料编号，排除标题、合计和其他物料。
-                    if not code.upper().startswith("JBC"):
-                        continue
-                    # 文件级供应商可覆盖表内空列和错误公式；无法推断时再使用每行供应商。
-                    supplier = file_supplier or _supplier(_cell(values, columns, "supplier"))
-                    if not supplier:
-                        continue
-                    if code in mapping and mapping[code] != supplier:
-                        conflicts.add(code)
-                    mapping[code] = supplier  # 冲突时按约定让后读取文件成为本次有效记录。
+                if layout:
+                    _merge_history_sheet(
+                        worksheet, layout, file_supplier, mapping, conflicts,
+                    )
         finally:
             workbook.close()
     if log and conflicts:
         log("历史明细中有 %d 个材料编号对应多个供应商，已按文件选择顺序采用最后一次记录。" % len(conflicts))
     return mapping, len(conflicts)
+
+
+def _read_batch_item(values, columns, resolver, fill_counts):
+    """
+    清洗单个当前批次行，返回 ``(item, status)``。
+
+    ``status`` 为 ``"ok"`` 时 ``item`` 是可直接进入采购复核的完整记录；``"skip"``
+    表示空行、非 JBC 编号、无正数数量或缺单位的无采购意义行；``"excluded"`` 表示
+    材料名称含“原厂”需要单独计数。主数据库补全发生在原厂判断之前，因此源表名称为
+    空但档案已标记原厂的记录也会被正确排除。
+    """
+    code = _text(_cell(values, columns, "code"))
+    if not code.upper().startswith("JBC"):
+        # 跳过空行、标题行、合计行及不属于该业务范围的物料编号。
+        return None, "skip"
+    item = {
+        "code": code,
+        "name": _text(_cell(values, columns, "name")),
+        "spec": _text(_cell(values, columns, "spec")),
+        "unit": _text(_cell(values, columns, "unit")),
+    }
+    if resolver is not None:
+        # 正式主数据遵循“仅补空值”原则，fill_counts 用于最终记录各字段补全数量。
+        resolver.fill_mapping(
+            item, fields=("name", "spec", "unit"), counts=fill_counts,
+        )
+    quantity = _quantity(_cell(values, columns, "qty"))
+    # 无效、零或负数量不构成采购需求；缺少单位时输出也无法交付供应商执行。
+    if quantity is None or quantity <= 0 or not item["unit"]:
+        return None, "skip"
+    if _is_original(item["name"]):
+        # 排除发生在供应商归属之前，使“原厂”记录不会出现在人工供应商复核清单。
+        return None, "excluded"
+    item.update({
+        "qty": quantity,
+        # 保留当前清单直接提供的供应商，后续其优先级高于历史记录和主数据库。
+        "source_supplier": _supplier(_cell(values, columns, "supplier")),
+    })
+    return item, "ok"
 
 
 def _read_batch(path: str, log=None, resolver=None, fill_counts=None) -> dict[str, object]:
@@ -255,34 +312,11 @@ def _read_batch(path: str, log=None, resolver=None, fill_counts=None) -> dict[st
         items = []
         excluded_original = 0
         for values in _iter_data_rows(worksheet, layout):
-            code = _text(_cell(values, columns, "code"))
-            if not code.upper().startswith("JBC"):
-                # 跳过空行、标题行、合计行及不属于该业务范围的物料编号。
-                continue
-            quantity = _quantity(_cell(values, columns, "qty"))
-            item = {
-                "code": code,
-                "name": _text(_cell(values, columns, "name")),
-                "spec": _text(_cell(values, columns, "spec")),
-                "unit": _text(_cell(values, columns, "unit")),
-            }
-            if resolver is not None:
-                # 正式主数据遵循“仅补空值”原则，fill_counts 用于最终记录各字段补全数量。
-                resolver.fill_mapping(
-                    item, fields=("name", "spec", "unit"), counts=fill_counts)
-            # 无效、零或负数量不构成采购需求；缺少单位时输出也无法交付供应商执行。
-            if quantity is None or quantity <= 0 or not item["unit"]:
-                continue
-            if _is_original(item["name"]):
-                # 排除发生在供应商归属之前，使“原厂”记录不会出现在人工供应商复核清单。
+            item, status = _read_batch_item(values, columns, resolver, fill_counts)
+            if status == "excluded":
                 excluded_original += 1
-                continue
-            item.update({
-                "qty": quantity,
-                # 保留当前清单直接提供的供应商，后续其优先级高于历史记录和主数据库。
-                "source_supplier": _supplier(_cell(values, columns, "supplier")),
-            })
-            items.append(item)
+            elif item is not None:
+                items.append(item)
         return {
             "batch": _batch_name(path),
             "file": os.path.basename(path),
@@ -575,6 +609,49 @@ def _style_sheet(worksheet) -> None:
     worksheet.sheet_properties.pageSetUpPr.fitToPage = True
 
 
+def _write_block_title(worksheet, start_row, batch_name, delivery_date, border):
+    """写入横跨六列、含批次与交付日期的黄色标题行。"""
+    worksheet.merge_cells(start_row=start_row, start_column=1, end_row=start_row, end_column=6)
+    title = worksheet.cell(start_row, 1, "%s交付日期%s" % (batch_name, delivery_date))
+    title.fill = PatternFill("solid", fgColor="FFFF00")
+    title.font = Font(name="宋体", size=11)
+    title.alignment = Alignment(horizontal="center", vertical="center")
+    worksheet.row_dimensions[start_row].height = 24
+    # 合并单元格仍逐列设置边框，确保 Excel 渲染和纸质打印时四周边线完整。
+    for column in range(1, 7):
+        worksheet.cell(start_row, column).border = border
+
+
+def _write_block_header(worksheet, header_row, border):
+    """按单一事实来源 ``HEADERS`` 写入表头行。"""
+    for column, value in enumerate(HEADERS, start=1):
+        cell = worksheet.cell(header_row, column, value)
+        cell.font = Font(name="宋体", size=10)
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = border
+    worksheet.row_dimensions[header_row].height = 30
+
+
+def _write_block_item(worksheet, row_index, item, border):
+    """写入一条供应商批次明细并返回下一行行号。"""
+    values = [
+        item["code"], item["name"], item["spec"], item["unit"],
+        round(float(item["qty"]), 2), item["supplier"],
+    ]
+    for column, value in enumerate(values, start=1):
+        cell = worksheet.cell(row_index, column, value)
+        cell.font = Font(name="宋体", size=10)
+        # 数量右对齐便于比较位数，供应商居中，其余描述字段左对齐并允许换行。
+        cell.alignment = Alignment(
+            horizontal="right" if column == 5 else "center" if column == 6 else "left",
+            vertical="center",
+            wrap_text=True,
+        )
+        cell.border = border
+    worksheet.row_dimensions[row_index].height = 22
+    return row_index + 1
+
+
 def _write_block(
     worksheet,
     start_row: int,
@@ -590,45 +667,12 @@ def _write_block(
     """
     thin = Side(style="thin", color="000000")
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
-    title_row = start_row
+    _write_block_title(worksheet, start_row, batch_name, delivery_date, border)
     header_row = start_row + 1
-    # 标题横跨六个业务列，使批次与交付日期在打印和窄屏预览中仍是一个完整视觉单元。
-    worksheet.merge_cells(start_row=title_row, start_column=1, end_row=title_row, end_column=6)
-    title = worksheet.cell(title_row, 1, "%s交付日期%s" % (batch_name, delivery_date))
-    title.fill = PatternFill("solid", fgColor="FFFF00")
-    title.font = Font(name="宋体", size=11)
-    title.alignment = Alignment(horizontal="center", vertical="center")
-    worksheet.row_dimensions[title_row].height = 24
-    # 合并单元格仍逐列设置边框，确保 Excel 渲染和纸质打印时四周边线完整。
-    for column in range(1, 7):
-        worksheet.cell(title_row, column).border = border
-
-    # 固定表头顺序与 HEADERS 单一事实来源一致，后续明细 values 必须保持同样次序。
-    for column, value in enumerate(HEADERS, start=1):
-        cell = worksheet.cell(header_row, column, value)
-        cell.font = Font(name="宋体", size=10)
-        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        cell.border = border
-    worksheet.row_dimensions[header_row].height = 30
-
+    _write_block_header(worksheet, header_row, border)
     row_index = header_row + 1
     for item in items:
-        values = [
-            item["code"], item["name"], item["spec"], item["unit"],
-            round(float(item["qty"]), 2), item["supplier"],
-        ]
-        for column, value in enumerate(values, start=1):
-            cell = worksheet.cell(row_index, column, value)
-            cell.font = Font(name="宋体", size=10)
-            # 数量右对齐便于比较位数，供应商居中，其余描述字段左对齐并允许换行。
-            cell.alignment = Alignment(
-                horizontal="right" if column == 5 else "center" if column == 6 else "left",
-                vertical="center",
-                wrap_text=True,
-            )
-            cell.border = border
-        worksheet.row_dimensions[row_index].height = 22
-        row_index += 1
+        row_index = _write_block_item(worksheet, row_index, item, border)
     return row_index - 1
 
 

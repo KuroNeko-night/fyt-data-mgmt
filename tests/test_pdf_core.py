@@ -9,41 +9,41 @@ class TestParsePages(unittest.TestCase):
     """验证 PDF 页码列表、范围、开区间、去重和越界裁剪语法。"""
 
     def test_single_and_list(self):
-        self.assertEqual(pc.parse_pages("1", 10), [0])
-        self.assertEqual(pc.parse_pages("1,3,5", 10), [0, 2, 4])
+        self.assertEqual(pc.parse_pages("1", 10), [0])  # 单页转 0 基索引
+        self.assertEqual(pc.parse_pages("1,3,5", 10), [0, 2, 4])  # 列表逐项转换
 
     def test_range(self):
-        self.assertEqual(pc.parse_pages("2-4", 10), [1, 2, 3])
+        self.assertEqual(pc.parse_pages("2-4", 10), [1, 2, 3])  # 闭区间展开
 
     def test_open_ended(self):
-        self.assertEqual(pc.parse_pages("8-", 10), [7, 8, 9])
+        self.assertEqual(pc.parse_pages("8-", 10), [7, 8, 9])  # 开区间到末页
 
     def test_dedup_and_order(self):
         # 去重且保持首见顺序
-        self.assertEqual(pc.parse_pages("3,1,3,2", 10), [2, 0, 1])
+        self.assertEqual(pc.parse_pages("3,1,3,2", 10), [2, 0, 1])  # 重复页只留首次
 
     def test_clamps_out_of_range(self):
-        self.assertEqual(pc.parse_pages("5-100", 6), [4, 5])
+        self.assertEqual(pc.parse_pages("5-100", 6), [4, 5])  # 越界裁剪到最大页
 
     def test_reversed_range(self):
-        self.assertEqual(pc.parse_pages("4-2", 10), [1, 2, 3])
+        self.assertEqual(pc.parse_pages("4-2", 10), [1, 2, 3])  # 反向范围自动纠正
 
     def test_fullwidth_separators(self):
-        self.assertEqual(pc.parse_pages("1，3－4", 10), [0, 2, 3])
+        self.assertEqual(pc.parse_pages("1，3－4", 10), [0, 2, 3])  # 全角分隔符兼容
 
     def test_empty_raises(self):
         with self.assertRaises(pc.PdfError):
-            pc.parse_pages("", 10)
+            pc.parse_pages("", 10)  # 空串必须报错
         with self.assertRaises(pc.PdfError):
-            pc.parse_pages("   ", 10)
+            pc.parse_pages("   ", 10)  # 纯空白必须报错
 
     def test_all_out_of_range_raises(self):
         with self.assertRaises(pc.PdfError):
-            pc.parse_pages("50,60", 10)
+            pc.parse_pages("50,60", 10)  # 全部越界必须报错
 
     def test_junk_segment_ignored(self):
         # "a-b" 非法段被跳过，"3" 仍生效
-        self.assertEqual(pc.parse_pages("a-b,3", 10), [2])
+        self.assertEqual(pc.parse_pages("a-b,3", 10), [2])  # 非法段跳过不拖累合法段
 
 
 if __name__ == "__main__":

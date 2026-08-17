@@ -24,13 +24,13 @@ export async function chooseFiles(options: {
   if (!isTauriRuntime()) {
     throw new Error("当前窗口不支持选择本机文件，请在桌面版中继续。");
   }
-  const selected = await open({
+  const selected = await open({  // 只通过系统选择器获取路径，不向页面开放任意路径输入
     title: options.title,
     multiple: options.multiple ?? false,
     directory: options.directory ?? false,
     filters: options.filters,
   });
-  if (!selected) return [];
+  if (!selected) return [];  // 用户取消返回空数组，调用方按无文件处理
   // 单选返回字符串、多选返回数组，这里统一成数组，调用方只需处理一种形状。
   return Array.isArray(selected) ? selected : [selected];
 }
@@ -44,16 +44,16 @@ export async function openLocalPath(path: string): Promise<void> {
   if (!isTauriRuntime()) {
     throw new Error("当前窗口不支持打开本机路径，请在桌面版中继续。");
   }
-  await invoke("open_local_path", { path });
+  await invoke("open_local_path", { path });  // 经白名单命令打开，Rust 会再次校验绝对路径与存在性
 }
 
 /** 桌面端使用原生警告对话框，浏览器预览回退到同步确认框。 */
 export async function confirmAction(message: string): Promise<boolean> {
-  if (!isTauriRuntime()) return window.confirm(message);
-  return confirm(message, { title: "峰运通数据管理系统", kind: "warning" });
+  if (!isTauriRuntime()) return window.confirm(message);  // 浏览器预览回退同步确认框，桌面端用原生警告对话框
+  return confirm(message, { title: "峰运通数据管理系统", kind: "warning" });  // 原生确认框统一应用标题与警告语气
 }
 
 /** 同时兼容 Windows 与 Unix 分隔符，从完整路径提取客户可读文件名。 */
 export function fileName(path: string): string {
-  return path.split(/[\\/]/).filter(Boolean).at(-1) || path;
+  return path.split(/[\\/]/).filter(Boolean).at(-1) || path;  // 兼容两种分隔符取末段文件名
 }

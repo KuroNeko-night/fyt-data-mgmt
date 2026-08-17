@@ -38,7 +38,7 @@ export interface TaskRowProps {
  */
 export function TaskRow({ title, status, time, meta, error, actions, onOpen, className = "" }: TaskRowProps) {
   // 主体内容只构造一次，在可点击按钮和只读容器两种模式之间复用。
-  const content = <><span className="fyt-task-title">{title}</span><span className="fyt-task-meta">{time ? <span>{time}</span> : null}{meta}</span>{error ? <span className="fyt-task-error">{error}</span> : null}</>;
+  const content = <><span className="fyt-task-title">{title}</span><span className="fyt-task-meta">{time ? <span>{time}</span> : null}{meta}</span>{error ? <span className="fyt-task-error">{error}</span> : null}</>;  // 同一内容节点在可点击与只读模式间复用
   return (
     <div className={`fyt-task-row ${className}`.trim()}>
       <StatusBadge status={status} />

@@ -25,11 +25,11 @@ class BusinessResultCoreTests(unittest.TestCase):
             "out_dir": "输出",
         }
         presentation = business_result_core.present("web.arrival", result)
-        self.assertEqual(presentation["kind"], "arrival")
-        self.assertEqual(presentation["metrics"][0]["value"], "2")
-        self.assertEqual(presentation["metrics"][1]["value"], "83.3%")
-        self.assertEqual(presentation["sections"][0]["rows"][0]["batch_no"], "26035-01")
-        self.assertEqual(presentation["sections"][0]["rows"][0]["completion_label"], "70.0%")
+        self.assertEqual(presentation["kind"], "arrival")  # 动作路由到到料投影
+        self.assertEqual(presentation["metrics"][0]["value"], "2")  # 批次数
+        self.assertEqual(presentation["metrics"][1]["value"], "83.3%")  # 总体到料率
+        self.assertEqual(presentation["sections"][0]["rows"][0]["batch_no"], "26035-01")  # 批次号
+        self.assertEqual(presentation["sections"][0]["rows"][0]["completion_label"], "70.0%")  # 单批完成率
 
     def test_arrival_projection_lists_missing_materials_and_quantity_gap(self):
         """批次详情必须保留具体未到物料、需求、实收和缺口数量。"""
@@ -51,12 +51,12 @@ class BusinessResultCoreTests(unittest.TestCase):
                 }],
             }],
         })
-        self.assertEqual(len(presentation["sections"]), 2)
+        self.assertEqual(len(presentation["sections"]), 2)  # 概览与明细两段
         detail = presentation["sections"][1]
         self.assertEqual(detail["title"], "未到物料明细")
-        self.assertFalse(detail["truncated"])
-        self.assertEqual(detail["rows"][0]["material_code"], "A-01")
-        self.assertEqual(detail["rows"][0]["shortage_quantity"], "3")
+        self.assertFalse(detail["truncated"])  # 明细未截断
+        self.assertEqual(detail["rows"][0]["material_code"], "A-01")  # 物料编码
+        self.assertEqual(detail["rows"][0]["shortage_quantity"], "3")  # 缺口数量
 
     def test_reconcile_projection_limits_rows_and_keeps_real_total(self):
         """异常预览可截断展示行，但总数与可信度检查必须保持真实值。"""
@@ -88,11 +88,11 @@ class BusinessResultCoreTests(unittest.TestCase):
         }
         presentation = business_result_core.present("reconcile.run", result)
         section = presentation["sections"][0]
-        self.assertEqual(section["total"], 35)
-        self.assertEqual(len(section["rows"]), 30)
-        self.assertTrue(section["truncated"])
+        self.assertEqual(section["total"], 35)  # 真实总数保留
+        self.assertEqual(len(section["rows"]), 30)  # 预览行截断到上限
+        self.assertTrue(section["truncated"])  # 截断标记
         self.assertEqual(presentation["notices"][0]["title"], "可信度检查提示")
-        self.assertEqual(presentation["quality"]["checks"][0]["title"], "名单范围")
+        self.assertEqual(presentation["quality"]["checks"][0]["title"], "名单范围")  # 可信度项保留
 
     def test_attendance_projection_aggregates_stats_and_parameters(self):
         """考勤投影应聚合匹配率，并把可调参数转换为客户可读标签。"""
@@ -113,13 +113,13 @@ class BusinessResultCoreTests(unittest.TestCase):
                 "night_shift": False,
             },
         })
-        self.assertEqual(presentation["kind"], "attendance")
-        self.assertEqual(presentation["metrics"][2]["value"], "90.0%")
-        self.assertEqual(presentation["sections"][0]["rows"][0]["file"], "考勤表.xlsx")
+        self.assertEqual(presentation["kind"], "attendance")  # 考勤投影
+        self.assertEqual(presentation["metrics"][2]["value"], "90.0%")  # 匹配率
+        self.assertEqual(presentation["sections"][0]["rows"][0]["file"], "考勤表.xlsx")  # 只显示文件名
         parameters = {item["key"]: item["value"] for item in presentation["parameters"]}
-        self.assertEqual(parameters["conflict"], "先者优先")
+        self.assertEqual(parameters["conflict"], "先者优先")  # 参数转客户文案
         self.assertEqual(parameters["day_max_hours"], "15 小时")
-        self.assertTrue(presentation["quality"]["checks"])
+        self.assertTrue(presentation["quality"]["checks"])  # 质量检查存在
 
     def test_pivot_projection_embeds_quality_and_sheet_audit(self):
         """销售表结果应内嵌可信度和工作表识别审计，不再依赖独立分析文件。"""
@@ -141,10 +141,10 @@ class BusinessResultCoreTests(unittest.TestCase):
             }],
             "review": {"held_kept_n": 1},
         })
-        self.assertEqual(presentation["quality"]["score"], 82)
-        self.assertEqual(presentation["quality"]["checks"][0]["title"], "警告")
+        self.assertEqual(presentation["quality"]["score"], 82)  # 可信度分数
+        self.assertEqual(presentation["quality"]["checks"][0]["title"], "警告")  # 检查级别
         self.assertEqual(presentation["sections"][0]["title"], "工作表识别明细")
-        self.assertEqual(presentation["sections"][0]["rows"][0]["file"], "销售数据.xlsx")
+        self.assertEqual(presentation["sections"][0]["rows"][0]["file"], "销售数据.xlsx")  # 文件名脱敏
 
     def test_delivery_projection_lists_missing_supplier_materials(self):
         """送货计划投影必须列出未匹配供应商物料并呈现关键业务参数。"""
@@ -159,9 +159,9 @@ class BusinessResultCoreTests(unittest.TestCase):
             "case_used": True,
             "case_hit": 4,
         })
-        self.assertEqual(presentation["sections"][0]["rows"][0]["material_code"], "M-004")
+        self.assertEqual(presentation["sections"][0]["rows"][0]["material_code"], "M-004")  # 未匹配物料
         self.assertEqual(presentation["quality"]["checks"][0]["title"], "供应商匹配")
-        self.assertEqual(presentation["parameters"][0]["value"], "正式订单")
+        self.assertEqual(presentation["parameters"][0]["value"], "正式订单")  # 业务参数
 
     def test_invoice_match_projection_lists_suppliers_for_review(self):
         """发票匹配需按无票采购和有票无采购列出待人工核对供应商。"""
@@ -175,8 +175,8 @@ class BusinessResultCoreTests(unittest.TestCase):
         })
         section = presentation["sections"][0]
         self.assertEqual(section["title"], "待核对供应商")
-        self.assertEqual(section["rows"][0], {"supplier": "供应商甲", "status": "无票采购"})
-        self.assertEqual(section["rows"][1], {"supplier": "供应商乙", "status": "有发票无采购"})
+        self.assertEqual(section["rows"][0], {"supplier": "供应商甲", "status": "无票采购"})  # 单边采购
+        self.assertEqual(section["rows"][1], {"supplier": "供应商乙", "status": "有发票无采购"})  # 单边发票
 
     def test_compare_quality_does_not_penalize_real_business_differences(self):
         """真实表间差异属于业务结果，不能被误算成解析可信度下降。"""
@@ -195,10 +195,10 @@ class BusinessResultCoreTests(unittest.TestCase):
             "only_a": [],
             "only_b": [],
         })
-        self.assertEqual(presentation["quality"]["score"], 100)
-        self.assertEqual(presentation["metrics"][1]["value"], "2")
+        self.assertEqual(presentation["quality"]["score"], 100)  # 真实差异不扣分
+        self.assertEqual(presentation["metrics"][1]["value"], "2")  # 差异计数
         parameters = {item["key"]: item["value"] for item in presentation["parameters"]}
-        self.assertEqual(parameters["columns"], "数量、单价")
+        self.assertEqual(parameters["columns"], "数量、单价")  # 对比列参数
 
     def test_purchase_diff_action_uses_purchase_diff_projection(self):
         """采购计划差异动作必须路由到专用投影，而不是普通采购对账结构。"""
@@ -208,8 +208,8 @@ class BusinessResultCoreTests(unittest.TestCase):
             "rows": 6,
             "excluded_original_count": 2,
         })
-        self.assertEqual(presentation["kind"], "purchase_diff")
-        self.assertEqual(presentation["metrics"][0]["value"], "6")
+        self.assertEqual(presentation["kind"], "purchase_diff")  # 差异专用投影
+        self.assertEqual(presentation["metrics"][0]["value"], "6")  # 差异行数
 
     def test_purchase_projection_uses_side_names_and_conflicts(self):
         """采购对账应使用双方实际名称标注未配对和数量冲突列。"""
@@ -228,11 +228,11 @@ class BusinessResultCoreTests(unittest.TestCase):
         }
         presentation = business_result_core.present("purchase.run", result)
         labels = {item["label"] for item in presentation["metrics"]}
-        self.assertIn("峰运通未配对", labels)
-        self.assertIn("供应商甲未配对", labels)
+        self.assertIn("峰运通未配对", labels)  # 我方未配对
+        self.assertIn("供应商甲未配对", labels)  # 对方未配对
         conflict = presentation["sections"][0]["rows"][0]
-        self.assertEqual(conflict["difference"], "2")
-        self.assertEqual(presentation["sections"][0]["columns"][3]["label"], "峰运通数量")
+        self.assertEqual(conflict["difference"], "2")  # 数量差异
+        self.assertEqual(presentation["sections"][0]["columns"][3]["label"], "峰运通数量")  # 列名使用实际名称
 
     def test_shipping_review_projection_lists_exceptions(self):
         """发运评审投影应展示差异指标和物料明细，不让前端重新读取报告。"""
@@ -256,10 +256,10 @@ class BusinessResultCoreTests(unittest.TestCase):
                 "status": "数量差异",
             }],
         })
-        self.assertEqual(presentation["kind"], "shipping_review")
-        self.assertEqual(presentation["metrics"][3]["value"], "1")
-        self.assertEqual(presentation["sections"][0]["rows"][0]["code"], "A-01")
-        self.assertEqual(presentation["parameters"][1]["value"], "评审A")
+        self.assertEqual(presentation["kind"], "shipping_review")  # 发运评审投影
+        self.assertEqual(presentation["metrics"][3]["value"], "1")  # 数量差异计数
+        self.assertEqual(presentation["sections"][0]["rows"][0]["code"], "A-01")  # 物料编码
+        self.assertEqual(presentation["parameters"][1]["value"], "评审A")  # 页签参数
 
     def test_reconcile_statement_projection_hides_path(self):
         """对账单结果只展示文件名，不能把服务器绝对路径暴露给前端。"""
@@ -274,13 +274,13 @@ class BusinessResultCoreTests(unittest.TestCase):
             "total_rows": 12,
         })
         row = presentation["sections"][0]["rows"][0]
-        self.assertEqual(row["name"], "供应商甲-202607.xlsx")
-        self.assertNotIn("private", row["name"])
+        self.assertEqual(row["name"], "供应商甲-202607.xlsx")  # 仅文件名
+        self.assertNotIn("private", row["name"])  # 绝对路径不暴露
 
     def test_unknown_feature_has_no_projection(self):
         """未登记业务返回空投影，让调用端保留原始结果而不是猜测结构。"""
 
-        self.assertIsNone(business_result_core.present("text.transform", {"text": "完成"}))
+        self.assertIsNone(business_result_core.present("text.transform", {"text": "完成"}))  # 未登记业务返回空
 
 
 if __name__ == "__main__":

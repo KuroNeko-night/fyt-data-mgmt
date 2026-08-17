@@ -406,6 +406,23 @@ def _update(mutator: Callable[[dict[str, object]], object]) -> object:
         return result
 
 
+def _apply_supplier_learning_item(suppliers, resolver, learned_aliases, name, code):
+    """在锁内学习一条供应商映射，返回冲突名称或 ``"added"``。"""
+    alias = _normalized_text(name)
+    learned = learned_aliases.get(alias)
+    if learned is not None:
+        return name if learned[1] != code else None
+    supplier_key = resolver.supplier_name_key(name)
+    if not supplier_key and resolver.supplier_alias_is_ambiguous(name):
+        return name
+    current = _text(suppliers.get(supplier_key)) if supplier_key else ""
+    if not current:
+        suppliers[name] = code
+        learned_aliases[alias] = (name, code)
+        return "added"
+    return name if current != code else None
+
+
 def learn_suppliers(mapping: dict[str, str], log=None) -> int:
     """被动学习供应商映射，仅填空缺，不覆盖管理员确认值。
 
@@ -429,23 +446,13 @@ def learn_suppliers(mapping: dict[str, str], log=None) -> int:
         # 解析器只反映修改前快照，learned_aliases 用于检测本次循环中新加入名称的重复。
         learned_aliases: dict[str, tuple[str, str]] = {}
         for name, code in normalized.items():
-            alias = _normalized_text(name)
-            learned = learned_aliases.get(alias)
-            if learned is not None:
-                if learned[1] != code:
-                    conflicts.append(name)
-                continue
-            supplier_key = resolver.supplier_name_key(name)
-            if not supplier_key and resolver.supplier_alias_is_ambiguous(name):
-                conflicts.append(name)
-                continue
-            current = _text(suppliers.get(supplier_key)) if supplier_key else ""
-            if not current:
-                suppliers[name] = code
-                learned_aliases[alias] = (name, code)
+            outcome = _apply_supplier_learning_item(
+                suppliers, resolver, learned_aliases, name, code,
+            )
+            if outcome == "added":
                 added += 1
-            elif current != code:
-                conflicts.append(name)
+            elif outcome:
+                conflicts.append(outcome)
         if log and conflicts:
             log("主数据库已有 %d 条不同的供应商编码，已保留管理员确认值：%s%s。"
                 % (len(conflicts), "、".join(conflicts[:8]),
@@ -453,6 +460,35 @@ def learn_suppliers(mapping: dict[str, str], log=None) -> int:
         return added
 
     return int(_update(mutate))
+
+
+def _apply_material_learning_item(materials, resolver, learned_keys, item):
+    """在锁内学习一条材料记录，返回 ``(是否新增, 冲突字段列表)``。"""
+    source_code = item["code"]
+    alias = _code_alias(source_code)
+    code = resolver.material_key(source_code) or learned_keys.get(alias)
+    if not code and resolver.material_alias_is_ambiguous(source_code):
+        return False, ["%s/编码歧义" % source_code]
+    code = code or source_code
+    current = materials.get(code)
+    added = False
+    if current is None:
+        added = True
+        current = {}
+        if alias:
+            learned_keys[alias] = code
+    conflicts = []
+    for field in ("name", "spec", "unit", "supplier"):
+        if field not in item:
+            continue
+        existing = _text(current.get(field))
+        if not existing:
+            # 被动学习只填空字段，这是管理员维护值不被业务文件覆盖的核心约束。
+            current[field] = item[field]
+        elif existing != item[field]:
+            conflicts.append("%s/%s" % (code, FIELD_LABELS[field]))
+    materials[code] = current
+    return added, conflicts
 
 
 def learn_materials(items: list[dict[str, object]], log=None) -> int:
@@ -484,28 +520,12 @@ def learn_materials(items: list[dict[str, object]], log=None) -> int:
         # 本轮新增编码还不在 resolver 快照内，通过别名表让后续同义编码落到同一记录。
         learned_keys: dict[str, str] = {}
         for item in normalized:
-            source_code = item["code"]
-            alias = _code_alias(source_code)
-            code = resolver.material_key(source_code) or learned_keys.get(alias)
-            if not code and resolver.material_alias_is_ambiguous(source_code):
-                conflicts.add("%s/编码歧义" % source_code)
-                continue
-            code = code or source_code
-            current = materials.get(code)
-            if current is None:
+            added_item, item_conflicts = _apply_material_learning_item(
+                materials, resolver, learned_keys, item,
+            )
+            if added_item:
                 added += 1
-                current = {}
-                if alias:
-                    learned_keys[alias] = code
-            for field in ("name", "spec", "unit", "supplier"):
-                if field in item:
-                    existing = _text(current.get(field))
-                    if not existing:
-                        # 被动学习只填空字段，这是管理员维护值不被业务文件覆盖的核心约束。
-                        current[field] = item[field]
-                    elif existing != item[field]:
-                        conflicts.add("%s/%s" % (code, FIELD_LABELS[field]))
-            materials[code] = current
+            conflicts.update(item_conflicts)
         if log and conflicts:
             values = sorted(conflicts)
             log("主数据库已有 %d 项不同的材料字段，已保留管理员确认值：%s%s。"

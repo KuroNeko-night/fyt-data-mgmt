@@ -26,9 +26,9 @@ type Props = {
  */
 export function AppSidebar({ activeKey, user, pendingUsers, pendingReviews, unreadCount, onNavigate, onLogout }: Props) {
   // 前端过滤只负责入口体验，服务端仍会对每个 API 独立执行角色鉴权。
-  const visibleItems = NAVIGATION_ITEMS.filter((item) => isNavigationAllowed(item, user.role));
+  const visibleItems = NAVIGATION_ITEMS.filter((item) => isNavigationAllowed(item, user.role));  // 前端过滤只负责入口体验，服务端仍独立鉴权
   // 只有三个导航项需要数字徽标，其余项统一返回零以保持渲染分支简单。
-  const badgeFor = (key: WebRouteKey) => key === "notifications" ? unreadCount : key === "tasks" ? pendingReviews : key === "users" ? pendingUsers : 0;
+  const badgeFor = (key: WebRouteKey) => key === "notifications" ? unreadCount : key === "tasks" ? pendingReviews : key === "users" ? pendingUsers : 0;  // 仅三个入口显示数字徽标，其余返回零
   // data-guide 锚点同时服务于 GuidedTour；头像取显示名首字作为无头像时的占位。
   return <aside className="fyt-shell-sidebar" aria-label="侧栏导航">
     <div className="fyt-shell-brand"><Brand compact /></div>

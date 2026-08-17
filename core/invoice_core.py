@@ -331,6 +331,20 @@ def _looks_like_invoice(raw):
     return sum(1 for k in _LOOSE_HINT if k in nn) >= 2
 
 
+def _invoice_integrity_note(inv):
+    """返回发票金额字段需要人工核对的提示；无需核对时返回 ``None``。"""
+    if inv.special and (inv.amount is None or inv.total is None):
+        return "专用发票但金额字段残缺"
+    if (
+        inv.amount is not None
+        and inv.tax is not None
+        and inv.total is not None
+        and abs(inv.amount + inv.tax - inv.total) > 0.01
+    ):
+        return "金额+税额与价税合计不符,请核对是否取错金额"
+    return None
+
+
 def scan(root, log=None, progress=None):
     """递归扫描目录内全部 PDF，按票号去重并返回日期排序结果和存疑清单。
 
@@ -367,13 +381,9 @@ def scan(root, log=None, progress=None):
             if not inv.num:
                 suspects.append((p, "识别为发票但缺发票号码"))
                 continue
-            if inv.special and (inv.amount is None or inv.total is None):
-                suspects.append((p, "专用发票但金额字段残缺"))
-            # 金额勾稽异常可能是抽取到了明细金额；保留候选但明确要求人工核对。
-            elif (inv.amount is not None and inv.tax is not None
-                    and inv.total is not None
-                    and abs(inv.amount + inv.tax - inv.total) > 0.01):
-                suspects.append((p, "金额+税额与价税合计不符,请核对是否取错金额"))
+            note = _invoice_integrity_note(inv)
+            if note:
+                suspects.append((p, note))
             # 去重不变量：同一发票号码只保留先扫描到的一份，后到文件仅提示不覆盖。
             if inv.num in by_num:
                 n_dup += 1

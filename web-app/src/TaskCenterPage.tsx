@@ -50,7 +50,7 @@ function actionLabel(action: string) { return actionLabels[action] || "业务处
  * 人工复核是覆盖在运行状态之上的业务阶段，因此 review_pending 的优先级高于 job.status。
  */
 function statusKey(job: WebJob): StatusKey {
-  if (job.review_pending) return "review";
+  if (job.review_pending) return "review";  // 人工复核优先于底层运行状态展示
   if (job.status === "queued" || job.status === "running" || job.status === "completed" || job.status === "failed" || job.status === "cancelled" || job.status === "interrupted") return job.status;
   return "interrupted"; // 未知状态按中断展示，提醒用户检查，而不是误标为成功。
 }
@@ -58,7 +58,7 @@ function statusKey(job: WebJob): StatusKey {
 /** 判断任务是否属于当前筛选；复核中的任务不重复计入处理中或已完成。 */
 function statusMatch(job: WebJob, filter: TaskFilter) {
   if (filter === "all") return true;
-  if (filter === "active") return !job.review_pending && (job.status === "queued" || job.status === "running");
+  if (filter === "active") return !job.review_pending && (job.status === "queued" || job.status === "running");  // 复核中的任务不重复计入处理中
   if (filter === "review") return Boolean(job.review_pending);
   if (filter === "completed") return job.status === "completed" && !job.review_pending;
   return job.status === "failed" || job.status === "cancelled" || job.status === "interrupted";
@@ -112,11 +112,11 @@ export function TaskCenterPage({ onOpenFeature, initialFilter = "all" }: Props &
   useEffect(() => { void refresh(); }, []);
   useEffect(() => {
     // 没有活动任务时不创建定时器，减少空闲页面的网络请求和服务端压力。
-    if (!jobs.some((job) => job.status === "queued" || job.status === "running")) return undefined;
+    if (!jobs.some((job) => job.status === "queued" || job.status === "running")) return undefined;  // 无活动任务时不创建定时器，减少空闲请求
     const timer = window.setInterval(() => {
       // 只轮询排队和运行中的任务，并行获取后按 id 合并，已完成任务保持原快照。
       void Promise.all(jobs.filter((job) => job.status === "queued" || job.status === "running").map((job) => getJob(job.id)))
-        .then((updates) => setJobs((current) => current.map((job) => updates.find((item) => item.job.id === job.id)?.job || job)))
+        .then((updates) => setJobs((current) => current.map((job) => updates.find((item) => item.job.id === job.id)?.job || job)))  // 按 id 合并轮询结果，未更新任务保持原快照
         // 单次轮询失败不覆盖已有任务和全局错误，下一秒仍会自动重试。
         .catch(() => undefined);
     }, 1000);
@@ -150,7 +150,7 @@ export function TaskCenterPage({ onOpenFeature, initialFilter = "all" }: Props &
   /** 基于失败任务的原输入创建一条新任务，原任务记录保持不变。 */
   async function retry(job: WebJob) {
     setBusyId(job.id); setError("");
-    try { await retryJob(job.id); await refresh(true); setError("已创建重新处理任务"); }
+    try { await retryJob(job.id); await refresh(true); setError("已创建重新处理任务"); }  // 原任务记录保持不变，只创建新任务
     catch (reason) { setError(reason instanceof Error ? reason.message : "创建重新处理任务失败"); }
     finally { setBusyId(""); }
   }

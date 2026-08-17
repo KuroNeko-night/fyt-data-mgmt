@@ -25,7 +25,7 @@ def _mk(rows, sheet="Sheet1"):
     ws.title = sheet
     for r in rows:
         ws.append(r)
-    fd, p = tempfile.mkstemp(suffix=".xlsx")
+    fd, p = tempfile.mkstemp(suffix=".xlsx")  # 独立临时文件
     os.close(fd)
     wb.save(p)
     wb.close()
@@ -51,10 +51,10 @@ class TestAttendanceVariants(unittest.TestCase):
         from core import attendance_core as ac
         p = _mk([hdr, ["张三", D(2026, 5, 1), "08:00", "17:00"],
                  ["张三", D(2026, 5, 2), "08:05", "17:10"]])
-        return len(ac.load_source(p))
+        return len(ac.load_source(p))  # 识别记录数
 
     def test_standard(self):
-        self.assertEqual(self._load_n(["姓名", "日期", "上班1打卡时间", "下班1打卡时间"]), 2)
+        self.assertEqual(self._load_n(["姓名", "日期", "上班1打卡时间", "下班1打卡时间"]), 2)  # 标准表头
 
     def test_name_prefixed(self):        # 员工姓名
         self.assertEqual(self._load_n(["员工姓名", "日期", "上班1打卡时间", "下班1打卡时间"]), 2)
@@ -73,7 +73,7 @@ class TestAttendanceVariants(unittest.TestCase):
         data = ac.load_source(p)
         # 取到的上班打卡应是 08:00(第一次),而非 12:00
         (on, off) = list(data.values())[0]
-        self.assertEqual(str(on), "08:00")
+        self.assertEqual(str(on), "08:00")  # 首次打卡优先
 
     def test_fill_target_col_not_mismatched(self):
         # "上班时间(系统)"是填报目标列(无"打卡"),不应被当作源打卡列 -> 整表识别失败
@@ -81,7 +81,7 @@ class TestAttendanceVariants(unittest.TestCase):
         p = _mk([["姓名", "日期", "上班时间（系统）", "下班时间（系统）"],
                  ["张三", D(2026, 5, 1), None, None]])
         with self.assertRaises(Exception):
-            ac.load_source(p)
+            ac.load_source(p)  # 目标列不被误当源打卡
 
 
 class TestReconcileVariants(unittest.TestCase):
@@ -94,7 +94,7 @@ class TestReconcileVariants(unittest.TestCase):
         return rc._detect_source_header([hdr, ["张三", D(2026, 5, 1), 8]])
 
     def test_standard(self):
-        self.assertIsNotNone(self._detect(["姓名", "日期", "实际工作时间"]))
+        self.assertIsNotNone(self._detect(["姓名", "日期", "实际工作时间"]))  # 标准工时列
 
     def test_shixi_gongshi(self):        # 实际工时
         self.assertIsNotNone(self._detect(["姓名", "日期", "实际工时"]))

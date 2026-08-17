@@ -28,7 +28,7 @@ class _Tmp(unittest.TestCase):
 
         self._tmp = tempfile.mkdtemp(prefix="fyt_dlv_")
         self._old_catalog = os.environ.get("FYT_CATALOG_PATH")
-        os.environ["FYT_CATALOG_PATH"] = os.path.join(self._tmp, "catalog.json")
+        os.environ["FYT_CATALOG_PATH"] = os.path.join(self._tmp, "catalog.json")  # 隔离物料目录配置
 
     def tearDown(self):
         """恢复环境并删除合成文件。"""
@@ -38,7 +38,7 @@ class _Tmp(unittest.TestCase):
             os.environ.pop("FYT_CATALOG_PATH", None)
         else:
             os.environ["FYT_CATALOG_PATH"] = self._old_catalog
-        shutil.rmtree(self._tmp, ignore_errors=True)
+        shutil.rmtree(self._tmp, ignore_errors=True)  # 清理合成文件
 
     def mk(self, name, sheets):
         """按字典顺序生成多工作表 xlsx。"""
@@ -62,7 +62,7 @@ class TestDetectLayout(_Tmp):
     def _layout(self, header):
         """用一行表头和一行占位数据执行布局检测。"""
 
-        p = self.mk("t.xlsx", {"S": [header, ["x"] * len(header)]})
+        p = self.mk("t.xlsx", {"S": [header, ["x"] * len(header)]})  # 占位数据行保证检测可运行
         wb = openpyxl.load_workbook(p)
         hr, cols = D.detect_layout(wb["S"])
         wb.close()
@@ -73,9 +73,9 @@ class TestDetectLayout(_Tmp):
 
         # SAP KD 清单用「下阶物料/下阶物料描述」而非零部件代码
         hr, cols = self._layout(["上阶物料", "下阶物料", "下阶物料描述", "数量"])
-        self.assertIsNotNone(hr)
-        self.assertIn("code", cols)
-        self.assertIn("cname", cols)
+        self.assertIsNotNone(hr)  # 表头行必须识别
+        self.assertIn("code", cols)  # 编码列映射成功
+        self.assertIn("cname", cols)  # 名称列映射成功
         # code 应指向「下阶物料」列(第2列),而非「上阶物料」
         self.assertEqual(cols["code"], 2)
 
@@ -89,7 +89,7 @@ class TestDetectLayout(_Tmp):
         # 供应商名称列必须是第4列「供应商名称」,不是第2列「委外供应商属性」。
         # 硬断言(不加 if):若守卫失效 sup_name 会指向 2,此处即失败。
         self.assertIn("sup_name", cols)
-        self.assertEqual(cols["sup_name"], 4)
+        self.assertEqual(cols["sup_name"], 4)  # 属性列被排除
 
     def test_classic_code_still_works(self):
         """扩展 SAP 别名后不得破坏经典零部件代码表头。"""
@@ -97,7 +97,7 @@ class TestDetectLayout(_Tmp):
         # 不回退:经典「零部件代码」仍可识别
         hr, cols = self._layout(["零部件代码", "零部件名称", "数量", "供应商代码"])
         self.assertIsNotNone(hr)
-        self.assertIn("code", cols)
+        self.assertIn("code", cols)  # 经典表头不回归
 
 
 class TestListSheets(_Tmp):
@@ -108,7 +108,7 @@ class TestListSheets(_Tmp):
 
         p = self.mk("multi.xlsx", {"Sheet1": [["a"]], "BOM": [["b"]],
                                    "发运清单": [["c"]]})
-        self.assertEqual(D.list_sheets(p), ["Sheet1", "BOM", "发运清单"])
+        self.assertEqual(D.list_sheets(p), ["Sheet1", "BOM", "发运清单"])  # 顺序完整列出
 
     def test_non_xlsx_returns_empty(self):
         """不支持的旧 xls 文件安全返回空列表。"""
@@ -116,12 +116,12 @@ class TestListSheets(_Tmp):
         p = os.path.join(self._tmp, "x.xls")
         with open(p, "w") as f:
             f.write("not a real xls")
-        self.assertEqual(D.list_sheets(p), [])
+        self.assertEqual(D.list_sheets(p), [])  # 旧格式不抛异常
 
     def test_missing_file_returns_empty(self):
         """文件不存在时工作表枚举不抛底层异常。"""
 
-        self.assertEqual(D.list_sheets(os.path.join(self._tmp, "nope.xlsx")), [])
+        self.assertEqual(D.list_sheets(os.path.join(self._tmp, "nope.xlsx")), [])  # 缺失文件安全回退
 
 
 if __name__ == "__main__":

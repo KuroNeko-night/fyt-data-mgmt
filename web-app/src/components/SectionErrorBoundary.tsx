@@ -14,7 +14,7 @@ export class SectionErrorBoundary extends Component<Props, State> {
   state: State = { error: null };
 
   /** 在错误渲染后的下一次提交中切换到降级界面。 */
-  static getDerivedStateFromError(error: Error): State { return { error }; }
+  static getDerivedStateFromError(error: Error): State { return { error }; }  // 只捕获子组件渲染期错误，事件与异步错误不在此列
   /** 预留集中错误上报入口；当前不把实现细节或堆栈发送到客户界面。 */
   componentDidCatch(_error: Error, _info: ErrorInfo) {}
 

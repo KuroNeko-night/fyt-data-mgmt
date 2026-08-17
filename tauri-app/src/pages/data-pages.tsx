@@ -39,7 +39,7 @@ export function CatalogPage() {
   /** 重新读取主数据完整快照；使用稳定回调便于挂载效应安全依赖。 */
   const refresh = useCallback(async () => {
     setError("");
-    try { setData(await bridgeRequest<CatalogData>("catalog.list")); }
+    try { setData(await bridgeRequest<CatalogData>("catalog.list")); }  // 每次刷新都以核心层返回为真值，前端不自行推断
     catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
   }, []);
   useEffect(() => { void refresh(); }, [refresh]);
@@ -48,15 +48,15 @@ export function CatalogPage() {
   async function mutate(op: string, params: Record<string, string>) {
     setMessage(""); setError("");
     try {
-      setData(await bridgeRequest<CatalogData>(`catalog.${op}`, params));
+      setData(await bridgeRequest<CatalogData>(`catalog.${op}`, params));  // 以核心返回的完整快照刷新本地状态
       setMessage(op.startsWith("delete") ? "已删除。" : "已保存。");
     } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
   }
   // 只排序由 Object.entries 创建的新数组，不会改变桥接响应对象中的原始顺序。
-  const suppliers = Object.entries(data?.suppliers || {}).sort(([a], [b]) => a.localeCompare(b, "zh-CN"));
+  const suppliers = Object.entries(data?.suppliers || {}).sort(([a], [b]) => a.localeCompare(b, "zh-CN"));  // 只排序新数组，不改变桥接响应对象的原始顺序
   const materialQueryLower = materialQuery.trim().toLowerCase();
   const materials = Object.entries(data?.materials || {})
-    .filter(([code, item]) => !materialQueryLower || `${code} ${item.name || ""} ${item.supplier || ""}`.toLowerCase().includes(materialQueryLower))
+    .filter(([code, item]) => !materialQueryLower || `${code} ${item.name || ""} ${item.supplier || ""}`.toLowerCase().includes(materialQueryLower))  // 搜索只影响当前显示，不改正式主数据
     .sort(([a], [b]) => a.localeCompare(b, "zh-CN"));
   return <div className="fyt-page-flow fyt-wide-flow">
     {error ? <div className="fyt-page-notice error">{error}</div> : null}
@@ -245,8 +245,8 @@ export function DataLibraryPage({ initial, onSummary }: { initial: LibrarySummar
     setError("");
     try {
       const next = await bridgeRequest<LibrarySummary>("library.summary");
-      setSummary(next);
-      onSummary?.(next);
+      setSummary(next);  // 服务端返回的摘要始终作为本地真值
+      onSummary?.(next);  // 同步工作台统计，保持首页数据一致
       setSelected(new Set());
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
@@ -266,7 +266,7 @@ export function DataLibraryPage({ initial, onSummary }: { initial: LibrarySummar
   }, [category, query, summary]);
 
   // 删除和重分类必须从完整摘要取实体，不能只依赖当前筛选后的可见列表。
-  const selectedItems = useMemo(() => (summary?.items ?? []).filter((item) => selected.has(itemKey(item))), [selected, summary]);
+  const selectedItems = useMemo(() => (summary?.items ?? []).filter((item) => selected.has(itemKey(item))), [selected, summary]);  // 从完整摘要取实体，避免只按当前筛选结果删除
   const categories = Object.entries(summary?.titles ?? {});
   const total = Number(summary?.storage.files ?? summary?.items.length ?? 0);
 
@@ -285,7 +285,7 @@ export function DataLibraryPage({ initial, onSummary }: { initial: LibrarySummar
     if (!selectedItems.length || !await confirmAction(`确定从数据库移除选中的 ${selectedItems.length} 个文件吗？归档副本也会删除。`)) return;
     setError("");
     try {
-      const result = await bridgeRequest<{ removed: number }>("library.remove", { items: selectedItems.map(({ category: itemCategory, name }) => ({ category: itemCategory, name })) });
+      const result = await bridgeRequest<{ removed: number }>("library.remove", { items: selectedItems.map(({ category: itemCategory, name }) => ({ category: itemCategory, name })) });  // 只传分类与文件名，删除范围由核心层裁决
       setMessage(`已移除 ${result.removed} 个数据库条目。`);
       await refresh();
     } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
@@ -296,7 +296,7 @@ export function DataLibraryPage({ initial, onSummary }: { initial: LibrarySummar
     if (!nextCategory || !selectedItems.length) return;
     setError("");
     try {
-      const result = await bridgeRequest<{ changed: number }>("library.reclassify", { category: nextCategory, items: selectedItems.map(({ category: itemCategory, name }) => ({ category: itemCategory, name })) });
+      const result = await bridgeRequest<{ changed: number }>("library.reclassify", { category: nextCategory, items: selectedItems.map(({ category: itemCategory, name }) => ({ category: itemCategory, name })) });  // 重新分类只迁移选中条目，分类归属由服务端更新
       setMessage(`已重新分类 ${result.changed} 个条目。`);
       await refresh();
     } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
@@ -306,7 +306,7 @@ export function DataLibraryPage({ initial, onSummary }: { initial: LibrarySummar
   function toggle(item: LibraryItem) {
     const key = itemKey(item);
     setSelected((current) => {
-      const next = new Set(current);
+      const next = new Set(current);  // 复制集合再修改，确保 React 能识别新引用
       if (next.has(key)) next.delete(key); else next.add(key);
       return next;
     });
@@ -375,7 +375,7 @@ export function MappingPage() {
 
   /** 二次确认后删除单个映射；同格式文件之后会重新进入自动识别流程。 */
   async function remove(item: MappingItem) {
-    if (!await confirmAction(`确定删除字段映射“${item.name}”吗？`)) return;
+    if (!await confirmAction(`确定删除字段映射“${item.name}”吗？`)) return;  // 删除前必须经用户确认，同格式文件之后会重新识别
     const result = await bridgeRequest<{ removed: boolean }>("mappings.delete", { id: item.id });
     setMessage(result.removed ? "字段映射已删除。" : "没有找到该字段映射。");
     await refresh();
@@ -451,7 +451,7 @@ export function TemplatePage() {
       const rename = Object.fromEntries(renameText.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line) => {
         const [from, ...rest] = line.split("=");
         // 余下片段重新拼接，避免“原列=新=列”被无意截断为“新”。
-        return [from.trim(), rest.join("=").trim()];
+        return [from.trim(), rest.join("=").trim()];  // 只拆首个等号，目标列名可包含等号
       }).filter(([from, to]) => from && to));
       const splitLines = (value: string) => value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
       const rules = { rename, drop: splitLines(dropText), defaults: splitLines(defaultsText) };

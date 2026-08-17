@@ -59,21 +59,24 @@ def _table_kind(sheet_name: str, headers: list[str]) -> str:
     """
     joined = "".join(headers).replace(" ", "")
     name = sheet_name.replace(" ", "")
-    if name in {"主料异常", "辅料异常", "包装异常", "海外历史记录", "防错异常", "问题一览表"}:
-        return "现场问题"
-    if name == "班组":
-        return "班组名册"
-    if name == "Sheet1" and ({"物料编码", "物料名称", "供应商信息"}.intersection(headers) or {"材料编号", "材料名称", "供应商"}.issubset(set(headers))):
-        # 每日到料成品常保留默认 Sheet1 名称，只能依靠材料字段组合识别。
-        return "到料明细"
-    if "零星订单" in name or {"运输方式", "是否拼箱"}.issubset(set(headers)):
-        return "零星订单"
-    if "正式订单" in name or ("订单号" in headers and "发运完成时间" in joined):
-        return "正式订单"
-    if {"计划", "实际", "差异"}.issubset(set(headers)) or "生产计划" in name:
-        return "生产计划"
-    if "物料号" in headers and any("实际" in header for header in headers):
-        return "生产实绩"
+    rules = (
+        (lambda: name in {"主料异常", "辅料异常", "包装异常", "海外历史记录", "防错异常", "问题一览表"}, "现场问题"),
+        (lambda: name == "班组", "班组名册"),
+        (
+            lambda: name == "Sheet1" and (
+                {"物料编码", "物料名称", "供应商信息"}.intersection(headers)
+                or {"材料编号", "材料名称", "供应商"}.issubset(set(headers))
+            ),
+            "到料明细",
+        ),
+        (lambda: "零星订单" in name or {"运输方式", "是否拼箱"}.issubset(set(headers)), "零星订单"),
+        (lambda: "正式订单" in name or ("订单号" in headers and "发运完成时间" in joined), "正式订单"),
+        (lambda: {"计划", "实际", "差异"}.issubset(set(headers)) or "生产计划" in name, "生产计划"),
+        (lambda: "物料号" in headers and any("实际" in header for header in headers), "生产实绩"),
+    )
+    for matches, kind in rules:
+        if matches():
+            return kind
     return "通用数据"
 
 
@@ -330,6 +333,24 @@ def _tabular_summary(shifts: list[dict[str, object]], report_date: str | None) -
     }
 
 
+def _accumulate_team_insight(
+    row, label_column, dates, focus_date, case_row, team_totals, batch_totals,
+):
+    """累加一个班组行在聚焦日期的产量，并同步拆到批次分布。"""
+    total = 0.0
+    for column in range(label_column + 1, len(dates)):
+        if dates[column] != focus_date:
+            continue
+        amount = _as_number(row[column] if column < len(row) else None)
+        if amount is None:
+            continue
+        total += amount
+        case = case_row[column].strip() if column < len(case_row) else ""
+        if case:
+            batch_totals[case] = batch_totals.get(case, 0.0) + amount
+    return total
+
+
 def _team_and_batch_insights(rows: list[list[str]], focus_date: str) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
     """从“班组/CASE”横向区块提取聚焦日期的班组与批次产量分布。
 
@@ -353,18 +374,10 @@ def _team_and_batch_insights(rows: list[list[str]], focus_date: str) -> tuple[li
             continue
         if not (label.endswith("组") or "班组" in label):
             continue
-        total = 0.0
-        for column in range(label_column + 1, len(dates)):
-            if dates[column] != focus_date:
-                continue
-            amount = _as_number(row[column] if column < len(row) else None)
-            if amount is None:
-                continue
-            total += amount
-            case = case_row[column].strip() if column < len(case_row) else ""
-            if case:
-                batch_totals[case] = batch_totals.get(case, 0.0) + amount
-        team_totals[label] = total
+        team_totals[label] = _accumulate_team_insight(
+            row, label_column, dates, focus_date, case_row,
+            team_totals, batch_totals,
+        )
     teams = [{"team": key, "quantity": _number_label(value)} for key, value in sorted(team_totals.items(), key=lambda item: (-item[1], item[0]))]
     batches = [{"batch": key, "quantity": _number_label(value)} for key, value in sorted(batch_totals.items(), key=lambda item: (-item[1], item[0]))]
     return teams, batches

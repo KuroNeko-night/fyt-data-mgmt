@@ -24,14 +24,14 @@ class TestBadDimension(unittest.TestCase):
 
         self.p = sd.attendance_source()
         if not self.p:
-            self.skipTest("缺少考勤样本(坏 dimension 文件)")
+            self.skipTest("缺少考勤样本(坏 dimension 文件)")  # 外部样本缺失时友好跳过
 
     def _truth_rows(self):
         """用非只读加载取得不受 dimension 限制的真实总行数。"""
 
         # 常规(非 read_only)模式的真实总行数,作为基准
         import openpyxl
-        wb = openpyxl.load_workbook(self.p, data_only=True)
+        wb = openpyxl.load_workbook(self.p, data_only=True)  # 非只读模式取得真实行数
         n = sum(len(list(ws.iter_rows(values_only=True))) for ws in wb.worksheets)
         wb.close()
         return n
@@ -41,7 +41,7 @@ class TestBadDimension(unittest.TestCase):
 
         from core import common_core as cc
         got = sum(len(rows) for _, rows in cc.read_sheets(self.p))
-        self.assertEqual(got, self._truth_rows())
+        self.assertEqual(got, self._truth_rows())  # 修复后读取行数与真实一致
         self.assertGreater(got, 1)
 
     def test_excel_tools_read_sheets_full(self):
@@ -49,7 +49,7 @@ class TestBadDimension(unittest.TestCase):
 
         from core import excel_tools_core as et
         got = sum(len(rows) for _, rows in et._read_sheets(self.p))
-        self.assertEqual(got, self._truth_rows())
+        self.assertEqual(got, self._truth_rows())  # 内部读取器同样不受坏维度影响
         self.assertGreater(got, 1)
 
     def test_preview_reads_beyond_first_row(self):
@@ -65,7 +65,7 @@ class TestBadDimension(unittest.TestCase):
         from core import compare_core as cmp
         hs = cmp.read_headers(self.p)
         # 真表头在数据区(含"姓名"),坏 dimension 下修复前只能看到首行"基本信息"
-        self.assertIn("姓名", hs)
+        self.assertIn("姓名", hs)  # 表头检测应落到真实数据区
         self.assertNotEqual(hs[:1], ["基本信息"])
 
 

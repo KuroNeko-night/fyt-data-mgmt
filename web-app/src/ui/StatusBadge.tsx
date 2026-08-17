@@ -18,7 +18,7 @@ export interface StatusBadgeProps {
  */
 export function StatusBadge({ status, className = "" }: StatusBadgeProps) {
   // 直接按状态键索引定义表；状态表由设计令牌同步脚本维护。
-  const definition = STATUS_DEFINITIONS[status];
+  const definition = STATUS_DEFINITIONS[status];  // 状态表由设计令牌同步脚本维护，组件不内置文案
   return (
     <span className={`fyt-status-badge ${className}`.trim()} data-tone={definition.tone}>
       <span aria-hidden="true">{definition.symbol}</span>

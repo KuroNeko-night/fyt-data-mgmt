@@ -19,11 +19,11 @@ class WebServerAuthTests(WebServerTestBase):
         """健康检查允许匿名访问，其余业务总览必须拒绝未登录请求。"""
 
         status, health = self.call("/api/health")
-        self.assertEqual(status, 200)
-        self.assertEqual(health["version"], web_server.VERSION)
+        self.assertEqual(status, 200)  # 健康检查匿名可访问
+        self.assertEqual(health["version"], web_server.VERSION)  # 版本一致
         status, payload = self.call("/api/overview")
-        self.assertEqual(status, 401)
-        self.assertEqual(payload["error"], "请先登录")
+        self.assertEqual(status, 401)  # 未登录拒绝
+        self.assertEqual(payload["error"], "请先登录")  # 统一错误文案
 
     def test_http_context_json_and_static_cache_policy(self):
         """验证损坏 JSON、Cookie 会话、SPA 回退和分层静态缓存策略。"""
@@ -34,7 +34,7 @@ class WebServerAuthTests(WebServerTestBase):
             raw=b"[",
             headers={"Content-Length": "1"},
         )
-        self.assertEqual(status, 400)
+        self.assertEqual(status, 400)  # 损坏 JSON 拒绝
         self.assertEqual(payload["error"], "请求内容不是有效 JSON")
 
         login_data = json.dumps({
@@ -47,16 +47,16 @@ class WebServerAuthTests(WebServerTestBase):
             headers={"Content-Type": "application/json"},
         )
         with urllib.request.urlopen(login_request, timeout=10) as response:
-            cookie = str(response.headers["Set-Cookie"]).split(";", 1)[0]
+            cookie = str(response.headers["Set-Cookie"]).split(";", 1)[0]  # 提取会话 Cookie
         me_request = urllib.request.Request(
             self.base + "/api/auth/me",
             headers={"Cookie": cookie},
         )
         with urllib.request.urlopen(me_request, timeout=10) as response:
-            self.assertEqual(json.loads(response.read())["user"]["username"], "admin")
+            self.assertEqual(json.loads(response.read())["user"]["username"], "admin")  # Cookie 会话有效
 
         status, missing = self.call("/")
-        self.assertEqual(status, 404)
+        self.assertEqual(status, 404)  # 前端未构建
         self.assertIn("前端尚未构建", missing["error"])
 
         assets = web_server.STATIC_ROOT / "assets"
@@ -71,20 +71,20 @@ class WebServerAuthTests(WebServerTestBase):
             self.assertEqual(
                 response.headers["Cache-Control"],
                 "no-store, must-revalidate, no-transform",
-            )
+            )  # 入口禁止缓存
             self.assertIn("峰运通", response.read().decode("utf-8"))
         with urllib.request.urlopen(self.base + "/assets/app-123.js", timeout=10) as response:
             self.assertEqual(
                 response.headers["Cache-Control"],
                 "public, max-age=31536000, immutable",
-            )
+            )  # 带哈希资源长缓存
         with urllib.request.urlopen(self.base + "/logo.txt", timeout=10) as response:
-            self.assertEqual(response.headers["Cache-Control"], "public, max-age=604800")
+            self.assertEqual(response.headers["Cache-Control"], "public, max-age=604800")  # 普通资源周缓存
         with urllib.request.urlopen(self.base + "/client/route", timeout=10) as response:
             self.assertEqual(
                 response.headers["Cache-Control"],
                 "no-store, must-revalidate, no-transform",
-            )
+            )  # SPA 回退也禁缓存
             self.assertIn("峰运通", response.read().decode("utf-8"))
 
     def test_admin_data_account_and_notifications(self):
@@ -93,49 +93,49 @@ class WebServerAuthTests(WebServerTestBase):
         status, _ = self.call("/api/auth/register", {
             "username": "member_one", "display_name": "成员一", "password": "password123",
         })
-        self.assertEqual(status, 201)
+        self.assertEqual(status, 201)  # 注册成功
         status, users = self.call("/api/admin/users", token=self.admin)
-        self.assertEqual(status, 200)
+        self.assertEqual(status, 200)  # 管理员可取用户列表
         member = next(item for item in users["users"] if item["username"] == "member_one")
         status, _ = self.call(f"/api/admin/users/{member['id']}/approve", token=self.admin, payload={})
-        self.assertEqual(status, 200)
+        self.assertEqual(status, 200)  # 审核通过
         status, _ = self.call(f"/api/admin/users/{member['id']}", {
             "display_name": "成员一（已更新）", "status": "approved",
         }, token=self.admin, method="PATCH")
-        self.assertEqual(status, 200)
+        self.assertEqual(status, 200)  # 更新用户成功
         status, _ = self.call("/api/admin/messages", {
             "user_id": member["id"], "title": "定向提醒", "content": "请查看本周数据。",
         }, token=self.admin)
-        self.assertEqual(status, 201)
+        self.assertEqual(status, 201)  # 定向通知创建
         status, _ = self.call("/api/admin/announcements", {
             "title": "全局公告", "content": "系统将在周末维护。",
         }, token=self.admin)
-        self.assertEqual(status, 201)
+        self.assertEqual(status, 201)  # 全局公告创建
         status, data = self.call("/api/admin/data", token=self.admin)
         self.assertEqual(status, 200)
-        self.assertGreaterEqual(data["summary"]["approved_users"], 2)
-        member_token = self.call("/api/auth/login", {"username": "member_one", "password": "password123"})[1]["token"]
+        self.assertGreaterEqual(data["summary"]["approved_users"], 2)  # 审核用户数
+        member_token = self.call("/api/auth/login", {"username": "member_one", "password": "password123"})[1]["token"]  # 成员登录
         status, _ = self.call("/api/admin/data", token=member_token)
-        self.assertEqual(status, 403)
+        self.assertEqual(status, 403)  # 成员访问管理数据被拒
         status, board = self.call("/api/dashboard", token=member_token)
-        self.assertEqual(status, 200)
-        self.assertEqual({item["title"] for item in board["notifications"]}, {"定向提醒", "全局公告"})
+        self.assertEqual(status, 200)  # 工作台可访问
+        self.assertEqual({item["title"] for item in board["notifications"]}, {"定向提醒", "全局公告"})  # 两类通知
         status, inbox = self.call("/api/notifications", token=member_token)
         self.assertEqual(status, 200)
-        self.assertEqual(inbox["unread_count"], 2)
+        self.assertEqual(inbox["unread_count"], 2)  # 两条未读
         announcement = next(item for item in inbox["notifications"] if item["kind"] == "announcement")
         status, _ = self.call(f"/api/notifications/announcement/{announcement['id']}/read", token=member_token, payload={})
-        self.assertEqual(status, 200)
+        self.assertEqual(status, 200)  # 单条已读
         status, inbox = self.call("/api/notifications", token=member_token)
-        self.assertEqual(inbox["unread_count"], 1)
+        self.assertEqual(inbox["unread_count"], 1)  # 剩余一条未读
         status, _ = self.call("/api/notifications/read-all", token=member_token, payload={})
-        self.assertEqual(status, 200)
+        self.assertEqual(status, 200)  # 全部已读
         status, inbox = self.call("/api/notifications", token=member_token)
-        self.assertEqual(inbox["unread_count"], 0)
+        self.assertEqual(inbox["unread_count"], 0)  # 清零
         status, _ = self.call(f"/api/admin/users/{member['id']}", token=self.admin, method="DELETE")
-        self.assertEqual(status, 200)
+        self.assertEqual(status, 200)  # 删除用户
         status, _ = self.call("/api/auth/me", token=member_token)
-        self.assertEqual(status, 401)
+        self.assertEqual(status, 401)  # 会话失效
 
     def test_admin_role_access_sessions_and_audit(self):
         """角色授予、管理入口、会话撤销和审计记录必须形成一致的管理员闭环。"""

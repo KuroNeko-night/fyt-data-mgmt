@@ -54,7 +54,7 @@ def sha256(path: Path) -> str:
     with path.open("rb") as handle:
         # 一兆字节分块兼顾磁盘吞吐和构建机内存占用，哈希结果不受分块大小影响。
         for block in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(block)
+            digest.update(block)  # 逐块更新摘要
     return digest.hexdigest()
 
 
@@ -73,15 +73,15 @@ def read_version() -> str:
         时由 ``Path.read_text``/``ast.parse`` 抛出对应异常。
     """
     version_file = ROOT / "core" / "version.py"
-    tree = ast.parse(version_file.read_text(encoding="utf-8"))
+    tree = ast.parse(version_file.read_text(encoding="utf-8"))  # 仅解析语法，不执行代码
     for node in tree.body:
         if not isinstance(node, ast.Assign):
-            continue
+            continue  # 跳过 import/函数等非赋值语句
         for target in node.targets:
             if isinstance(target, ast.Name) and target.id == "VERSION":
                 value = node.value
                 if isinstance(value, ast.Constant) and isinstance(value.value, str):
-                    version = value.value.strip()
+                    version = value.value.strip()  # 去除空白，确保版本可写入文件名
                     if version:
                         return version
     raise RuntimeError("无法从 core/version.py 读取版本号")
@@ -104,7 +104,7 @@ def copy_runtime_payload(payload: Path) -> None:
         前端未构建时抛出 ``RuntimeError``；源目录缺失或复制失败时由文件操作抛出 ``OSError``。
     """
 
-    shutil.copy2(ROOT / "web_server.py", payload / "web_server.py")
+    shutil.copy2(ROOT / "web_server.py", payload / "web_server.py")  # 服务入口单独复制
     # Linux 服务器只安装运行依赖。仓库根 requirements.txt 还包含 PyInstaller 等开发、
     # 打包依赖，并通过 ``-r requirements-runtime.txt`` 间接引用运行清单；如果直接复制
     # 前者，补丁暂存目录会因缺少被引用文件而安装失败，也会给服务器引入无关工具。
@@ -120,12 +120,12 @@ def copy_runtime_payload(payload: Path) -> None:
     core_target.mkdir()
     # core 当前是平铺 Python 模块；逐个复制只允许正式源码，不携带字节码缓存。
     for source in sorted((ROOT / "core").glob("*.py")):
-        shutil.copy2(source, core_target / source.name)
+        shutil.copy2(source, core_target / source.name)  # 排序复制保证载荷可重复
 
     dist_source = ROOT / "web-app" / "dist"
     if not (dist_source / "index.html").is_file():  # index.html 是前端构建完成的最低可验证标志。
         raise RuntimeError("web-app/dist 尚未构建，请先执行 npm --prefix web-app run build")
-    shutil.copytree(dist_source, payload / "web-app" / "dist")
+    shutil.copytree(dist_source, payload / "web-app" / "dist")  # 前端产物直接进包
 
 
 def validate_tree(package_root: Path) -> list[Path]:
@@ -150,12 +150,12 @@ def validate_tree(package_root: Path) -> list[Path]:
         lowered_parts = {part.casefold() for part in relative.parts}  # casefold 同时覆盖不同平台的大小写差异。
         blocked = lowered_parts & FORBIDDEN_NAMES
         if blocked:
-            raise RuntimeError(f"补丁中出现禁止目录或文件：{relative}")
+            raise RuntimeError(f"补丁中出现禁止目录或文件：{relative}")  # 发现禁止目录立即终止
         if path.is_symlink():
-            raise RuntimeError(f"补丁中不允许出现符号链接：{relative}")
+            raise RuntimeError(f"补丁中不允许出现符号链接：{relative}")  # 拒绝符号链接防越界
         if path.is_file():
             if path.suffix.casefold() in FORBIDDEN_SUFFIXES:
-                raise RuntimeError(f"补丁中出现运行数据或日志：{relative}")
+                raise RuntimeError(f"补丁中出现运行数据或日志：{relative}")  # 拒绝数据库与日志
             files.append(path)
     return files
 
@@ -220,11 +220,11 @@ def add_to_tar(archive: tarfile.TarFile, source: Path, arcname: str) -> None:
         info.uname = "root"
         info.gname = "root"
         if info.isdir():
-            info.mode = 0o755
+            info.mode = 0o755  # 目录保留进入权限
         elif info.name.endswith(".sh"):
-            info.mode = 0o755
+            info.mode = 0o755  # 脚本保留执行位
         else:
-            info.mode = 0o644
+            info.mode = 0o644  # 普通文件只读即可
         return info
 
     archive.add(source, arcname=arcname, recursive=True, filter=normalize)
@@ -249,7 +249,7 @@ def build(output_dir: Path, build_date: str, revision: str = "") -> tuple[Path, 
     """
 
     version = read_version()
-    revision_suffix = f"-{revision}" if revision else ""
+    revision_suffix = f"-{revision}" if revision else ""  # 同日修订标记拼入包名
     package_name = f"fyt-linux-upgrade-patch-v{version}-{build_date}{revision_suffix}"
     archive_path = output_dir / f"{package_name}.tar.gz"
     checksum_path = output_dir / f"{package_name}.tar.gz.sha256"
@@ -258,9 +258,9 @@ def build(output_dir: Path, build_date: str, revision: str = "") -> tuple[Path, 
     with tempfile.TemporaryDirectory(prefix="fyt-linux-patch-") as temp_dir:
         package_root = Path(temp_dir) / package_name
         payload = package_root / "payload"
-        payload.mkdir(parents=True)
+        payload.mkdir(parents=True)  # 载荷目录用于放运行白名单
 
-        shutil.copy2(APPLY_SCRIPT, package_root / "apply-upgrade.sh")
+        shutil.copy2(APPLY_SCRIPT, package_root / "apply-upgrade.sh")  # 升级脚本放包根
         copy_runtime_payload(payload)
         write_readme(package_root / "README.txt", archive_path.name)
 
@@ -278,10 +278,10 @@ def build(output_dir: Path, build_date: str, revision: str = "") -> tuple[Path, 
         validate_tree(package_root)  # 清单写入后再次验证，确保最终树与首次检查边界一致。
 
         output_dir.mkdir(parents=True, exist_ok=True)
-        archive_path.unlink(missing_ok=True)
+        archive_path.unlink(missing_ok=True)  # 覆盖同名旧包
         checksum_path.unlink(missing_ok=True)
         with tarfile.open(archive_path, "w:gz", compresslevel=9) as archive:
-            add_to_tar(archive, package_root, package_name)
+            add_to_tar(archive, package_root, package_name)  # 打包时归一化权限与属主
 
     checksum_path.write_text(
         f"{sha256(archive_path)}  {archive_path.name}\n",
@@ -319,7 +319,7 @@ def main() -> int:
     )
     args = parser.parse_args()
     if len(args.date) != 8 or not args.date.isdigit():
-        parser.error("--date 必须是 YYYYMMDD 格式")
+        parser.error("--date 必须是 YYYYMMDD 格式")  # 日期格式错误直接提示退出
     # revision 只用于文件名后缀拼接；限制字符集可防止路径分隔符或特殊字符混入包名。
     if args.revision and not args.revision.replace("-", "").replace("_", "").isalnum():
         parser.error("--revision 只能包含字母、数字、短横线和下划线")
@@ -329,7 +329,7 @@ def main() -> int:
     )
     print(f"补丁包：{archive_path}")
     print(f"校验文件：{checksum_path}")
-    print(f"SHA-256：{sha256(archive_path)}")
+    print(f"SHA-256：{sha256(archive_path)}")  # 外部校验值便于上传后核对
     print(f"大小：{archive_path.stat().st_size} 字节")
     return 0
 

@@ -79,7 +79,7 @@ function useMediaQuery(query: string) {
 function Board({ data, user, onRefresh, onOpenReviews, onOpenTaskFilter }: Props) {
   const statusBreakdown = data.status_breakdown;
   // 失败与进程中断都需要人工处理，因此在首页合并为一个异常任务入口。
-  const abnormal = (statusBreakdown.failed || 0) + (statusBreakdown.interrupted || 0);
+  const abnormal = (statusBreakdown.failed || 0) + (statusBreakdown.interrupted || 0);  // 失败与中断都需要人工处理，合并为异常任务入口
   const todayRow = data.trend[data.trend.length - 1];
   const todayTotal = todayRow?.total || 0;
   const doneToday = todayRow?.completed || 0;
@@ -116,7 +116,7 @@ function Ledger({ data, setActive }: { data: DashboardData; setActive: (key: str
   const filesByJob = useMemo(() => {
     // recent_files 是扁平列表，先按 job_id 建索引可避免每渲染一项任务都遍历全部文件。
     const map = new Map<string, DashboardData["recent_files"]>();
-    for (const file of data.recent_files) map.set(file.job_id, (map.get(file.job_id) || []).concat(file));
+    for (const file of data.recent_files) map.set(file.job_id, (map.get(file.job_id) || []).concat(file));  // 先按任务建索引，避免逐任务遍历全部文件
     return map;
   }, [data.recent_files]);
 
@@ -160,7 +160,7 @@ function Alerts({ data, user, setActive, onOpenReviews, onOpenTaskFilter }: Prop
   const reviews = data.status_breakdown.review || 0;
   const abnormal = (data.status_breakdown.failed || 0) + (data.status_breakdown.interrupted || 0);
   // 非管理员不应看到账号审核数量，即使旧缓存数据中意外带有该指标也不展示。
-  const pendingUsers = user.role === "admin" ? data.metrics.pending_users : 0;
+  const pendingUsers = user.role === "admin" ? data.metrics.pending_users : 0;  // 非管理员不展示账号审核数量，即使旧缓存带该指标
   const nothing = notes.length === 0 && reviews === 0 && pendingUsers === 0 && abnormal === 0;
   return <section className="dsp-cell dsp-alerts"><header className="dsp-cell-head"><div><span className="dsp-kicker">优先处理</span><h2>需要处理</h2></div></header>{nothing ? <p className="dsp-empty">没有待办。</p> : <ul className="dsp-alert-list">{reviews > 0 ? <li><button type="button" onClick={onOpenReviews}><span className="dsp-alert-dot tone-wait" aria-hidden="true" /><span><strong>{reviews} 项等你确认</strong><small>确认业务选择后才会继续生成</small></span><Icon name="arrow" size={14} /></button></li> : null}{abnormal > 0 ? <li><button type="button" onClick={() => onOpenTaskFilter("failed")}><span className="dsp-alert-dot tone-fail" aria-hidden="true" /><span><strong>{abnormal} 项异常任务</strong><small>检查失败原因或重新执行</small></span><Icon name="arrow" size={14} /></button></li> : null}{pendingUsers > 0 ? <li><button type="button" onClick={() => setActive("users")}><span className="dsp-alert-dot tone-wait" aria-hidden="true" /><span><strong>{pendingUsers} 个账号待审核</strong><small>审核通过后才能进入工作台</small></span><Icon name="arrow" size={14} /></button></li> : null}{notes.slice(0, mobile ? 3 : 12).map((note) => <li key={note.kind + "-" + note.id}><div className="dsp-alert-static"><span className="dsp-alert-dot" aria-hidden="true" /><span><strong>{note.title}</strong><small>{note.content}</small></span></div></li>)}</ul>}</section>;
 }

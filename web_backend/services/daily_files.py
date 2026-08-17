@@ -20,30 +20,26 @@ from web_backend.errors import ApiError
 from web_backend.services.daily_management_types import DailyManagementDependencies
 
 
-def _daily_plan_id(path: str, suffix: str = "") -> str:
-    """从生产计划接口路径提取计划编号，并可剥离 ``download`` 等动作后缀。"""
-    prefix = "/api/admin/daily-production-plans/"
+def _daily_record_id(path: str, prefix: str, label: str, suffix: str = "") -> str:
+    """从日清管理路径提取 32 位字母数字记录编号。"""
     ending = f"/{suffix}" if suffix else ""
     if not path.startswith(prefix) or (ending and not path.endswith(ending)):
-        raise ApiError(HTTPStatus.BAD_REQUEST, "生产计划编号无效")
+        raise ApiError(HTTPStatus.BAD_REQUEST, label)
     value = path[len(prefix):-len(ending)] if ending else path[len(prefix):]
     value = unquote(value).strip("/")  # 解码后再验证，避免编码斜杠进入后续路径逻辑。
     if len(value) != 32 or not value.isalnum():
-        raise ApiError(HTTPStatus.BAD_REQUEST, "生产计划编号无效")
+        raise ApiError(HTTPStatus.BAD_REQUEST, label)
     return value
+
+
+def _daily_plan_id(path: str, suffix: str = "") -> str:
+    """从生产计划接口路径提取计划编号。"""
+    return _daily_record_id(path, "/api/admin/daily-production-plans/", "生产计划编号无效", suffix)
 
 
 def _daily_source_id(path: str, suffix: str = "") -> str:
-    """从日清资料接口路径提取上传编号，并校验固定长度标识。"""
-    prefix = "/api/admin/daily-source-uploads/"
-    ending = f"/{suffix}" if suffix else ""
-    if not path.startswith(prefix) or (ending and not path.endswith(ending)):
-        raise ApiError(HTTPStatus.BAD_REQUEST, "日清资料编号无效")
-    value = path[len(prefix):-len(ending)] if ending else path[len(prefix):]
-    value = unquote(value).strip("/")
-    if len(value) != 32 or not value.isalnum():
-        raise ApiError(HTTPStatus.BAD_REQUEST, "日清资料编号无效")
-    return value
+    """从日清资料接口路径提取上传编号。"""
+    return _daily_record_id(path, "/api/admin/daily-source-uploads/", "日清资料编号无效", suffix)
 
 
 def _request_length(headers: Any, maximum: int) -> int:
@@ -88,22 +84,6 @@ def _daily_plan_select() -> str:
     )
 
 
-def _resolve_daily_plan_path(row: Any, deps: DailyManagementDependencies) -> Path:
-    """将生产计划记录解析到允许的数据目录内。
-
-    ``uploaded_by is None`` 兼容迁移前存放在公共数据目录的旧记录；新记录必须位于上传者
-    专属目录。数据库路径在使用前解析并做父目录校验，不能直接信任历史字符串。
-    """
-    target = Path(row["path"]).resolve()
-    if row["uploaded_by"] is None:
-        root = deps.data_root.resolve()
-    else:
-        root = (deps.data_root / "users" / str(row["uploaded_by"]) / "daily-production-plans").resolve()
-    if root not in target.parents:
-        raise ApiError(HTTPStatus.BAD_REQUEST, "生产计划文件路径无效")
-    return target
-
-
 def _daily_source_select() -> str:
     """返回日清资料及上传者显示名称的公共查询片段。"""
     return (
@@ -112,16 +92,26 @@ def _daily_source_select() -> str:
     )
 
 
-def _resolve_daily_source_path(row: Any, deps: DailyManagementDependencies) -> Path:
-    """将日清资料记录解析到允许的数据目录内，兼容旧公共路径并阻止越界访问。"""
+def _resolve_daily_path(row: Any, deps: DailyManagementDependencies, user_dir: str, label: str) -> Path:
+    """把日清文件记录解析到允许的数据目录内，兼容旧公共路径并阻止越界访问。"""
     target = Path(row["path"]).resolve()
     if row["uploaded_by"] is None:
         root = deps.data_root.resolve()
     else:
-        root = (deps.data_root / "users" / str(row["uploaded_by"]) / "daily-sources").resolve()
+        root = (deps.data_root / "users" / str(row["uploaded_by"]) / user_dir).resolve()
     if root not in target.parents:
-        raise ApiError(HTTPStatus.BAD_REQUEST, "日清资料文件路径无效")
+        raise ApiError(HTTPStatus.BAD_REQUEST, label)
     return target
+
+
+def _resolve_daily_plan_path(row: Any, deps: DailyManagementDependencies) -> Path:
+    """将生产计划记录解析到允许的数据目录内。"""
+    return _resolve_daily_path(row, deps, "daily-production-plans", "生产计划文件路径无效")
+
+
+def _resolve_daily_source_path(row: Any, deps: DailyManagementDependencies) -> Path:
+    """将日清资料记录解析到允许的数据目录内。"""
+    return _resolve_daily_path(row, deps, "daily-sources", "日清资料文件路径无效")
 
 
 @dataclass(frozen=True)
@@ -176,6 +166,7 @@ def _move_daily_file_to_trash(
     payload = deps.data_root / "trash" / trash_id / "payload"
     size = deps.tree_size(folder)
     with deps.storage_lock:
+        # 先移动文件再删库；任一步失败都可把目录移回原位，避免留下无文件索引。
         payload.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(folder), str(payload))
         try:
@@ -487,6 +478,7 @@ def download_daily_source_image(handler: Any, path: str, deps: DailyManagementDe
     if row is None or row["kind"] != "safety":
         raise ApiError(HTTPStatus.NOT_FOUND, "安全检查图片不存在")
     source = _resolve_daily_source_path(row, deps)
+    # 图片必须仍位于资料目录的 images 子目录内，不能使用数据库或 URL 中的相对片段。
     image_root = (source.parent / "images").resolve()
     target = (image_root / file_name).resolve()
     if image_root not in target.parents or not target.is_file():
@@ -551,7 +543,8 @@ def export_daily_report(handler: Any, deps: DailyManagementDependencies) -> None
     snapshot = deps.build_daily_report_snapshot(report_date, user)
     report_root = deps.data_root / "reports" / "daily"
     result = deps.daily_report_core.run(snapshot, out_dir=str(report_root))
-    target = Path(str(result["out_file"])).resolve()  # 不信任跨模块返回的路径，下载前重新校验。
+    # 不信任跨模块返回的路径，下载前重新校验目录边界和文件存在性。
+    target = Path(str(result["out_file"])).resolve()
     allowed_root = report_root.resolve()
     if allowed_root not in target.parents or not target.is_file():
         raise ApiError(HTTPStatus.NOT_FOUND, "日清报告生成失败")

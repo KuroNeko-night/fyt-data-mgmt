@@ -52,8 +52,8 @@ class TestXlsx(_Tmp):
         p = self._xlsx({"S1": [["编码", "名称", "数量"],
                                ["A1", "甲", 10], ["A2", "乙", 20]]})
         d = P.read_preview(p)
-        self.assertEqual(d.error, "")
-        self.assertEqual(d.rows[0], ["编码", "名称", "数量"])
+        self.assertEqual(d.error, "")  # 正常读取无错误
+        self.assertEqual(d.rows[0], ["编码", "名称", "数量"])  # 表头行返回
         self.assertEqual(d.rows[1], ["A1", "甲", "10"])   # 整数去 .0
         self.assertEqual(d.sheet, "S1")
 
@@ -61,14 +61,14 @@ class TestXlsx(_Tmp):
         rows = [["h"]] + [[i] for i in range(100)]
         p = self._xlsx({"S1": rows})
         d = P.read_preview(p, max_rows=10)
-        self.assertEqual(d.nrows, 10)
-        self.assertTrue(d.truncated)
+        self.assertEqual(d.nrows, 10)  # 只取前 10 行
+        self.assertTrue(d.truncated)  # 标记已截断
 
     def test_multi_sheet_switch(self):
         p = self._xlsx({"A": [["x"], [1]], "B": [["y"], [2]]})
-        self.assertEqual(P.list_sheets(p), ["A", "B"])
+        self.assertEqual(P.list_sheets(p), ["A", "B"])  # 子表按顺序列出
         d = P.read_preview(p, sheet="B")
-        self.assertEqual(d.sheet, "B")
+        self.assertEqual(d.sheet, "B")  # 切换到指定子表
         self.assertEqual(d.rows[0], ["y"])
         self.assertEqual(sorted(d.sheets), ["A", "B"])
 
@@ -81,7 +81,7 @@ class TestCsvAndErrors(_Tmp):
         with open(p, "w", encoding="utf-8-sig", newline="") as f:
             f.write("编码,名称\nA1,甲\nA2,乙\n")
         d = P.read_preview(p)
-        self.assertEqual(d.error, "")
+        self.assertEqual(d.error, "")  # BOM CSV 正常读取
         self.assertEqual(d.rows[0], ["编码", "名称"])
         self.assertEqual(d.rows[1], ["A1", "甲"])
 
@@ -90,12 +90,12 @@ class TestCsvAndErrors(_Tmp):
         with open(p, "w", encoding="gbk", newline="") as f:
             f.write("列一,列二\n甲,乙\n")
         d = P.read_preview(p)
-        self.assertEqual(d.error, "")
+        self.assertEqual(d.error, "")  # GBK 编码探测成功
         self.assertEqual(d.rows[0], ["列一", "列二"])
 
     def test_missing_file(self):
         d = P.read_preview(os.path.join(self._tmp, "nope.xlsx"))
-        self.assertNotEqual(d.error, "")
+        self.assertNotEqual(d.error, "")  # 缺失文件返回错误信息
         self.assertEqual(d.rows, [])
 
     def test_unsupported_type(self):
@@ -103,7 +103,7 @@ class TestCsvAndErrors(_Tmp):
         with open(p, "wb") as f:
             f.write(b"%PDF-1.4")
         d = P.read_preview(p)
-        self.assertIn("不支持", d.error)
+        self.assertIn("不支持", d.error)  # 不支持类型给出错误
 
 
 if __name__ == "__main__":

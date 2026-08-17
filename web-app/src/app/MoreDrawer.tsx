@@ -26,7 +26,7 @@ type Props = {
  */
 export function MoreDrawer({ open, user, unreadCount, pendingUsers, pendingReviews, onClose, onNavigate }: Props) {
   // getNavigationItem 理论上可返回空值，渲染前保留过滤以容忍导航配置调整。
-  const items = MOBILE_MORE_KEYS.map((key) => getNavigationItem(key)).filter((item) => item && isNavigationAllowed(item, user.role));
+  const items = MOBILE_MORE_KEYS.map((key) => getNavigationItem(key)).filter((item) => item && isNavigationAllowed(item, user.role));  // 按固定顺序取项并过滤越权入口
   // 徽标逻辑与 AppSidebar 保持一致，只有消息、任务和系统管理三个入口有数字提示。
   const badgeFor = (key: WebRouteKey) => key === "notifications" ? unreadCount : key === "tasks" ? pendingReviews : key === "users" ? pendingUsers : 0;
   return <Drawer open={open} title="更多入口" description="常用管理、资料和消息入口" onClose={onClose}>

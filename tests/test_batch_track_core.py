@@ -16,20 +16,20 @@ class BatchTrackCoreTests(unittest.TestCase):
         """创建跨两个成功业务和一个失败业务的合成任务历史。"""
 
         self.temp = tempfile.TemporaryDirectory(prefix="fyt_batch_track_")
-        self.db_path = os.path.join(self.temp.name, "tasks.db")
+        self.db_path = os.path.join(self.temp.name, "tasks.db")  # 任务历史库隔离
         self.out_dir = os.path.join(self.temp.name, "输出")
         os.makedirs(self.out_dir, exist_ok=True)
         with open(os.path.join(self.out_dir, "26036-02.xlsx"), "w", encoding="utf-8") as handle:
-            handle.write("")
+            handle.write("")  # 占位结果文件，内容不影响批次搜索
         with open(os.path.join(self.out_dir, "26163A.xlsx"), "w", encoding="utf-8") as handle:
             handle.write("")
         # 构造任务历史：同批次跨多个环节
         task_id = task_history.start_task("delivery", "送货计划", db_path=self.db_path)
-        task_history.finish_task(task_id, "ok", "处理完成", self.out_dir, db_path=self.db_path)
+        task_history.finish_task(task_id, "ok", "处理完成", self.out_dir, db_path=self.db_path)  # 成功任务带输出目录
         task_id = task_history.start_task("purchase_plan", "采购计划导入", db_path=self.db_path)
         task_history.finish_task(task_id, "ok", "处理完成", self.out_dir, db_path=self.db_path)
         task_id = task_history.start_task("attendance", "考勤数据填报", db_path=self.db_path)
-        task_history.finish_task(task_id, "failed", "处理失败", "", db_path=self.db_path)
+        task_history.finish_task(task_id, "failed", "处理失败", "", db_path=self.db_path)  # 失败任务无输出
 
     def tearDown(self):
         """删除任务数据库和结果文件。"""
@@ -41,7 +41,7 @@ class BatchTrackCoreTests(unittest.TestCase):
 
         result = batch_track_core.search("26036", db_path=self.db_path)
         features = [item["feature"] for item in result["items"]]
-        self.assertEqual(sorted(features), ["delivery", "purchase_plan"])
+        self.assertEqual(sorted(features), ["delivery", "purchase_plan"])  # 同批次两个成功任务都命中
         # 输出目录里的文件名命中也应命中（含 26036-02.xlsx）
         self.assertTrue(any("26036-02.xlsx" in item["files"] for item in result["items"]))
 
@@ -50,17 +50,17 @@ class BatchTrackCoreTests(unittest.TestCase):
 
         # 同一输出目录含 26163A.xlsx，两个任务都会命中
         result = batch_track_core.search("26163A", db_path=self.db_path)
-        self.assertEqual(sorted(item["feature"] for item in result["items"]), ["delivery", "purchase_plan"])
+        self.assertEqual(sorted(item["feature"] for item in result["items"]), ["delivery", "purchase_plan"])  # 文件名命中输出目录
         self.assertTrue(any("26163A.xlsx" in item["files"] for item in result["items"]))
         result = batch_track_core.search("考勤", db_path=self.db_path)
-        self.assertEqual([item["feature"] for item in result["items"]], ["attendance"])
-        self.assertEqual(result["items"][0]["status"], "failed")
+        self.assertEqual([item["feature"] for item in result["items"]], ["attendance"])  # 标题命中失败任务
+        self.assertEqual(result["items"][0]["status"], "failed")  # 失败状态保留
 
     def test_empty_keyword_returns_nothing(self):
         """空白查询不应返回全部任务历史。"""
 
         result = batch_track_core.search("  ", db_path=self.db_path)
-        self.assertEqual(result["items"], [])
+        self.assertEqual(result["items"], [])  # 空白不返回任务
 
 
 if __name__ == "__main__":

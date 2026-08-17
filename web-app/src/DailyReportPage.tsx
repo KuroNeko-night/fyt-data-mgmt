@@ -22,14 +22,14 @@ type DailyTab = "overview" | "attendance" | "workshop" | "production" | "brief";
 /** 按业务时区生成本地日历日期，避免浏览器所在时区改变“今天”的含义。 */
 function businessToday() {
   const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date());
-  const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));  // 按上海时区取本地日历日期，避免浏览器时区改变“今天”
   return `${value.year}-${value.month}-${value.day}`;
 }
 
 /** 在纯日期上按天平移，使用 UTC 构造避免夏令时或本机时区造成跨日偏差。 */
 function shiftDate(value: string, amount: number) {
   const [year, month, day] = value.split("-").map(Number);
-  const next = new Date(Date.UTC(year, month - 1, day + amount));
+  const next = new Date(Date.UTC(year, month - 1, day + amount));  // 纯日期按 UTC 平移，避免夏令时或本机时区造成跨日偏差
   return next.toISOString().slice(0, 10);
 }
 
@@ -159,7 +159,7 @@ function ProductionOverview({ data }: { data: DailyReportData }) {
 
 /** 展示安全检查合格概况和不合格整改项，现场图片通过统一预览对话框打开。 */
 function SafetyOverview({ data, onPreview }: { data: DailyReportData["safety_checks"]; onPreview: (url: string, title: string) => void }) {
-  const unqualified = data.records.filter((item) => item.result.includes("不合格"));
+  const unqualified = data.records.filter((item) => item.result.includes("不合格"));  // 只挑不合格项展示整改重点
   return <section className="fyt-daily-panel fyt-daily-safety-overview"><header className="fyt-daily-panel-head"><div><span>安全检查日报</span><h2>当日检查与整改重点</h2><p>{data.total_checks ? `${data.total_checks} 项检查 · ${data.image_count} 张现场图片` : "在“资料与生产”中上传安全检查记录后自动展示"}</p></div><div className="fyt-daily-issue-count"><strong>{data.unqualified_count}</strong><span>项不合格</span></div></header>{data.total_checks ? <><div className="fyt-daily-safety-categories">{data.category_summary.map((item) => <article key={item.category}><strong>{item.category}</strong><span>{item.qualified}/{item.total} 合格</span><em>{item.unqualified ? `${item.unqualified} 项待整改` : "全部合格"}</em></article>)}</div>{unqualified.length ? <div className="fyt-daily-safety-issues">{unqualified.map((item) => <article key={`${item.row}-${item.check_item}`}><div><span>{item.category}</span><h3>{item.check_item}</h3><p>{item.problem_description || "未填写问题描述"}</p><small>整改：{item.corrective_action || "未填写"} · 责任人：{item.owner || "未填写"}</small></div>{item.images.length ? <button type="button" onClick={() => onPreview(workshopImageUrl(item.images[0].url), `${item.check_item} · 安全检查图片`)}><img src={workshopImageUrl(item.images[0].url)} alt={`${item.check_item}现场图片`} /></button> : null}</article>)}</div> : <p className="fyt-daily-clear-note">当日已检查项目全部合格。</p>}</> : <EmptyState title="当天没有安全检查日报" description="切换到“资料与生产”选项卡上传规范表格。" icon={<Icon name="check" size={19} />} />}</section>;
 }
 
@@ -195,9 +195,9 @@ export function DailyReportPage() {
 
   /** 读取指定日期；`preserve` 为真时保留已有看板，避免刷新期间整页闪空。 */
   async function load(nextDate: string, preserve = false) {
-    if (preserve) setRefreshing(true); else { setLoading(true); setData(null); }
+    if (preserve) setRefreshing(true); else { setLoading(true); setData(null); }  // 手动刷新保留旧数据，普通换日期清空并显示加载态
     setError("");
-    try { setData(await dailyReport(nextDate)); }
+    try { setData(await dailyReport(nextDate)); }  // 服务端聚合结果是唯一真值
     catch (reason) { setError(reason instanceof Error ? reason.message : "日清数据读取失败"); }
     finally { setLoading(false); setRefreshing(false); }
   }

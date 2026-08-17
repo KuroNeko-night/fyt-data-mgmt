@@ -25,8 +25,8 @@ function useSheets(path: string) {
       return () => { active = false; };
     }
     bridgeRequest<{ sheets: string[] }>("system.sheets", { path })
-      .then((response) => { if (active) setSheets(response.sheets || []); })
-      .catch(() => { if (active) setSheets([]); });
+      .then((response) => { if (active) setSheets(response.sheets || []); })  // active 守卫避免旧路径响应覆盖新文件
+      .catch(() => { if (active) setSheets([]); });  // 读取失败清空工作表，任务可继续由核心自动识别
     return () => { active = false; };
   }, [path]);
   return sheets;
@@ -116,12 +116,12 @@ export function ReconcilePage() {
   // 只有用户明确选择工作表时才发送覆盖项，空值保留核心层自动识别能力。
   const options = {
     tolerance,
-    ...(target[0] && sheet ? { columns: { [fileName(target[0])]: { sheet } } } : {}),
+    ...(target[0] && sheet ? { columns: { [fileName(target[0])]: { sheet } } } : {}),  // 仅在用户选过工作表后覆盖，空值保留自动识别
   };
   // 人工选择只在存在对应分析计划时有效，避免把陈旧列号传给另一组文件。
   const choices = analysis.result ? {
     target_sheet: sheet || null,
-    target_roles: Object.fromEntries(Object.entries(roles).filter(([, value]) => value).map(([key, value]) => [key, Number(value)])),
+    target_roles: Object.fromEntries(Object.entries(roles).filter(([, value]) => value).map(([key, value]) => [key, Number(value)])),  // 只发送非空列号，避免覆盖自动识别结果
     aliases,
   } : null;
   const ready = Boolean(target.length && sources.length && labor.length);
@@ -135,7 +135,7 @@ export function ReconcilePage() {
   /** 取得只读分析计划，并仅在用户尚未选择时采用系统建议的工作表。 */
   async function analyze() {
     const plan = await analysis.run("reconcile.analyze", { target, sources, labor, options });
-    if (plan) setSheet((current) => current || plan.target.sheet || "");
+    if (plan) setSheet((current) => current || plan.target.sheet || "");  // 用户未选工作表时才采用系统建议
   }
   return <div className="fyt-page-flow fyt-wide-flow"><section className="fyt-feature-form">
     <FilePickerField label="待对表（目标）" description="需要被核对填写的总表，选择一个。" value={target} onChange={(next) => { setTarget(next); setSheet(""); resetReview(); }} filters={excelFilters} />
@@ -176,7 +176,7 @@ export function ArrivalPage() {
   }
   /** 以索引更新当前分析快照中的单行，保持其余批次对象引用不变。 */
   function updateRow(index: number, patch: Partial<ArrivalRow>) {
-    setRows((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, ...patch } : row));
+    setRows((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, ...patch } : row));  // 用索引替换单行，保持其余批次对象引用不变
   }
   return <div className="fyt-page-flow fyt-wide-flow"><section className="fyt-feature-form">
     <FilePickerField label="送货计划表" description="系统扫描完整计划，筛选隐藏行也会参与总类数和未到料识别，可多选。" value={paths} onChange={(next) => void changePaths(next)} multiple filters={excelFilters} />
@@ -227,8 +227,8 @@ export function PivotPage() {
   const choices = plan ? {
     sheets: sheetUse,
     held: plan.held_index.map((item) => ({ sid: item.sid, ridx: item.ridx, keep: Boolean(held[`${item.sid}:${item.ridx}`]) })),
-    unit_overrides: plan.unit_conflicts.map((item, index) => ({ gk: item.gk, value: unitValues[`u-${index}`] })).filter((item, index) => item.value !== (plan.unit_conflicts[index].default || "")),
-    spec_overrides: plan.spec_merges.map((item, index) => ({ gk: item.gk, value: specValues[`s-${index}`] })).filter((item, index) => item.value !== (plan.spec_merges[index].default || "")),
+    unit_overrides: plan.unit_conflicts.map((item, index) => ({ gk: item.gk, value: unitValues[`u-${index}`] })).filter((item, index) => item.value !== (plan.unit_conflicts[index].default || "")),  // 仅提交与默认值不同的单位覆盖
+    spec_overrides: plan.spec_merges.map((item, index) => ({ gk: item.gk, value: specValues[`s-${index}`] })).filter((item, index) => item.value !== (plan.spec_merges[index].default || "")),  // 仅提交与默认值不同的规格覆盖
   } : null;
   return <div className="fyt-page-flow fyt-wide-flow"><section className="fyt-feature-form">
     <FilePickerField label="采购数据表" description="包装方案、采购量核算表或组托辅材，可多选。" value={paths} onChange={(next) => { setPaths(next); setPlan(null); analysis.reset(); task.reset(); }} multiple filters={excelFilters} />
@@ -258,8 +258,8 @@ export function PurchasePage() {
   const sheets2 = useSheets(file2[0] || "");
   const task = useBridgeTask<PurchaseResult>();
   // 匹配数组与原数据逐行对应，未匹配数等于总行数减去布尔真值数量。
-  const unmatched1 = task.result ? task.result.matched1.length - task.result.matched1.filter(Boolean).length : 0;
-  const unmatched2 = task.result ? task.result.matched2.length - task.result.matched2.filter(Boolean).length : 0;
+  const unmatched1 = task.result ? task.result.matched1.length - task.result.matched1.filter(Boolean).length : 0;  // 布尔标记逐行对应，未匹配数由总行数减真值得到
+  const unmatched2 = task.result ? task.result.matched2.length - task.result.matched2.filter(Boolean).length : 0;  // 同上计算供方未匹配行数
   const changeFile1 = (next: string[]) => { setFile1(next); setSheet1(""); task.reset(); };
   const changeFile2 = (next: string[]) => { setFile2(next); setSheet2(""); task.reset(); };
   return <div className="fyt-page-flow fyt-wide-flow"><section className="fyt-feature-form">
@@ -401,8 +401,8 @@ export function SupplierBatchPage() {
   }
   const selectedSuppliers = (plan?.suppliers || []).filter((item) => selected[item.name]).map((item) => item.name);
   // 所有识别批次都填写非空日期后才可执行，避免输出表出现未核对交付日期。
-  const missingDateCount = (plan?.batches || []).filter((item) => !batchDates[item.batch]?.trim()).length;
-  const deliveryDates = Object.fromEntries((plan?.batches || []).map((item) => [item.batch, batchDates[item.batch]?.trim() || ""]));
+  const missingDateCount = (plan?.batches || []).filter((item) => !batchDates[item.batch]?.trim()).length;  // 所有识别批次都必须填写日期后才可执行
+  const deliveryDates = Object.fromEntries((plan?.batches || []).map((item) => [item.batch, batchDates[item.batch]?.trim() || ""]));  // 提交前统一去空白，空值由核心再次拦截
   return <div className="fyt-page-flow fyt-wide-flow"><section className="fyt-feature-form">
     <FilePickerField label="当前批次清单" description="可多选辅料清单总表，系统自动识别批次和供应商。" value={batchPaths} onChange={(next) => { setBatchPaths(next); reset(); }} multiple filters={excelFilters} />
     <FilePickerField label="历史供应商明细" description="可选，用于补充当前批次清单中缺失的供应商归属。" value={historyPaths} onChange={(next) => { setHistoryPaths(next); reset(); }} multiple optional filters={excelFilters} />
@@ -464,7 +464,7 @@ export function ReconcileStatementPage() {
   }
   /** 通过复制 Set 切换批次选择，使 React 能可靠检测状态变化。 */
   function toggle(key: string) {
-    setSelected((prev) => { const next = new Set(prev); if (next.has(key)) next.delete(key); else next.add(key); return next; });
+    setSelected((prev) => { const next = new Set(prev); if (next.has(key)) next.delete(key); else next.add(key); return next; });  // 复制 Set 再切换，确保 React 检测到新引用
   }
   /** 将以零为起点的界面行覆盖转换为核心协议使用的一起始文件编号。 */
   function run() {
@@ -518,7 +518,7 @@ export function InvoicePage() {
   const scanTask = useBridgeTask<InvoiceScan>();
   const generateTask = useBridgeTask<InvoiceResult>();
   // 专票筛选仅在扫描结果变化时重算，表格编辑不会重复遍历全部发票。
-  const specials = useMemo(() => (scanTask.result?.invoices || []).filter((item) => item.special), [scanTask.result]);
+  const specials = useMemo(() => (scanTask.result?.invoices || []).filter((item) => item.special), [scanTask.result]);  // 专票筛选只在扫描结果变化时重算
 
   /** 扫描目录，并用核心建议初始化月份、专票勾选状态和可编辑文本。 */
   async function scan() {
@@ -530,7 +530,7 @@ export function InvoicePage() {
     setEdits(Object.fromEntries(result.invoices.map((item) => [item.num, { item: item.item_seed || "", note: item.note_seed || "" }])));
   }
   // 生成请求只包含被人工勾选的专票，并合并当前编辑值，不直接修改原扫描对象。
-  const rows = specials.filter((invoice) => selected[invoice.num]).map((invoice) => ({ num: invoice.num, date: invoice.date, seller: invoice.seller, item: edits[invoice.num]?.item || "", amount: invoice.amount, tax: invoice.tax, total: invoice.total, rate: invoice.rate, note: edits[invoice.num]?.note || "" }));
+  const rows = specials.filter((invoice) => selected[invoice.num]).map((invoice) => ({ num: invoice.num, date: invoice.date, seller: invoice.seller, item: edits[invoice.num]?.item || "", amount: invoice.amount, tax: invoice.tax, total: invoice.total, rate: invoice.rate, note: edits[invoice.num]?.note || "" }));  // 生成请求只含勾选专票并合并当前编辑值
   return <div className="fyt-page-flow fyt-wide-flow"><section className="fyt-feature-form">
     <FilePickerField label="资料文件夹" description="递归扫描其中全部 PDF，自动识别增值税专用发票。" value={root} onChange={(next) => { setRoot(next); setMonth(""); setSelected({}); setEdits({}); scanTask.reset(); generateTask.reset(); }} directory />
     <section className="fyt-option-card"><div className="fyt-section-heading fyt-compact"><div><h3>扫描与复核</h3><p>扫描后逐张勾选，并可修正费用项目与备注。</p></div><div className="fyt-toolbar-controls">{scanTask.busy ? <button className="fyt-secondary-button fyt-danger-button" onClick={() => void scanTask.cancel()}>取消扫描</button> : null}<button className="fyt-secondary-button" disabled={!root.length || scanTask.busy} onClick={() => void scan()}>{scanTask.busy ? "扫描中…" : "扫描识别发票"}</button></div></div>{scanTask.busy ? <div className="fyt-task-progress"><i style={{ width: `${Math.max(2, scanTask.progress ?? 4)}%` }} /></div> : null}{scanTask.error ? <div className="fyt-page-notice error">{scanTask.error}</div> : null}{scanTask.logs.length && scanTask.error ? <details className="fyt-task-log"><summary>查看处理提示 · {scanTask.logs.length} 条</summary><pre>{scanTask.logs.join("\n")}</pre></details> : null}

@@ -143,7 +143,7 @@ def _daily_difference_details(our_days, labor_days, tolerance):
         our_value = our_days.get(day, 0.0)
         if abs(our_value - labor_value) > tolerance:
             details.append(
-                "%d日:我司%s/劳务%s" % (day, _fmt(our_value), _fmt(labor_value))
+                "%d日:我司%s/劳务%s" % (day, _format_number(our_value), _format_number(labor_value))
             )
     return details
 
@@ -191,7 +191,7 @@ def reconcile(ws, lay, labor, comp_map=None, log=None, tol=None, skip=None, ws_v
     ``data_only`` 副本，仅在 ``ws`` 单元格是公式文本时提供上次由 Excel 缓存的结果。
     若缓存不存在，后续会按逐日数值求和，而不会把公式字符串误当作工时。
     """
-    def _lg(m):
+    def _log_message(m):
         """统一转发对账阶段日志，允许核心逻辑在桌面端和 Web 端复用。"""
         if log:
             log(m)
@@ -203,11 +203,11 @@ def reconcile(ws, lay, labor, comp_map=None, log=None, tol=None, skip=None, ws_v
         anomalies.extend(_matched_person_anomalies(
             name, zong[name], labor[name], tolerance,
         ))
-    _lg("  对账完成：共 %d 条异常" % len(anomalies))
+    _log_message("  对账完成：共 %d 条异常" % len(anomalies))
     return anomalies
 
 
-def _fmt(x):
+def _format_number(x):
     """把对账明细中的数值格式化为整数或最多两位小数，减少无意义的小数尾数。"""
     if x is None:
         return "-"
@@ -399,6 +399,27 @@ def _path_list(paths):
     return [paths] if isinstance(paths, str) else list(paths)
 
 
+def _apply_target_structure(opts, target_path, target_sheet, target_roles, log):
+    """把人工确认的工作表和列映射写入当前任务配置副本。"""
+    filename = os.path.basename(target_path)
+    file_mapping = dict(opts.columns.get(filename) or {})
+    if target_sheet:
+        file_mapping["sheet"] = target_sheet
+    if target_roles:
+        roles = dict(file_mapping.get("roles") or {})
+        for role, column in target_roles.items():
+            if column:
+                # 复核界面使用 Excel 的 1 基列号，Options 内部统一保存为 0 基列号。
+                roles[role] = int(column) - 1
+        file_mapping["roles"] = roles
+    opts.columns[filename] = file_mapping
+    log(
+        "采用人工确认的待对表结构："
+        + ("工作表=%s " % target_sheet if target_sheet else "")
+        + ("列映射 %d 项" % len(target_roles) if target_roles else "")
+    )
+
+
 def _apply_review_choices(opts, target_path, choices, log):
     """把人工确认转换为本次任务专用配置，并返回姓名别名映射。
 
@@ -406,7 +427,6 @@ def _apply_review_choices(opts, target_path, choices, log):
     影响当前任务；未提供选择时直接返回原配置对象。``aliases`` 为
     ``{劳务姓名: 我司姓名}`` 字典，供后续内存索引改写。
     """
-
     aliases = {}
     if not choices:
         return opts, aliases
@@ -416,27 +436,10 @@ def _apply_review_choices(opts, target_path, choices, log):
     target_roles = choices.get("target_roles") or {}
     if target_sheet or target_roles:
         opts = copy.deepcopy(opts)  # 复核结果只对当前任务生效，绝不能污染共享默认配置。
-        filename = os.path.basename(target_path)
-        file_mapping = dict(opts.columns.get(filename) or {})
-        if target_sheet:
-            file_mapping["sheet"] = target_sheet
-        if target_roles:
-            roles = dict(file_mapping.get("roles") or {})
-            for role, column in target_roles.items():
-                if column:
-                    # 复核界面使用 Excel 的 1 基列号，Options 内部统一保存为 0 基列号。
-                    roles[role] = int(column) - 1
-            file_mapping["roles"] = roles
-        opts.columns[filename] = file_mapping
-        log(
-            "采用人工确认的待对表结构："
-            + ("工作表=%s " % target_sheet if target_sheet else "")
-            + ("列映射 %d 项" % len(target_roles) if target_roles else "")
-        )
+        _apply_target_structure(opts, target_path, target_sheet, target_roles, log)
     if aliases:
         log("采用人工姓名配对 %d 组(比对时视为同一人)" % len(aliases))
     return opts, aliases
-
 
 def _resolve_run_output_dir(target_path, out_dir):
     """解析并创建本次任务输出目录，保留旧版源文件旁输出的兼容回退。"""

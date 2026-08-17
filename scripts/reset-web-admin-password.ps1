@@ -4,9 +4,11 @@
 # 密码通过 SecureString 读取，只在当前进程内短暂转换为明文并经环境变量传给 Python；finally
 # 会清零非托管内存并移除环境变量。脚本复用服务端哈希和建库实现，不自行复制密码算法。
 $ProjectRoot = Split-Path $PSScriptRoot -Parent  # 脚本位于 scripts/，仓库根目录在上一级。
-$python = Join-Path $ProjectRoot ".venv\Scripts\python.exe"  # 必须使用项目环境以加载同版本 web_server。
-if (-not (Test-Path -LiteralPath $python)) {
-  throw "尚未安装现代环境，请先运行 scripts\setup-modern.ps1。"
+# 源码模式使用项目虚拟环境；Windows 部署包没有 .venv，改调包内冻结的 web_server.exe 的重置入口。
+$python = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
+$serverExe = Join-Path $ProjectRoot "服务端\web_server.exe"
+if (-not (Test-Path -LiteralPath $python) -and -not (Test-Path -LiteralPath $serverExe)) {
+  throw "未找到项目 Python 环境或服务端程序，无法重置管理员密码。"
 }
 
 $secure = Read-Host "请输入新的管理员密码（至少 10 位，且包含字母和数字）" -AsSecureString
@@ -19,7 +21,11 @@ try {
   $env:FYT_NEW_ADMIN_PASSWORD = $plain
   $env:FYT_ADMIN_PASSWORD = $plain
   # SQL 使用参数绑定；盐值和摘要由服务端唯一实现生成，避免脚本与登录校验规则漂移。
-  & $python -c "import os, web_server; password = os.environ['FYT_NEW_ADMIN_PASSWORD']; salt, digest = web_server.hash_password(password); web_server.init_db(); connection = web_server.db(); connection.execute('UPDATE users SET salt = ?, password_hash = ? WHERE username = ?', (salt, digest, 'admin')); connection.commit(); connection.close(); print('[完成] 管理员密码已更新。')"
+  if (Test-Path -LiteralPath $python) {
+    & $python -c "import os, web_server; password = os.environ['FYT_NEW_ADMIN_PASSWORD']; salt, digest = web_server.hash_password(password); web_server.init_db(); connection = web_server.db(); connection.execute('UPDATE users SET salt = ?, password_hash = ? WHERE username = ?', (salt, digest, 'admin')); connection.commit(); connection.close(); print('[完成] 管理员密码已更新。')"
+  } else {
+    & $serverExe --reset-admin-password
+  }
   if ($LASTEXITCODE -ne 0) { throw "管理员密码更新失败。" }
 } finally {
   if ($pointer -ne [IntPtr]::Zero) { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer) }  # 释放前覆盖明文缓冲区。

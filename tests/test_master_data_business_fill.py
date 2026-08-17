@@ -22,7 +22,7 @@ def _save_rows(path: str, title: str, rows) -> None:
     for row in rows:
         worksheet.append(row)
     workbook.save(path)
-    workbook.close()
+    workbook.close()  # 关闭工作簿释放文件
 
 
 class MasterDataBusinessFillTests(unittest.TestCase):
@@ -33,7 +33,7 @@ class MasterDataBusinessFillTests(unittest.TestCase):
 
         self.temp = tempfile.TemporaryDirectory(prefix="fyt_master_fill_")
         self.old_catalog = os.environ.get("FYT_CATALOG_PATH")
-        os.environ["FYT_CATALOG_PATH"] = self.path("主数据.json")
+        os.environ["FYT_CATALOG_PATH"] = self.path("主数据.json")  # 主数据库隔离
 
     def tearDown(self):
         """恢复调用前主数据库路径并删除合成业务文件。"""
@@ -53,9 +53,9 @@ class MasterDataBusinessFillTests(unittest.TestCase):
              unit="件", supplier="主库供应商", supplier_code="GYS900"):
         """写入一组完整物料与供应商关系，作为各业务补全基准。"""
 
-        material_catalog.upsert_supplier(supplier, supplier_code)
+        material_catalog.upsert_supplier(supplier, supplier_code)  # 供应商关系入库
         material_catalog.upsert_material(
-            code, name, spec=spec, unit=unit, supplier=supplier)
+            code, name, spec=spec, unit=unit, supplier=supplier)  # 完整物料主数据
 
     def test_arrival_fills_missing_name_and_supplier(self):
         """每日到料应按规范化编码补齐名称和供应商，并记录补全计数。"""
@@ -70,8 +70,8 @@ class MasterDataBusinessFillTests(unittest.TestCase):
         batches, _memory = arrival_core.build_batches(
             [{"path": source, "batch_no": "26001", "total": 1, "include": True}],
             "截止16点", resolver=material_catalog.CatalogResolver(), fill_counts=counts)
-        self.assertEqual(batches[0]["materials"][0][1:3], ["主库材料", "主库供应商"])
-        self.assertEqual(counts, {"name": 1, "supplier": 1})
+        self.assertEqual(batches[0]["materials"][0][1:3], ["主库材料", "主库供应商"])  # 名称与供应商补齐
+        self.assertEqual(counts, {"name": 1, "supplier": 1})  # 补全计数
 
     def test_delivery_fills_name_supplier_and_supplier_code(self):
         """送货计划输出应补齐物料名称、供应商编码和供应商名称。"""
@@ -88,7 +88,7 @@ class MasterDataBusinessFillTests(unittest.TestCase):
             row = [workbook.active.cell(3, column).value for column in range(2, 6)]
         finally:
             workbook.close()
-        self.assertEqual(row, [100, "主库材料", "GYS900", "主库供应商"])
+        self.assertEqual(row, [100, "主库材料", "GYS900", "主库供应商"])  # 编码、名称、供应商补齐
         self.assertTrue(result["supplier_used"])
 
     def test_supplier_batch_uses_catalog_after_current_and_history_sources(self):
@@ -103,7 +103,7 @@ class MasterDataBusinessFillTests(unittest.TestCase):
             ["JBC900", "", "", "", 2, ""],
         ])
         plan = supplier_batch_core.analyze([source])
-        self.assertEqual(plan["suppliers"][0]["name"], "主库供应商")
+        self.assertEqual(plan["suppliers"][0]["name"], "主库供应商")  # 回退正式主库
         self.assertEqual(plan["unmatched_count"], 0)
         self.assertEqual(plan["batches"][0]["rows"], 1)
 
@@ -137,7 +137,7 @@ class MasterDataBusinessFillTests(unittest.TestCase):
                       for column in range(3, 9)]
         finally:
             workbook.close()
-        self.assertEqual(values, ["JBC900", "主库材料", "100×50", "GYS900", "主库供应商", 5])
+        self.assertEqual(values, ["JBC900", "主库材料", "100×50", "GYS900", "主库供应商", 5])  # 输出补齐主数据
 
         diff = purchase_plan_core.diff([batch], out_dir=self.path("差异输出"))
         workbook = openpyxl.load_workbook(diff["path"], data_only=True)
@@ -145,7 +145,7 @@ class MasterDataBusinessFillTests(unittest.TestCase):
             values = [workbook.active.cell(2, column).value for column in range(2, 6)]
         finally:
             workbook.close()
-        self.assertEqual(values, ["JBC900", "主库材料", "100×50", "件"])
+        self.assertEqual(values, ["JBC900", "主库材料", "100×50", "件"])  # 差异输出补齐字段
 
     def test_pivot_fills_fields_before_clustering(self):
         """销售表聚类前必须先补齐名称、规格和单位，避免同物料被错误拆组。"""
@@ -161,7 +161,7 @@ class MasterDataBusinessFillTests(unittest.TestCase):
         self.assertEqual(
             [row[pivot_core.F_NAME], row[pivot_core.F_SPEC], row[pivot_core.F_UNIT]],
             ["主库材料", "100×50", "件"],
-        )
+        )  # 聚类前已补齐名称规格单位
 
     def test_reconcile_statement_fills_output_and_supplier_group(self):
         """对账单扫描应按主库归供应商组，输出明细也需补齐物料字段。"""
@@ -180,7 +180,7 @@ class MasterDataBusinessFillTests(unittest.TestCase):
         workbook.close()
 
         scanned = reconcile_statement_core.scan([source])
-        self.assertEqual(scanned["files"][0]["supplier"], "主库供应商")
+        self.assertEqual(scanned["files"][0]["supplier"], "主库供应商")  # 扫描归供应商组
         built = reconcile_statement_core.build(
             [source], ["1:BATCH01"], "8", out_dir=self.path("对账单输出"))
         workbook = openpyxl.load_workbook(built["files"][0]["path"], data_only=True)
@@ -188,7 +188,7 @@ class MasterDataBusinessFillTests(unittest.TestCase):
             values = [workbook.active.cell(3, column).value for column in range(2, 6)]
         finally:
             workbook.close()
-        self.assertEqual(values, ["JBC900", "主库材料", "100×50", "件"])
+        self.assertEqual(values, ["JBC900", "主库材料", "100×50", "件"])  # 输出补齐字段
 
     def test_purchase_reconciliation_fills_before_matching_and_in_output_copy(self):
         """采购对账应在匹配前补全双方，并把补全值写入输出副本。"""
@@ -203,13 +203,13 @@ class MasterDataBusinessFillTests(unittest.TestCase):
         _save_rows(left, "Sheet1", rows)
         _save_rows(right, "Sheet1", rows)
         result = purchase_core.run(left, right, out_dir=self.path("采购对账输出"))
-        self.assertEqual(len(result["pairs"]), 1)
+        self.assertEqual(len(result["pairs"]), 1)  # 双方匹配一对
         workbook = openpyxl.load_workbook(result["out1"], data_only=True)
         try:
             values = [workbook.active.cell(2, column).value for column in range(2, 5)]
         finally:
             workbook.close()
-        self.assertEqual(values, ["主库材料", "100×50", "件"])
+        self.assertEqual(values, ["主库材料", "100×50", "件"])  # 输出副本补齐字段
 
 
 if __name__ == "__main__":

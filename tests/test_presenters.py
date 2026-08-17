@@ -16,7 +16,7 @@ class PresenterTests(unittest.TestCase):
     def _row(**values):
         """使用真实 ``sqlite3.Row`` 构造与生产查询一致的映射记录。"""
         connection = sqlite3.connect(":memory:")
-        connection.row_factory = sqlite3.Row
+        connection.row_factory = sqlite3.Row  # 使用真实 Row 类型
         columns = list(values)
         connection.execute(
             "CREATE TABLE sample (%s)" % ", ".join(f'"{column}"' for column in columns)
@@ -51,8 +51,8 @@ class PresenterTests(unittest.TestCase):
         )
         result = presenters.daily_source_upload_public(row)
         expected = "/api/admin/daily-source-uploads/upload01/images/%E7%8E%B0%E5%9C%BA%20%E5%9B%BE.png"
-        self.assertEqual(result["summary"]["images"][0]["url"], expected)
-        self.assertEqual(result["summary"]["records"][0]["images"][0]["url"], expected)
+        self.assertEqual(result["summary"]["images"][0]["url"], expected)  # 顶层图片映射受控 URL
+        self.assertEqual(result["summary"]["records"][0]["images"][0]["url"], expected)  # 记录内图片同源映射
 
     def test_library_filters_legacy_category_and_limits_team_leader_edits(self):
         """淘汰分类回退为未知，班组长查看他人文件时不得获得修改权限。"""
@@ -67,12 +67,12 @@ class PresenterTests(unittest.TestCase):
         )
         user = self._row(id=1, role="team_leader")
         result = presenters.library_file_public(row, user)
-        self.assertEqual(result["category"], "unknown")
-        self.assertIn("arrival_plan", result["categories"])
+        self.assertEqual(result["category"], "unknown")  # 淘汰分类回退
+        self.assertIn("arrival_plan", result["categories"])  # 有效分类保留
         self.assertEqual(
             result["permissions"],
             {"can_download": True, "can_edit": False, "can_replace": False, "can_delete": False},
-        )
+        )  # 班组长不可编辑他人文件
 
 
 if __name__ == "__main__":

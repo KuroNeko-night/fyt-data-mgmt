@@ -200,7 +200,7 @@ def apply_plan(items, log=None):
     ``[(最终路径, 原始路径)]``。临时名使用对象 ID 降低同批碰撞概率且保持同盘改名。
     """
 
-    def _lg(m):
+    def _log_message(m):
         """仅在调用方提供日志回调时转发状态文本。"""
         if log:
             log(m)
@@ -219,26 +219,26 @@ def apply_plan(items, log=None):
             stage.append((tmp, it.new_path, it.old_path))
         except OSError as e:
             failed.append((it.old_name, str(e)))
-            _lg("跳过 %s：%s" % (it.old_name, e))
+            _log_message("跳过 %s：%s" % (it.old_name, e))
 
     # 第二阶段提交最终名称；每个失败项目独立回滚，不撤销已经成功的其他项目。
     for tmp, tgt, origin in stage:
         try:
             os.rename(tmp, tgt)
             done_undo.append((tgt, origin))
-            _lg("%s → %s" % (os.path.basename(origin), os.path.basename(tgt)))
+            _log_message("%s → %s" % (os.path.basename(origin), os.path.basename(tgt)))
         except OSError as e:
             # 目标失败后优先恢复原名，避免用户目录遗留内部临时文件。
             try:
                 os.rename(tmp, origin)
                 failed.append((os.path.basename(origin), str(e)))
-                _lg("失败 %s：%s" % (os.path.basename(origin), e))
+                _log_message("失败 %s：%s" % (os.path.basename(origin), e))
             except OSError as e2:
                 # 双重故障时不能再猜测安全目标，保留临时文件并把完整位置交给人工恢复。
                 failed.append((os.path.basename(tmp),
                                "改名失败且回滚失败,遗留临时文件:%s(原名 %s;%s / %s)"
                                % (tmp, os.path.basename(origin), e, e2)))
-                _lg("严重:%s 遗留临时文件 %s(回滚亦失败:%s)"
+                _log_message("严重:%s 遗留临时文件 %s(回滚亦失败:%s)"
                     % (os.path.basename(origin), tmp, e2))
 
     return len(done_undo), failed, done_undo
@@ -252,7 +252,7 @@ def undo(undo_map, log=None):
     返回成功还原数和逐项失败列表。
     """
 
-    def _lg(m):
+    def _log_message(m):
         """在存在日志回调时报告成功还原。"""
         if log:
             log(m)
@@ -275,7 +275,7 @@ def undo(undo_map, log=None):
         try:
             os.rename(tmp, origin)
             ok += 1
-            _lg("还原 %s → %s" % (os.path.basename(cur), os.path.basename(origin)))
+            _log_message("还原 %s → %s" % (os.path.basename(cur), os.path.basename(origin)))
         except OSError as e:
             try:
                 # 恢复原名失败时先退回撤销前名称；二次失败则保留临时文件供人工处理。

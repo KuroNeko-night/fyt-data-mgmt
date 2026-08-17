@@ -45,11 +45,11 @@ def request(path, method="GET", body=None, token=None):
         连接失败或响应不是 JSON 时向上抛出，由调用方定位服务未启动或协议变更。
     """
 
-    data = json.dumps(body).encode("utf-8") if body is not None else None
+    data = json.dumps(body).encode("utf-8") if body is not None else None  # 有请求体才编码
     req = urllib.request.Request(BASE + path, data=data, method=method)
     req.add_header("Content-Type", "application/json")
     if token:
-        req.add_header("X-Session-Token", token)
+        req.add_header("X-Session-Token", token)  # 会话令牌走自定义请求头
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
             raw = resp.read()
@@ -72,9 +72,9 @@ def _smoke_environment(tmp: str) -> dict[str, str]:
     # 复制环境而非直接修改，保证冒烟结束后父进程环境不受污染。
     env = os.environ.copy()
     env.update({
-        "FYT_WEB_DATA": os.path.join(tmp, "data"),
+        "FYT_WEB_DATA": os.path.join(tmp, "data"),  # 数据根指向临时目录
         "FYT_ADMIN_PASSWORD": "admin123456",  # 仅供临时数据库首次建库，目录清理后凭据随之消失。
-        "FYT_WEB_PORT": "8791",
+        "FYT_WEB_PORT": "8791",  # 固定独立端口避免冲突
         "PYTHONIOENCODING": "utf-8",
     })
     return env
@@ -103,7 +103,7 @@ def _verify_bridge_actions(flags: int) -> None:
             creationflags=flags, timeout=30, check=False,
         )
         response = json.loads(checked.stdout)  # 桥接标准输出必须始终是一条可解析 JSON 响应。
-        assert "不支持的桥接动作" not in str(response.get("error") or ""), response
+        assert "不支持的桥接动作" not in str(response.get("error") or ""), response  # 白名单必须包含动作
 
 
 def _verify_static_assets() -> None:
@@ -122,11 +122,11 @@ def _verify_static_assets() -> None:
     for root, _, names in os.walk(static_root):
         for name in names:
             if not name.endswith((".js", ".html")):
-                continue
+                continue  # 只看入口与脚本产物
             with open(os.path.join(root, name), "r", encoding="utf-8", errors="ignore") as handle:
                 fragments.append(handle.read())
     static_text = "".join(fragments)
-    assert "purchase_plan" in static_text and "reconcile_statement" in static_text
+    assert "purchase_plan" in static_text and "reconcile_statement" in static_text  # 功能键必须存在
     print("[0] 新增功能已包含在桥接程序和 Web 页面中")
 
 
@@ -144,7 +144,7 @@ def _start_server(tmp: str, env: dict[str, str], flags: int):
     异常：
         可执行文件缺失或启动失败时由 ``Popen`` 抛出 ``OSError``。
     """
-    server_log = open(os.path.join(tmp, "server.log"), "wb")
+    server_log = open(os.path.join(tmp, "server.log"), "wb")  # 日志写临时目录便于失败诊断
     process = subprocess.Popen(
         [os.path.join(BUNDLE, "服务端", "web_server.exe")],
         cwd=BUNDLE, env=env,
@@ -170,7 +170,7 @@ def _wait_for_server() -> None:
                 return
         except Exception:
             pass  # 启动窗口内连接拒绝属于预期，耗尽重试后再给出统一错误。
-        time.sleep(0.5)
+        time.sleep(0.5)  # 每半秒探测一次
     raise RuntimeError("服务未在 30 秒内启动")
 
 
@@ -199,7 +199,7 @@ def _login_admin() -> str:
     status, login = request(
         "/api/auth/login", "POST", {"username": "admin", "password": "admin123456"},
     )
-    assert status == 200 and login.get("token"), login
+    assert status == 200 and login.get("token"), login  # 登录失败直接暴露响应
     print("[2] 登录 OK")
     return login["token"]
 
@@ -218,12 +218,12 @@ def _synthetic_attendance_file(tmp: str) -> str:
     workbook = openpyxl.Workbook()
     try:
         worksheet = workbook.active
-        worksheet.append(["姓名", "日期", "工时"])
+        worksheet.append(["姓名", "日期", "工时"])  # 表头匹配考勤模板
         worksheet.append(["张三", "2026-08-03", 8])
         worksheet.append(["李四", "2026-08-03", 7.5])
         workbook.save(path)
     finally:
-        workbook.close()
+        workbook.close()  # 确保文件句柄释放
     return path
 
 
@@ -241,14 +241,14 @@ def _upload_file(path: str, token: str) -> str:
     with open(path, "rb") as handle:
         body = handle.read()
     upload_request = urllib.request.Request(
-        BASE + "/api/files/upload?name=" + urllib.parse.quote(os.path.basename(path)),
+        BASE + "/api/files/upload?name=" + urllib.parse.quote(os.path.basename(path)),  # 文件名 URL 编码
         data=body, method="POST",
     )
     upload_request.add_header("Content-Type", "application/octet-stream")
     upload_request.add_header("X-Session-Token", token)
     with urllib.request.urlopen(upload_request, timeout=60) as response:
         upload = json.loads(response.read())
-    assert upload.get("handle"), upload
+    assert upload.get("handle"), upload  # 上传必须返回句柄
     print("[3] 上传 OK:", upload["handle"])
     return upload["handle"]
 
@@ -268,7 +268,7 @@ def _create_archive_job(handle: str, token: str) -> str:
         "action": "attendance_archive.run",
         "payload": {"paths": [handle]},
     }, token)
-    assert status == 202 and job.get("job_id"), (status, job)
+    assert status == 202 and job.get("job_id"), (status, job)  # 长任务必须异步受理
     print("[4] 任务已创建:", job["job_id"])
     return job["job_id"]
 
@@ -282,7 +282,7 @@ def _server_log_tail(tmp: str, server_log) -> str:
     返回值：
         日志末尾至多 3000 字节的 UTF-8 文本。
     """
-    server_log.flush()
+    server_log.flush()  # 先落盘再读取尾部
     with open(os.path.join(tmp, "server.log"), "rb") as handle:
         return handle.read()[-3000:].decode("utf-8", errors="replace")
 
@@ -309,14 +309,14 @@ def _wait_for_job(job_id: str, token: str, tmp: str, server_log) -> dict[str, ob
             print("[5] job status:", job.get("status"), job.get("progress"))
             last = job.get("status")
         if last in ("completed", "failed", "cancelled"):
-            break
+            break  # 到达终态停止轮询
         time.sleep(1)
     if last != "completed":
         print("JOB:", json.dumps(job, ensure_ascii=False, indent=1)[:1500])
         print("SERVER LOG tail:")
         print(_server_log_tail(tmp, server_log))
-    assert job.get("status") == "completed", job
-    assert job.get("files"), job
+    assert job.get("status") == "completed", job  # 任务必须成功
+    assert job.get("files"), job  # 成功任务必须有输出文件
     print("[5] 任务完成，输出文件:", [item["name"] for item in job["files"]])
     return job
 
@@ -337,7 +337,7 @@ def _verify_result_download(job_id: str, token: str) -> None:
     with urllib.request.urlopen(download, timeout=60) as response:
         blob = response.read()
         status = response.status
-    assert status == 200 and blob[:2] == b"PK"
+    assert status == 200 and blob[:2] == b"PK"  # XLSX 本质是 ZIP，用文件头拦截错误页
     print("[6] 结果下载 OK,", len(blob), "bytes")
 
 
@@ -350,7 +350,7 @@ def _stop_server(process: subprocess.Popen, server_log) -> None:
     副作用：
         先终止进程，超时后升级为强制杀死；设计为可在 ``finally`` 中调用，不掩盖主流程异常。
     """
-    server_log.close()
+    server_log.close()  # 先关日志句柄再回收进程
     process.terminate()
     try:
         process.wait(timeout=5)
@@ -395,7 +395,7 @@ def main():
     """
 
     if not os.path.isdir(BUNDLE):
-        raise FileNotFoundError("未找到 Windows 部署包目录：%s" % BUNDLE)
+        raise FileNotFoundError("未找到 Windows 部署包目录：%s" % BUNDLE)  # 未构建时给出明确指引
     tmp = tempfile.mkdtemp(prefix="fyt_smoke_")  # 与真实及仓库数据完全隔离的短生命周期目录。
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)  # 非 Windows 环境回退为 0，保持脚本可被静态检查。
     try:
@@ -405,7 +405,7 @@ def main():
     finally:
         # 临时目录位于系统 temp，保存失败诊断不受影响；这里兜底清理避免残留服务日志与数据。
         import shutil
-        shutil.rmtree(tmp, ignore_errors=True)
+        shutil.rmtree(tmp, ignore_errors=True)  # 清理临时冒烟数据
 
 
 if __name__ == "__main__":

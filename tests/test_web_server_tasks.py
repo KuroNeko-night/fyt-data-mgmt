@@ -28,46 +28,46 @@ class WebServerTaskTests(WebServerTestBase):
                 "text": "乙\n甲\n乙", "operation": "dedup",
             },
         }, token=self.admin)
-        self.assertEqual(status, 202)
+        self.assertEqual(status, 202)  # 任务受理
         job = self.wait_job(created["job_id"])
-        self.assertEqual(job["status"], "completed")
-        self.assertEqual(job["result"]["text"], "乙\n甲")
+        self.assertEqual(job["status"], "completed")  # 任务完成
+        self.assertEqual(job["result"]["text"], "乙\n甲")  # 去重结果
 
         upload_query = urllib.parse.urlencode({"name": "原文件.txt", "group": "test-group"})
         status, uploaded = self.call(
             f"/api/files/upload?{upload_query}",
             token=self.admin, raw=b"sample\n", headers={"Content-Length": "7"},
         )
-        self.assertEqual(status, 201)
+        self.assertEqual(status, 201)  # 上传成功
         status, created = self.call("/api/jobs", {
             "action": "rename.apply", "title": "测试重命名", "payload": {
                 "paths": [uploaded["handle"]], "rule": {"prefix": "新-"},
             },
         }, token=self.admin)
-        self.assertEqual(status, 202)
+        self.assertEqual(status, 202)  # 任务受理
         job = self.wait_job(created["job_id"])
-        self.assertEqual(job["status"], "completed")
-        self.assertEqual(len(job["files"]), 1)
+        self.assertEqual(job["status"], "completed")  # 任务完成
+        self.assertEqual(len(job["files"]), 1)  # 一个输出
         request = urllib.request.Request(self.base + job["files"][0]["url"], headers={"X-Session-Token": self.admin})
         with urllib.request.urlopen(request, timeout=10) as response:
-            self.assertEqual(response.read(), b"sample\n")
-            self.assertEqual(response.headers["Cache-Control"], "no-store")
-            self.assertTrue(response.headers["Content-Disposition"].startswith("attachment;"))
+            self.assertEqual(response.read(), b"sample\n")  # 下载内容一致
+            self.assertEqual(response.headers["Cache-Control"], "no-store")  # 下载禁缓存
+            self.assertTrue(response.headers["Content-Disposition"].startswith("attachment;"))  # 附件头
         # 路由表必须优先识别历史版本文件，不能落入普通任务文件下载。
         version_url = job["versions"][0]["files"][0]["url"]
         request = urllib.request.Request(self.base + version_url, headers={"X-Session-Token": self.admin})
         with urllib.request.urlopen(request, timeout=10) as response:
-            self.assertEqual(response.read(), b"sample\n")
+            self.assertEqual(response.read(), b"sample\n")  # 版本文件可下载
         status, preview = self.call(job["files"][0]["url"] + "/preview", token=self.admin)
-        self.assertEqual(status, 200)
+        self.assertEqual(status, 200)  # 预览成功
         self.assertEqual(preview["rows"], [["sample"]])
 
         status, board = self.call("/api/dashboard", token=self.admin)
-        self.assertEqual(status, 200)
-        self.assertEqual(board["metrics"]["completed_jobs"], 2)
-        self.assertEqual(len(board["trend"]), 7)
-        self.assertIn("text", {item["key"] for item in board["feature_usage"]})
-        self.assertGreaterEqual(len(board["recent_files"]), 1)
+        self.assertEqual(status, 200)  # 工作台可访问
+        self.assertEqual(board["metrics"]["completed_jobs"], 2)  # 完成任务计数
+        self.assertEqual(len(board["trend"]), 7)  # 七日趋势
+        self.assertIn("text", {item["key"] for item in board["feature_usage"]})  # 功能使用统计
+        self.assertGreaterEqual(len(board["recent_files"]), 1)  # 最近文件
 
     def test_arrival_scan_and_manual_total_override(self):
         """Web 到料扫描应统计完整源表，正式任务必须采用人工覆盖后的总类数。"""
@@ -80,7 +80,7 @@ class WebServerTaskTests(WebServerTestBase):
         sheet.append(["A-01", "已到物料", "供应商甲", 10, 0])
         sheet.append(["B-02", "隐藏缺料", "供应商乙", 12, 2])
         sheet.append(["C-03", "负数缺料", "供应商丙", 8, -1])
-        sheet.row_dimensions[4].hidden = True
+        sheet.row_dimensions[4].hidden = True  # 隐藏缺料行
         workbook.save(stream)
         workbook.close()
         content = stream.getvalue()
@@ -95,15 +95,15 @@ class WebServerTaskTests(WebServerTestBase):
         status, scanned = self.call(
             "/api/arrival/scan", {"paths": [uploaded["handle"]]}, token=self.admin,
         )
-        self.assertEqual(status, 200)
-        self.assertEqual(len(scanned["rows"]), 1)
+        self.assertEqual(status, 200)  # 扫描成功
+        self.assertEqual(len(scanned["rows"]), 1)  # 一个批次
         row = scanned["rows"][0]
-        self.assertEqual(row["batch_no"], "TEST2601")
-        self.assertEqual(row["total"], 3)
-        self.assertEqual(row["auto_total"], 3)
-        self.assertEqual(row["missing_count"], 2)
-        self.assertTrue(str(row["path"]).startswith("upload:"))
-        self.assertNotIn(str(self.temp.name), json.dumps(row, ensure_ascii=False))
+        self.assertEqual(row["batch_no"], "TEST2601")  # 批次号识别
+        self.assertEqual(row["total"], 3)  # 总类数
+        self.assertEqual(row["auto_total"], 3)  # 自动总类数
+        self.assertEqual(row["missing_count"], 2)  # 缺料条数
+        self.assertTrue(str(row["path"]).startswith("upload:"))  # 使用上传句柄
+        self.assertNotIn(str(self.temp.name), json.dumps(row, ensure_ascii=False))  # 不泄露服务器路径
 
         row["total"] = 5
         row["remark"] = "人工确认总类数"
@@ -112,13 +112,13 @@ class WebServerTaskTests(WebServerTestBase):
             "title": "到料人工参数回归",
             "payload": {"rows": [row], "top_label": "截止 16 点"},
         }, token=self.admin)
-        self.assertEqual(status, 202)
+        self.assertEqual(status, 202)  # 任务受理
         job = self.wait_job(created["job_id"])
-        self.assertEqual(job["status"], "completed", job.get("error"))
+        self.assertEqual(job["status"], "completed", job.get("error"))  # 任务完成
         result = job["result"]["result"]
-        self.assertEqual(result["results"][0][3], 5)
+        self.assertEqual(result["results"][0][3], 5)  # 人工总类数覆盖
         self.assertEqual(result["batches"][0]["total_count"], 5)
-        self.assertEqual(result["batches"][0]["missing_count"], 2)
+        self.assertEqual(result["batches"][0]["missing_count"], 2)  # 缺料保留
 
     def test_daily_report_admin_scope_result_projection_and_export(self):
         """日清看板只能由管理员读取，并只汇总当天且属于管理员视角的业务投影。"""

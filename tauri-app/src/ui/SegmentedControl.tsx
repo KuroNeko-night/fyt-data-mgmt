@@ -45,7 +45,7 @@ export function SegmentedControl<T extends string>({ value, options, onChange, l
   const move = (index: number, step: 1 | -1) => {
     // 最多检查选项总数，既允许首尾循环，也避免所有项禁用时形成无限循环。
     for (let offset = 0; offset < options.length; offset += 1) {
-      const nextIndex = (index + offset * step + options.length) % options.length;
+      const nextIndex = (index + offset * step + options.length) % options.length;  // 循环查找并跳过禁用项，避免全部禁用时死循环
       const next = options[nextIndex];
       if (!next.disabled) {
         onChange(next.value);

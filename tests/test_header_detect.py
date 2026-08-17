@@ -43,7 +43,7 @@ class _Tmp(unittest.TestCase):
 
         p = os.path.join(self._tmp, "t.xlsx")
         wb = openpyxl.Workbook(); ws = wb.active
-        ws.append(header); ws.append(["x"] * len(header)); wb.save(p)
+        ws.append(header); ws.append(["x"] * len(header)); wb.save(p)  # 一行表头一行占位数据
         wb2 = openpyxl.load_workbook(p)
         hr, cols = H.detect_layout(wb2[wb2.sheetnames[0]], KEYS, **kw)
         wb2.close()
@@ -56,17 +56,17 @@ class TestEngine(_Tmp):
     def test_exact_before_contains(self):
         # "编码"(含匹配 code)不应抢占精确的"零部件代码";"数量"精确命中 qty
         hr, c = self.cols(["零部件代码", "名称", "数量"], require=("code",))
-        self.assertEqual(hr, 1)
-        self.assertEqual(c["code"], 1)
+        self.assertEqual(hr, 1)  # 首行即表头
+        self.assertEqual(c["code"], 1)  # 精确匹配优先
 
     def test_require_all_present(self):
         # require 含 qty 但表里无数量列 -> 不认为是表头
         hr, c = self.cols(["零部件代码", "名称"], require=("code", "qty"))
-        self.assertIsNone(hr)
+        self.assertIsNone(hr)  # 必需列缺失不认表头
 
     def test_require_met(self):
         hr, c = self.cols(["零部件代码", "名称", "数量"], require=("code", "qty"))
-        self.assertIsNotNone(hr)
+        self.assertIsNotNone(hr)  # 必需列齐全才认表头
 
     def test_exclude_contains_blocks_interference(self):
         # 「委外供应商属性」含"供应商"但被 exclude_contains 挡在包含匹配之外
@@ -80,7 +80,7 @@ class TestEngine(_Tmp):
         hr, c = self.cols(["零部件代码", "供应商名称"],
                           require=("code",),
                           exclude_contains={"sup_name": ["供应商"]})
-        self.assertEqual(c["sup_name"], 2)
+        self.assertEqual(c["sup_name"], 2)  # 精确匹配不受排除词影响
 
     def test_best_row_most_roles(self):
         """多行均像表头时应选择覆盖业务角色最多的一行，而非最先出现者。"""
@@ -94,11 +94,11 @@ class TestEngine(_Tmp):
         wb2 = openpyxl.load_workbook(p)
         hr, c = H.detect_layout(wb2[wb2.sheetnames[0]], KEYS, require=("code",))
         wb2.close()
-        self.assertEqual(hr, 2)
+        self.assertEqual(hr, 2)  # 选择覆盖角色最多的行
 
     def test_no_header_returns_none(self):
         hr, c = self.cols(["甲", "乙", "丙"], require=("code",))
-        self.assertIsNone(hr)
+        self.assertIsNone(hr)  # 无匹配不认表头
         self.assertEqual(c, {})
 
     def test_log_reports_unmatched_columns(self):
@@ -107,14 +107,14 @@ class TestEngine(_Tmp):
         self.cols(["零部件代码", "名称", "数量", "交期", "库位"],
                   require=("code",), log=logs.append)
         joined = " ".join(logs)
-        self.assertIn("交期", joined)
+        self.assertIn("交期", joined)  # 未认领列被上报
         self.assertIn("库位", joined)
 
     def test_log_silent_when_all_matched(self):
         # 全列认领时不产生未认领日志(不刷屏)
         logs = []
         self.cols(["零部件代码", "名称", "数量"], require=("code",), log=logs.append)
-        self.assertEqual([l for l in logs if "未认领" in l], [])
+        self.assertEqual([l for l in logs if "未认领" in l], [])  # 全部认领不刷屏
 
     def test_log_none_is_default_noop(self):
         # 不传 log 时行为与原先完全一致(纯增量特性)
@@ -137,7 +137,7 @@ class TestEngine(_Tmp):
         hr, c = self.cols(["零部件代码", "委外 供应商\n属性", "供应商名称"],
                           require=("code",),
                           exclude_contains={"sup_name": ["属性"]})
-        self.assertEqual(c["sup_name"], 3)
+        self.assertEqual(c["sup_name"], 3)  # 折叠后排除词仍生效
 
 
 if __name__ == "__main__":

@@ -52,7 +52,7 @@ class PurchasePlanCoreTests(unittest.TestCase):
         """创建模板、批次来源和隔离主数据库。"""
 
         self.temp = tempfile.TemporaryDirectory(prefix="fyt_purchase_plan_")
-        os.environ["FYT_CATALOG_PATH"] = os.path.join(self.temp.name, "catalog.json")
+        os.environ["FYT_CATALOG_PATH"] = os.path.join(self.temp.name, "catalog.json")  # 主数据库隔离
         self.template = self.path("2采购计划导入模板1.xlsx")
         self.batch_a = self.path("GKMYR26036-02辅料清单总表.xlsx")
         self.batch_b = self.path("GMIDR26178A辅料清单总表.xlsx")
@@ -93,13 +93,13 @@ class PurchasePlanCoreTests(unittest.TestCase):
         result = purchase_plan_core.run(
             [self.template], [self.batch_a, self.batch_b], out_dir=out_dir,
         )
-        self.assertEqual(result["generated"], 2)
-        self.assertEqual(result["rows"], 4)
-        self.assertEqual(result["excluded_original_count"], 2)
+        self.assertEqual(result["generated"], 2)  # 两个批次文件
+        self.assertEqual(result["rows"], 4)  # 有效数据行数
+        self.assertEqual(result["excluded_original_count"], 2)  # 原厂排除
         self.assertEqual(
             [os.path.basename(path) for path in result["files"]],
             ["26036-02.xlsx", "26178A.xlsx"],
-        )
+        )  # 文件名按批次号
 
         workbook = openpyxl.load_workbook(result["files"][0], data_only=True)
         self.assertEqual(workbook.sheetnames, ["采购计划导入模板", "Sheet1"])
@@ -111,24 +111,24 @@ class PurchasePlanCoreTests(unittest.TestCase):
         )
         rows = [row for row in main.iter_rows(min_row=2, values_only=True)
                 if any(cell is not None for cell in row)]
-        self.assertEqual(len(rows), 3)
+        self.assertEqual(len(rows), 3)  # 三条有效数据
         first = rows[0]
         # 仓库编号、采购员编号、预计到货日期留空
         self.assertIsNone(first[0])
         self.assertIsNone(first[1])
         self.assertIsNone(first[8])
-        self.assertEqual(first[2], "8891167589")
-        self.assertEqual(first[3], "保护膜（车身油漆保护膜德莎）")
-        self.assertEqual(first[4], "0.08×200")
-        self.assertEqual(first[5], "GYS26062300001-1")
-        self.assertEqual(first[6], "客供件")
-        self.assertEqual(first[7], 2.08)
+        self.assertEqual(first[2], "8891167589")  # 物料编码
+        self.assertEqual(first[3], "保护膜（车身油漆保护膜德莎）")  # 物料名称
+        self.assertEqual(first[4], "0.08×200")  # 规格
+        self.assertEqual(first[5], "GYS26062300001-1")  # 供应商编码
+        self.assertEqual(first[6], "客供件")  # 供应商名称
+        self.assertEqual(first[7], 2.08)  # 数量
         # 数据区字体统一宋体 10
         for row in main.iter_rows(min_row=2, max_row=4, max_col=10):
             for cell in row:
                 if cell.value is not None:
-                    self.assertEqual(cell.font.name, "宋体")
-                    self.assertEqual(cell.font.size, 10)
+                    self.assertEqual(cell.font.name, "宋体")  # 字体
+                    self.assertEqual(cell.font.size, 10)  # 字号
         workbook.close()
 
     def test_run_keeps_supplier_code_sheet(self):
@@ -146,7 +146,7 @@ class PurchasePlanCoreTests(unittest.TestCase):
         _write_batch(batch, [["JBC006", "珍珠棉", "100x50", "张", 9, "未知供应商"]])
         with self.assertRaises(ValueError) as context:
             purchase_plan_core.run([self.template], [batch], out_dir=self.path("输出3"))
-        self.assertIn("缺少供应商", str(context.exception))
+        self.assertIn("缺少供应商", str(context.exception))  # 缺编码报错
 
     def test_catalog_supplements_missing_supplier_code(self):
         """模板缺少供应商编码时可从正式主库补齐，但不得臆造未知供应商。"""
@@ -158,11 +158,11 @@ class PurchasePlanCoreTests(unittest.TestCase):
         result = purchase_plan_core.run([self.template], [batch], out_dir=self.path("输出补全"))
         workbook = openpyxl.load_workbook(result["files"][0], data_only=True)
         main = workbook["采购计划导入模板"]
-        self.assertEqual(main.cell(2, 6).value, "GYS999")
+        self.assertEqual(main.cell(2, 6).value, "GYS999")  # 主库补编码
         workbook.close()
         # 运行后材料与供应商自动学习进档案
-        self.assertEqual(material_catalog.resolve_supplier_code("未知供应商"), "GYS999")
-        self.assertIn("JBC006", material_catalog.load()["materials"])
+        self.assertEqual(material_catalog.resolve_supplier_code("未知供应商"), "GYS999")  # 供应商入库
+        self.assertIn("JBC006", material_catalog.load()["materials"])  # 材料入库
 
     def test_template_without_code_sheet_raises(self):
         bad_template = self.path("无代码模板.xlsx")
@@ -172,20 +172,20 @@ class PurchasePlanCoreTests(unittest.TestCase):
         workbook.close()
         with self.assertRaises(ValueError) as context:
             purchase_plan_core.run([bad_template], [self.batch_a], out_dir=self.path("输出4"))
-        self.assertIn("供应商代码子表", str(context.exception))
+        self.assertIn("供应商代码子表", str(context.exception))  # 缺代码子表报错
 
     def test_unrecognized_batch_name_raises(self):
         batch = self.path("无法识别.xlsx")
         _write_batch(batch, [["JBC006", "珍珠棉", "100x50", "张", 9, "吉致"]])
         with self.assertRaises(ValueError) as context:
             purchase_plan_core.run([self.template], [batch], out_dir=self.path("输出5"))
-        self.assertIn("批次号", str(context.exception))
+        self.assertIn("批次号", str(context.exception))  # 批次号不可识别报错
 
     def test_empty_selection_raises(self):
         with self.assertRaises(ValueError):
-            purchase_plan_core.run([], [self.batch_a])
+            purchase_plan_core.run([], [self.batch_a])  # 模板为空拒绝
         with self.assertRaises(ValueError):
-            purchase_plan_core.run([self.template], [])
+            purchase_plan_core.run([self.template], [])  # 批次为空拒绝
 
     def test_keeps_prefilled_warehouse_purchaser_and_arrival_date(self):
         """输出复制模板已有仓库、采购员和预计到货日期，不用默认值覆盖。"""
@@ -209,9 +209,9 @@ class PurchasePlanCoreTests(unittest.TestCase):
         workbook = openpyxl.load_workbook(result["files"][0], data_only=True)
         main = workbook["采购计划导入模板"]
         # 模板第 2 行（对应输出行 2）未填写 → 保留列为空，新数据正常写入
-        self.assertIsNone(main.cell(2, 1).value)
+        self.assertIsNone(main.cell(2, 1).value)  # 空列保持空
         self.assertIsNone(main.cell(2, 10).value)
-        self.assertEqual(main.cell(2, 3).value, "8891167589")
+        self.assertEqual(main.cell(2, 3).value, "8891167589")  # 新数据写入
         # 模板第 3 行已填写的仓库/采购员/到货日期 → 按行原样保留
         self.assertEqual(main.cell(3, 1).value, "CK26062300001")
         self.assertEqual(main.cell(3, 2).value, "U26052800001")
@@ -240,8 +240,8 @@ class PurchasePlanCoreTests(unittest.TestCase):
         self.assertEqual(
             [os.path.basename(path) for path in result["files"]],
             ["26036-02.xlsx", "26036-02 (2).xlsx"],
-        )
-        self.assertTrue(all(os.path.isfile(path) for path in result["files"]))
+        )  # 重名追加序号
+        self.assertTrue(all(os.path.isfile(path) for path in result["files"]))  # 两个文件都存在
 
     def test_failed_batch_does_not_commit_outputs_or_catalog(self):
         bad = self.path("GMMYR26163A辅料清单总表.xlsx")
@@ -249,8 +249,8 @@ class PurchasePlanCoreTests(unittest.TestCase):
         out_dir = self.path("输出事务")
         with self.assertRaises(ValueError):
             purchase_plan_core.run([self.template], [self.batch_a, bad], out_dir=out_dir)
-        self.assertEqual([name for name in os.listdir(out_dir) if name.endswith(".xlsx")], [])
-        self.assertEqual(purchase_plan_core.material_catalog.load()["materials"], {})
+        self.assertEqual([name for name in os.listdir(out_dir) if name.endswith(".xlsx")], [])  # 无半成品输出
+        self.assertEqual(purchase_plan_core.material_catalog.load()["materials"], {})  # 主数据库无写入
         self.assertEqual(purchase_plan_core.material_catalog.load()["suppliers"], {})
 
     def test_supplier_codes_after_row_200_are_loaded(self):
@@ -263,7 +263,7 @@ class PurchasePlanCoreTests(unittest.TestCase):
         _write_batch(batch, [["JBC200", "长表材料", "20x20", "件", 1, "供应商201"]])
         result = purchase_plan_core.run([template], [batch], out_dir=self.path("输出长表"))
         workbook = openpyxl.load_workbook(result["files"][0], data_only=True)
-        self.assertEqual(workbook["采购计划导入模板"].cell(2, 6).value, "GYS201")
+        self.assertEqual(workbook["采购计划导入模板"].cell(2, 6).value, "GYS201")  # 两百行后关系仍生效
         workbook.close()
 
 

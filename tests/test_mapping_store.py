@@ -18,7 +18,7 @@ class TestMappingStore(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory(prefix="fyt_mapping_")
         self.path = os.path.join(self.tmp.name, "mapping.json")
         self.old = os.environ.get("FYT_MAPPING_STORE_PATH")
-        os.environ["FYT_MAPPING_STORE_PATH"] = self.path
+        os.environ["FYT_MAPPING_STORE_PATH"] = self.path  # 映射索引隔离到临时文件
 
     def tearDown(self):
         """恢复映射路径并删除临时索引。"""
@@ -37,22 +37,22 @@ class TestMappingStore(unittest.TestCase):
             "考勤模板", "rec_source", "Sheet1", 1,
             {"name": 0, "date": 1, "work": 2}, rows=rows, path=self.path)
         found = mapping_store.find_for_rows("Sheet1", rows, "rec_source", self.path)
-        self.assertEqual(found["id"], saved["id"])
+        self.assertEqual(found["id"], saved["id"])  # 结构一致时命中已存映射
         mapping_store.save_mapping(
             "考勤模板（更新）", "rec_source", "Sheet1", 1,
             {"name": 0, "date": 1}, rows=rows, path=self.path)
-        self.assertEqual(len(mapping_store.list_mappings(path=self.path)), 1)
+        self.assertEqual(len(mapping_store.list_mappings(path=self.path)), 1)  # 同模板替换不新增
         self.assertTrue(mapping_store.delete_mapping(saved["id"], path=self.path))
-        self.assertEqual(mapping_store.list_mappings(path=self.path), [])
+        self.assertEqual(mapping_store.list_mappings(path=self.path), [])  # 删除后索引为空
 
     def test_apply_saved_mapping_to_options(self):
         opts = common_core.Options()
         mapping = {"sheet": "总表", "header": 3,
                    "roles": {"name": 1, "work": 4}}
         self.assertTrue(common_core.apply_saved_mapping(opts, r"C:\data\a.xlsx", mapping))
-        self.assertEqual(opts.resolve_sheet(r"C:\other\a.xlsx"), "总表")
-        self.assertEqual(opts.resolve_header(r"C:\other\a.xlsx"), 3)
-        self.assertEqual(opts.resolve_roles(r"C:\other\a.xlsx"), {"name": 1, "work": 4})
+        self.assertEqual(opts.resolve_sheet(r"C:\other\a.xlsx"), "总表")  # 同名文件套用工作表
+        self.assertEqual(opts.resolve_header(r"C:\other\a.xlsx"), 3)  # 同名文件套用表头行
+        self.assertEqual(opts.resolve_roles(r"C:\other\a.xlsx"), {"name": 1, "work": 4})  # 同名文件套用角色列
 
     def test_auto_apply_by_template_fingerprint(self):
         """结构指纹一致时自动应用映射，表头变化则不能误套旧列位置。"""
@@ -62,12 +62,12 @@ class TestMappingStore(unittest.TestCase):
         ws.append(["姓名", "所属公司", "出勤工时"])
         ws.append(["张三", "甲公司", 8])
         wb.save(book)
-        _, rows = common_core.preview_rows(book, sheet="总表", limit=5)
+        _, rows = common_core.preview_rows(book, sheet="总表", limit=5)  # 预览行用作结构指纹
         mapping_store.save_mapping("月度总表", "rec_zong", "总表", 1,
                                    {"name": 0, "comp": 1, "work": 2}, rows=rows)
         opts = common_core.Options()
         found = common_core.auto_apply_mapping(opts, book, "rec_zong")
-        self.assertEqual(found["name"], "月度总表")
+        self.assertEqual(found["name"], "月度总表")  # 指纹一致自动套用
         self.assertEqual(opts.resolve_roles(book)["work"], 2)
 
 

@@ -10,27 +10,27 @@ class TestNormName(unittest.TestCase):
     """验证姓名和普通文本键的空白规范化。"""
 
     def test_removes_all_spaces(self):
-        self.assertEqual(cc.norm_name("张 三"), "张三")
-        self.assertEqual(cc.norm_name("  李四  "), "李四")
-        self.assertEqual(cc.norm_name("a\tb c"), "abc")
+        self.assertEqual(cc.norm_name("张 三"), "张三")  # 内部空格去除
+        self.assertEqual(cc.norm_name("  李四  "), "李四")  # 首尾空白去除
+        self.assertEqual(cc.norm_name("a\tb c"), "abc")  # 制表符也去除
 
     def test_none_and_number(self):
-        self.assertEqual(cc.norm_name(None), "")
-        self.assertEqual(cc.norm_name(123), "123")
+        self.assertEqual(cc.norm_name(None), "")  # 空值返回空串
+        self.assertEqual(cc.norm_name(123), "123")  # 数字转字符串
 
 
 class TestNormDate(unittest.TestCase):
     """验证日期对象与常见日期字符串统一格式。"""
 
     def test_datetime_and_date(self):
-        self.assertEqual(cc.norm_date(datetime.datetime(2026, 5, 1, 8, 0)), (2026, 5, 1))
-        self.assertEqual(cc.norm_date(datetime.date(2026, 12, 31)), (2026, 12, 31))
+        self.assertEqual(cc.norm_date(datetime.datetime(2026, 5, 1, 8, 0)), (2026, 5, 1))  # datetime 转三元组
+        self.assertEqual(cc.norm_date(datetime.date(2026, 12, 31)), (2026, 12, 31))  # date 转三元组
 
     def test_string_forms(self):
-        self.assertEqual(cc.norm_date("20260501"), (2026, 5, 1))
-        self.assertEqual(cc.norm_date("2026-05-01"), (2026, 5, 1))
-        self.assertEqual(cc.norm_date("2026/5/1"), (2026, 5, 1))
-        self.assertEqual(cc.norm_date("2026.5.1"), (2026, 5, 1))
+        self.assertEqual(cc.norm_date("20260501"), (2026, 5, 1))  # 紧凑数字日期
+        self.assertEqual(cc.norm_date("2026-05-01"), (2026, 5, 1))  # 短横线日期
+        self.assertEqual(cc.norm_date("2026/5/1"), (2026, 5, 1))  # 斜杠日期
+        self.assertEqual(cc.norm_date("2026.5.1"), (2026, 5, 1))  # 点分隔日期
 
     def test_invalid(self):
         self.assertIsNone(cc.norm_date(None))
@@ -43,14 +43,14 @@ class TestDayOf(unittest.TestCase):
     """验证从日期表示中提取有效月内日号。"""
 
     def test_various(self):
-        self.assertEqual(cc.day_of(datetime.date(2026, 5, 17)), 17)
-        self.assertEqual(cc.day_of(5), 5)
-        self.assertEqual(cc.day_of("20260517"), 17)
-        self.assertEqual(cc.day_of("5日"), 5)
+        self.assertEqual(cc.day_of(datetime.date(2026, 5, 17)), 17)  # date 取日
+        self.assertEqual(cc.day_of(5), 5)  # 整数直接取日
+        self.assertEqual(cc.day_of("20260517"), 17)  # 紧凑日期取日
+        self.assertEqual(cc.day_of("5日"), 5)  # 中文日号
 
     def test_out_of_range(self):
-        self.assertIsNone(cc.day_of(0))
-        self.assertIsNone(cc.day_of(32))
+        self.assertIsNone(cc.day_of(0))  # 0 日非法
+        self.assertIsNone(cc.day_of(32))  # 32 日非法
         self.assertIsNone(cc.day_of("abc"))
 
 
@@ -58,13 +58,13 @@ class TestParseTime(unittest.TestCase):
     """验证时间对象和文本打卡时间解析。"""
 
     def test_time_and_datetime(self):
-        self.assertEqual(cc.parse_time(datetime.time(8, 30)), datetime.time(8, 30))
+        self.assertEqual(cc.parse_time(datetime.time(8, 30)), datetime.time(8, 30))  # time 原样返回
         self.assertEqual(cc.parse_time(datetime.datetime(2026, 5, 1, 9, 15)),
-                         datetime.time(9, 15))
+                         datetime.time(9, 15))  # datetime 取时刻
 
     def test_string(self):
-        self.assertEqual(cc.parse_time("08:30"), datetime.time(8, 30))
-        self.assertEqual(cc.parse_time("8:05:30"), datetime.time(8, 5, 30))
+        self.assertEqual(cc.parse_time("08:30"), datetime.time(8, 30))  # 带前导零
+        self.assertEqual(cc.parse_time("8:05:30"), datetime.time(8, 5, 30))  # 含秒
 
     def test_invalid(self):
         self.assertIsNone(cc.parse_time(None))
@@ -77,15 +77,15 @@ class TestRoundHalfHour(unittest.TestCase):
     """验证工时上下取整到半小时的边界规则。"""
 
     def test_up(self):
-        self.assertEqual(cc.round_half_hour(datetime.time(7, 56), "up"), datetime.time(8, 0))
+        self.assertEqual(cc.round_half_hour(datetime.time(7, 56), "up"), datetime.time(8, 0))  # 向上取整
         self.assertEqual(cc.round_half_hour(datetime.time(7, 31), "up"), datetime.time(8, 0))
-        self.assertEqual(cc.round_half_hour(datetime.time(7, 30), "up"), datetime.time(7, 30))
+        self.assertEqual(cc.round_half_hour(datetime.time(7, 30), "up"), datetime.time(7, 30))  # 半点不动
         self.assertEqual(cc.round_half_hour(datetime.time(7, 1), "up"), datetime.time(7, 30))
 
     def test_down(self):
-        self.assertEqual(cc.round_half_hour(datetime.time(8, 13), "down"), datetime.time(8, 0))
+        self.assertEqual(cc.round_half_hour(datetime.time(8, 13), "down"), datetime.time(8, 0))  # 向下取整
         self.assertEqual(cc.round_half_hour(datetime.time(8, 24), "down"), datetime.time(8, 0))
-        self.assertEqual(cc.round_half_hour(datetime.time(8, 30), "down"), datetime.time(8, 30))
+        self.assertEqual(cc.round_half_hour(datetime.time(8, 30), "down"), datetime.time(8, 30))  # 半点不动
         self.assertEqual(cc.round_half_hour(datetime.time(8, 59), "down"), datetime.time(8, 30))
 
     def test_none(self):
@@ -96,38 +96,38 @@ class TestHoursHelpers(unittest.TestCase):
     """验证时间换算、显示和休息区间解析助手。"""
 
     def test_to_hours(self):
-        self.assertAlmostEqual(cc.to_hours(datetime.time(8, 30)), 8.5)
+        self.assertAlmostEqual(cc.to_hours(datetime.time(8, 30)), 8.5)  # 时间转小时
         self.assertAlmostEqual(cc.to_hours(datetime.time(9, 15, 36)), 9.26, places=2)
-        self.assertIsNone(cc.to_hours(None))
+        self.assertIsNone(cc.to_hours(None))  # 空值返回 None
 
     def test_fmt_time(self):
-        self.assertEqual(cc.fmt_time(datetime.time(8, 5)), "08:05")
-        self.assertEqual(cc.fmt_time(None), "")
+        self.assertEqual(cc.fmt_time(datetime.time(8, 5)), "08:05")  # 补零显示
+        self.assertEqual(cc.fmt_time(None), "")  # 空值返回空串
 
     def test_parse_rest(self):
-        self.assertEqual(cc.parse_rest(1.5), 1.5)
-        self.assertEqual(cc.parse_rest("2"), 2.0)
-        self.assertEqual(cc.parse_rest(None), 0.0)
-        self.assertEqual(cc.parse_rest("-"), 0.0)
-        self.assertEqual(cc.parse_rest("abc"), 0.0)
+        self.assertEqual(cc.parse_rest(1.5), 1.5)  # 数值直接返回
+        self.assertEqual(cc.parse_rest("2"), 2.0)  # 字符串转浮点
+        self.assertEqual(cc.parse_rest(None), 0.0)  # 空值按 0
+        self.assertEqual(cc.parse_rest("-"), 0.0)  # 占位符按 0
+        self.assertEqual(cc.parse_rest("abc"), 0.0)  # 非法文本按 0
 
 
 class TestToNum(unittest.TestCase):
     """验证业务数字、占位符和自定义跳过标记转换。"""
 
     def test_numbers(self):
-        self.assertEqual(cc.to_num(9), 9.0)
-        self.assertEqual(cc.to_num("8.5"), 8.5)
+        self.assertEqual(cc.to_num(9), 9.0)  # 整数转浮点
+        self.assertEqual(cc.to_num("8.5"), 8.5)  # 数字字符串转浮点
 
     def test_skip_marks(self):
-        self.assertIsNone(cc.to_num("休"))
+        self.assertIsNone(cc.to_num("休"))  # 休假占位符跳过
         self.assertIsNone(cc.to_num("假"))
         self.assertIsNone(cc.to_num(""))
         self.assertIsNone(cc.to_num(None))
 
     def test_custom_skip(self):
         skip = {"NA"}
-        self.assertIsNone(cc.to_num("NA", skip=skip))
+        self.assertIsNone(cc.to_num("NA", skip=skip))  # 自定义跳过集合
         # 自定义集合不含"休"时，"休"不再被跳过，但也不是数字 -> None
         self.assertIsNone(cc.to_num("休", skip=skip))
 
@@ -137,30 +137,30 @@ class TestOptions(unittest.TestCase):
 
     def test_defaults(self):
         o = cc.Options()
-        self.assertEqual(o.workday_hours, 9.0)
-        self.assertEqual(o.day_max_hours, 16.0)
-        self.assertTrue(o.overtime)
-        self.assertEqual(o.conflict, "last")
+        self.assertEqual(o.workday_hours, 9.0)  # 默认白班时长
+        self.assertEqual(o.day_max_hours, 16.0)  # 默认日上限
+        self.assertTrue(o.overtime)  # 默认统计加班
+        self.assertEqual(o.conflict, "last")  # 默认后文件覆盖
         self.assertIn("休", o.skip_set())
 
     def test_conflict_normalized(self):
-        self.assertEqual(cc.Options(conflict="bogus").conflict, "last")
+        self.assertEqual(cc.Options(conflict="bogus").conflict, "last")  # 非法值回退默认
         self.assertEqual(cc.Options(conflict="first").conflict, "first")
 
     def test_day_max_hours_is_configurable_and_in_summary(self):
         o = cc.Options(day_max_hours=14.5)
-        self.assertEqual(o.day_max_hours, 14.5)
-        self.assertIn("白班上限=14.5h", o.summary())
+        self.assertEqual(o.day_max_hours, 14.5)  # 自定义上限生效
+        self.assertIn("白班上限=14.5h", o.summary())  # 摘要展示配置
 
     def test_per_file_map(self):
         o = cc.Options(columns={"a.xlsx": {"sheet": "总表",
                                            "roles": {"name": 0}}})
-        self.assertEqual(o.resolve_sheet("/x/y/a.xlsx"), "总表")
+        self.assertEqual(o.resolve_sheet("/x/y/a.xlsx"), "总表")  # 按文件名匹配工作表
         self.assertEqual(o.resolve_roles("a.xlsx"), {"name": 0})
-        self.assertIsNone(o.resolve_sheet("other.xlsx"))
+        self.assertIsNone(o.resolve_sheet("other.xlsx"))  # 未配置文件返回空
 
     def test_summary_is_string(self):
-        self.assertIsInstance(cc.Options().summary(), str)
+        self.assertIsInstance(cc.Options().summary(), str)  # 摘要必须可打印
 
 
 class TestLoadDataOnly(unittest.TestCase):
@@ -194,7 +194,7 @@ class TestLoadDataOnly(unittest.TestCase):
             a = cells(w1); w1.close()
             w2 = cc.load_data_only(p)
             b = cells(w2); w2.close()
-            self.assertEqual(a, b)
+            self.assertEqual(a, b)  # 流式读取与普通读取一致
         finally:
             shutil.rmtree(d, ignore_errors=True)
 
@@ -203,8 +203,8 @@ class TestLoadDataOnly(unittest.TestCase):
         from openpyxl.reader.workbook import WorkbookParser
         before = WorkbookParser.pivot_caches
         with cc._skip_pivot_cache_parse():
-            pass
-        self.assertIs(WorkbookParser.pivot_caches, before)
+            pass  # 上下文为空操作
+        self.assertIs(WorkbookParser.pivot_caches, before)  # 退出后恢复全局属性
 
 
 if __name__ == "__main__":

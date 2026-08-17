@@ -13,6 +13,30 @@ import os
 from . import task_history
 
 
+def _task_output_files(out_dir: str) -> list[str]:
+    """返回输出目录第一层普通文件名；目录不存在或不可读时返回空列表。"""
+    if not out_dir or not os.path.isdir(out_dir):
+        return []
+    try:
+        # 只枚举第一层普通文件；历史目录中不存在需要递归的嵌套输出。
+        return sorted(
+            name for name in os.listdir(out_dir)
+            if os.path.isfile(os.path.join(out_dir, name))
+        )
+    except OSError:
+        # 目录可能已被用户清理或权限变化；保留任务行并继续，不伪造文件数。
+        return []
+
+
+def _task_matches(keyword: str, title: str, out_dir: str, files: list[str]) -> bool:
+    """判断任务标题、输出目录名或产物文件名是否命中批次关键词。"""
+    if keyword in title.lower():
+        return True
+    if keyword in out_dir.lower():
+        return True
+    return any(keyword in name.lower() for name in files)
+
+
 def search(keyword: str, limit: int = 300, db_path: str | None = None) -> dict[str, object]:
     """按批次号（如 ``26036-02``）搜索任务历史，返回匹配任务及输出文件。
 
@@ -37,29 +61,16 @@ def search(keyword: str, limit: int = 300, db_path: str | None = None) -> dict[s
     for task in items:
         title = str(task.get("title") or "")
         out_dir = str(task.get("output_dir") or "")
-        hit = kw in title.lower()
-        files: list[str] = []
-        if out_dir and os.path.isdir(out_dir):
-            try:
-                # 只枚举第一层普通文件；历史目录中不存在需要递归的嵌套输出。
-                files = sorted(
-                    name for name in os.listdir(out_dir)
-                    if os.path.isfile(os.path.join(out_dir, name))
-                )
-            except OSError:
-                # 目录可能已被用户清理或权限变化；保留任务行并继续，不伪造文件数。
-                files = []
-            if not hit:
-                # 标题未命中时再匹配输出目录名和文件名，捕获“标题不含批次号但产物含”的场景。
-                hit = kw in out_dir.lower() or any(kw in name.lower() for name in files)
-        if hit:
-            results.append({
-                "feature": str(task.get("feature") or ""),
-                "title": title,
-                "status": str(task.get("status") or ""),
-                "started_at": str(task.get("started_at") or ""),
-                "message": str(task.get("message") or ""),
-                "out_dir": out_dir,
-                "files": files,
-            })
+        files = _task_output_files(out_dir)
+        if not _task_matches(kw, title, out_dir, files):
+            continue
+        results.append({
+            "feature": str(task.get("feature") or ""),
+            "title": title,
+            "status": str(task.get("status") or ""),
+            "started_at": str(task.get("started_at") or ""),
+            "message": str(task.get("message") or ""),
+            "out_dir": out_dir,
+            "files": files,
+        })
     return {"keyword": str(keyword).strip(), "items": results}

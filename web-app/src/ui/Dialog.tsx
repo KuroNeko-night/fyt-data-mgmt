@@ -41,7 +41,7 @@ export function useOverlayFocus(open: boolean, onClose: () => void, dialogRef: R
     const previousPaddingRight = document.body.style.paddingRight;
     // 隐藏 body 滚动条后补同等右内边距，防止页面内容横向跳动。
     const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
-    document.body.style.overflow = "hidden";
+    document.body.style.overflow = "hidden";  // 打开弹层期间锁定背景滚动
     if (scrollbarWidth > 0) document.body.style.paddingRight = `${scrollbarWidth}px`;
     // 优先聚焦第一个可交互控件；若弹层只有说明文字则保持当前焦点。
     const focusable = dialogRef.current?.querySelector<HTMLElement>("button, input, select, textarea, a[href], [tabindex]:not([tabindex='-1'])");

@@ -243,8 +243,8 @@ def run(command: list[str]) -> None:
         命令非零退出时抛出 ``subprocess.CalledProcessError``，用于快速终止整条打包链。
     """
 
-    print(">>", " ".join(str(item) for item in command))
-    subprocess.run(command, cwd=ROOT, check=True)
+    print(">>", " ".join(str(item) for item in command))  # 回显命令，便于核对构建步骤
+    subprocess.run(command, cwd=ROOT, check=True)  # 固定仓库根执行，失败即终止打包链
 
 
 def build_web_dist() -> None:
@@ -261,9 +261,9 @@ def build_web_dist() -> None:
     """
 
     if sys.platform.startswith("win"):
-        run(["cmd", "/c", "npm", "--prefix", "web-app", "run", "build"])
+        run(["cmd", "/c", "npm", "--prefix", "web-app", "run", "build"])  # Windows 需经 cmd 解析 npm.cmd
     else:
-        run(["npm", "--prefix", "web-app", "run", "build"])
+        run(["npm", "--prefix", "web-app", "run", "build"])  # 类 Unix 直接调用 npm
 
 
 # 保留该映射以兼容既有构建脚本导入接口；当前三类包均通过明确函数组装内容。
@@ -277,14 +277,14 @@ def _source_ignore(directory: str, names: list[str]) -> set[str]:
     结合相对目录处理资源源图等特殊情况。返回值只影响源码副本，不删除仓库中的文件。
     """
 
-    ignored: set[str] = set()
+    ignored: set[str] = set()  # 收集本层需排除的候选名
     # 统一为 POSIX 相对路径，保证 Windows 构建机上逐级目录比较与白名单书写一致。
-    relative_dir = os.path.relpath(directory, ROOT).replace("\\", "/")
+    relative_dir = os.path.relpath(directory, ROOT).replace("\\", "/")  # 路径统一为斜杠，便于规则比对
     for name in names:
-        path = os.path.join(directory, name)
-        lower = name.lower()
+        path = os.path.join(directory, name)  # 拼出完整路径供目录判断
+        lower = name.lower()  # 统一小写，锁定扩展名匹配
         if os.path.isdir(path) and name in SOURCE_IGNORED_DIRS:
-            ignored.add(name)
+            ignored.add(name)  # 排除运行数据与生成目录
             continue
         if relative_dir == "assets/generated" and name == "_source":
             # 对话生成的原始大图不属于运行资产，正式资源只取 manifest 中已验收的输出。
@@ -328,15 +328,15 @@ def build_source_bundle(version: str) -> str:
     """
 
     work = os.path.join(ROOT, "dist", "deploy", "source")
-    staging = os.path.join(work, f"峰运通数据管理系统_源码_v{version}")
+    staging = os.path.join(work, f"峰运通数据管理系统_源码_v{version}")  # 暂存目录按版本命名
     if os.path.isdir(staging):
-        shutil.rmtree(staging)
+        shutil.rmtree(staging)  # 重建前清掉同版本旧副本
     os.makedirs(staging)
 
     for name in SOURCE_ROOT_FILES:
         source = os.path.join(ROOT, name)
         if os.path.isfile(source):
-            shutil.copy2(source, os.path.join(staging, name))
+            shutil.copy2(source, os.path.join(staging, name))  # 按白名单复制根文件
     for name in SOURCE_DIRS:
         source = os.path.join(ROOT, name)
         if os.path.isdir(source):
@@ -349,7 +349,7 @@ def build_source_bundle(version: str) -> str:
     legacy_agents = os.path.join(os.path.dirname(ROOT), "AGENTS.md")
     if not os.path.isfile(staged_agents) and os.path.isfile(legacy_agents):
         # 旧工作区曾把维护规范放在中文项目目录上一级；保留只读回退，避免历史源码包缺文件。
-        shutil.copy2(legacy_agents, staged_agents)
+        shutil.copy2(legacy_agents, staged_agents)  # 回退复制旧布局的维护规范
     # 说明文件统一 LF 换行，兼容 Linux 预览与 Windows 记事本，避免 CRLF 混入源码包。
     with open(os.path.join(staging, "源码包说明.md"), "w", encoding="utf-8", newline="\n") as handle:
         handle.write(SOURCE_README)
@@ -366,14 +366,14 @@ def _find_windows_cloudflared() -> str | None:
     """
 
     candidates = [
-        os.environ.get("FYT_CLOUDFLARED_EXE"),
-        shutil.which("cloudflared"),
-        os.path.join(ROOT, "tools", "cloudflared.exe"),
+        os.environ.get("FYT_CLOUDFLARED_EXE"),  # 优先尊重显式环境变量
+        shutil.which("cloudflared"),  # 其次搜索 PATH 中的客户端
+        os.path.join(ROOT, "tools", "cloudflared.exe"),  # 再查仓库工具目录
     ]
     for variable in ("ProgramFiles", "ProgramFiles(x86)"):
         base = os.environ.get(variable)
         if base:
-            candidates.append(os.path.join(base, "cloudflared", "cloudflared.exe"))
+            candidates.append(os.path.join(base, "cloudflared", "cloudflared.exe"))  # 最后查标准安装目录
     # 显式环境变量优先于 PATH 与标准安装目录；只返回确实存在的文件，避免把无效路径交给复制步骤。
     return next((path for path in candidates if path and os.path.isfile(path)), None)
 
@@ -395,7 +395,7 @@ def bundle_windows_cloudflared(staging: str, work: str) -> str:
         下载失败、复制失败或 ``--version`` 非零退出都会抛出对应异常并终止打包。
     """
 
-    source = _find_windows_cloudflared()
+    source = _find_windows_cloudflared()  # 优先复用本机已安装客户端
     if source is None:
         download_dir = os.path.join(work, "_downloads")
         os.makedirs(download_dir, exist_ok=True)
@@ -403,13 +403,13 @@ def bundle_windows_cloudflared(staging: str, work: str) -> str:
         print("[下载] 本机未找到 cloudflared，正在下载官方 Windows amd64 客户端")
         # urlretrieve 已弃用且无超时；改用带超时的 urlopen 分块写入，避免网络挂起无限阻塞打包。
         with urllib.request.urlopen(CLOUDFLARED_WINDOWS_URL, timeout=120) as response, open(source, "wb") as handle:
-            shutil.copyfileobj(response, handle)
+            shutil.copyfileobj(response, handle)  # 分块落盘，超时会抛异常终止打包
 
     # 无论复用本地文件还是新下载，都先复制到包内再验证，确保验证对象与交付文件完全一致。
     tools_dir = os.path.join(staging, "tools")
     os.makedirs(tools_dir, exist_ok=True)
     target = os.path.join(tools_dir, "cloudflared.exe")
-    shutil.copy2(source, target)
+    shutil.copy2(source, target)  # 复制到交付目录后再做版本验证
     checked = subprocess.run(
         [target, "--version"],
         text=True,
@@ -419,7 +419,7 @@ def bundle_windows_cloudflared(staging: str, work: str) -> str:
         stderr=subprocess.STDOUT,
         check=True,  # 版本检查失败即终止打包，不能交付一个仅“文件存在”的客户端。
     )
-    version_text = checked.stdout.strip()
+    version_text = checked.stdout.strip()  # 去掉换行，便于写入说明
     with open(os.path.join(tools_dir, "cloudflared-版本与来源.txt"), "w", encoding="utf-8") as handle:
         handle.write(version_text + "\n")
         handle.write("官方来源：" + CLOUDFLARED_WINDOWS_URL + "\n")
@@ -448,12 +448,12 @@ def build_windows_bundle(version: str) -> str:
     """
 
     work = os.path.join(ROOT, "dist", "deploy", "windows")
-    staging = os.path.join(work, f"峰运通服务端_windows_v{version}")
+    staging = os.path.join(work, f"峰运通服务端_windows_v{version}")  # 暂存目录按版本命名
     if os.path.isdir(staging):
-        shutil.rmtree(staging)
+        shutil.rmtree(staging)  # 重建前清掉同版本旧副本
     os.makedirs(staging)
 
-    specs = ["web_server.spec", "bridge_worker.spec", "web_control_gui.spec"]
+    specs = ["web_server.spec", "bridge_worker.spec", "web_control_gui.spec"]  # 三个 EXE 的 PyInstaller 描述
     for spec in specs:
         run(
             VENV_PYINSTALLER
@@ -493,7 +493,7 @@ def build_windows_bundle(version: str) -> str:
         os.path.join(ROOT, "scripts", "install-cloudflared.ps1"),
         os.path.join(staging, "重新安装Cloudflare客户端.ps1"),
     )
-    bundle_windows_cloudflared(staging, work)
+    bundle_windows_cloudflared(staging, work)  # 最后装配 Cloudflare 客户端
     return staging
 
 
@@ -516,16 +516,16 @@ def build_linux_bundle(version: str) -> str:
     """
 
     work = os.path.join(ROOT, "dist", "deploy", "linux")
-    staging = os.path.join(work, f"fyt-server-linux-v{version}")
+    staging = os.path.join(work, f"fyt-server-linux-v{version}")  # 暂存目录按版本命名
     os.makedirs(work, exist_ok=True)
     # 只清理 dist/deploy/linux 下的历史暂存目录，绝不接触目标机 /var/lib/fyt-web。
     for name in os.listdir(work):
         if name.startswith(("峰运通服务端_linux_v", "fyt-server-linux-v")):
             old = os.path.join(work, name)
             if old != staging and os.path.isdir(old):
-                shutil.rmtree(old)
+                shutil.rmtree(old)  # 删除旧版本暂存目录
     if os.path.isdir(staging):
-        shutil.rmtree(staging)
+        shutil.rmtree(staging)  # 重建前清掉同版本旧副本
     os.makedirs(staging)
     # 服务端入口、HTTP 后端与业务核心采用白名单复制，不把 tests、web-data 或桌面端带入包中。
     shutil.copy2(os.path.join(ROOT, "web_server.py"), staging)
@@ -538,7 +538,7 @@ def build_linux_bundle(version: str) -> str:
     os.makedirs(core_out)
     for name in os.listdir(os.path.join(ROOT, "core")):
         if name.endswith(".py"):
-            shutil.copy2(os.path.join(ROOT, "core", name), os.path.join(core_out, name))
+            shutil.copy2(os.path.join(ROOT, "core", name), os.path.join(core_out, name))  # 只复制核心 Python 源码
     # 前端必须预先构建；复制 dist 能让目标机无需安装 Node.js。
     shutil.copytree(
         os.path.join(ROOT, "web-app", "dist"),
@@ -549,11 +549,11 @@ def build_linux_bundle(version: str) -> str:
     # 只挑选安装、升级、服务控制脚本与 systemd 模板；排序后复制保证构建结果可重复比对。
     for name in sorted(os.listdir(LINUX_SCRIPTS_DIR)):
         if name.endswith((".sh", ".service")):
-            shutil.copy2(os.path.join(LINUX_SCRIPTS_DIR, name), os.path.join(staging, name))
+            shutil.copy2(os.path.join(LINUX_SCRIPTS_DIR, name), os.path.join(staging, name))  # 只收脚本与 systemd 模板
     with open(os.path.join(staging, "VERSION"), "w", encoding="ascii", newline="\n") as handle:
         handle.write(version + "\n")
     with open(os.path.join(staging, "README.md"), "w", encoding="utf-8", newline="\n") as handle:
-        handle.write(LINUX_README.replace("<VERSION>", version))
+        handle.write(LINUX_README.replace("<VERSION>", version))  # 替换包内 README 版本占位符
     return staging
 
 
@@ -573,7 +573,7 @@ def make_zip(folder: str, name: str) -> str:
 
     target = os.path.join(ROOT, "dist", f"{name}.zip")
     if os.path.isfile(target):
-        os.remove(target)
+        os.remove(target)  # 覆盖同名旧包前先删除
     with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
         for root, _, files in os.walk(folder):
             for file in files:
@@ -608,26 +608,26 @@ def make_linux_zip(folder: str, name: str) -> str:
     legacy_name = name.replace("fyt-server-linux-v", "峰运通服务端_linux_v", 1)
     legacy_target = os.path.join(ROOT, "dist", f"{legacy_name}.zip")
     if legacy_target != target and os.path.isfile(legacy_target):
-        os.remove(legacy_target)
+        os.remove(legacy_target)  # 清理已淘汰的中文命名包
     if os.path.isfile(target):
-        os.remove(target)
+        os.remove(target)  # 覆盖同名旧包前先删除
     with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
         for directory, _, files in os.walk(folder):
             for file in files:
                 full = os.path.join(directory, file)
-                relative = os.path.relpath(full, os.path.dirname(folder)).replace(os.sep, "/")
+                relative = os.path.relpath(full, os.path.dirname(folder)).replace(os.sep, "/")  # ZIP 内统一斜杠路径
                 # 显式使用源文件 mtime 并声明 Unix 创建系统，避免继承构建机时间与平台差异。
                 info = zipfile.ZipInfo(relative, time.localtime(os.path.getmtime(full))[:6])
                 info.create_system = 3  # 3 表示 Unix，解压器才会解释 external_attr 中的权限位。
-                mode = stat.S_IFREG | (0o755 if file.endswith(".sh") else 0o644)
-                info.external_attr = (mode & 0xFFFF) << 16
+                mode = stat.S_IFREG | (0o755 if file.endswith(".sh") else 0o644)  # Shell 脚本保留执行位
+                info.external_attr = (mode & 0xFFFF) << 16  # 权限位写入 Unix 高 16 位
                 info.compress_type = zipfile.ZIP_DEFLATED
                 with open(full, "rb") as source:
                     archive.writestr(info, source.read())
     digest = hashlib.sha256()
     with open(target, "rb") as archive_file:
         for chunk in iter(lambda: archive_file.read(1024 * 1024), b""):
-            digest.update(chunk)
+            digest.update(chunk)  # 分块计算校验和，避免整包读入内存
     with open(target + ".sha256", "w", encoding="ascii", newline="\n") as checksum:
         checksum.write(f"{digest.hexdigest()}  {os.path.basename(target)}\n")
     return target
@@ -656,11 +656,11 @@ def main() -> None:
     sys.path.insert(0, ROOT)  # 延迟导入使脚本在解析帮助参数时不必加载业务模块。
     from core.version import VERSION  # noqa: E402
 
-    version = VERSION
+    version = VERSION  # 统一从 core.version 读取版本事实源
     if args.linux_only:
         # Linux 单包模式仍先构建 Web dist，保证包中页面与当前源码版本一致。
         print(f"[开始] 只构建 Linux 服务端包 v{version}")
-        build_web_dist()
+        build_web_dist()  # 先构建前端产物
         linux_folder = build_linux_bundle(version)
         linux_zip = make_linux_zip(linux_folder, f"fyt-server-linux-v{version}")
         print(f"[完成] Linux 整合包：{linux_zip}")
@@ -668,14 +668,14 @@ def main() -> None:
 
     print(f"[开始] 构建源码与部署整合包 v{version}")
     print("[开始] 组装纯净源码包")
-    source_folder = build_source_bundle(version)
+    source_folder = build_source_bundle(version)  # 先复制源码白名单
     build_web_dist()
     print("[开始] 构建 Windows 免安装包（PyInstaller，约需数分钟）")
     windows_folder = build_windows_bundle(version)
     print("[开始] 组装 Linux 源码部署包")
     linux_folder = build_linux_bundle(version)
-    windows_zip = make_zip(windows_folder, f"峰运通服务端_windows_v{version}")
-    linux_zip = make_linux_zip(linux_folder, f"fyt-server-linux-v{version}")
+    windows_zip = make_zip(windows_folder, f"峰运通服务端_windows_v{version}")  # 普通 ZIP 适合 Windows 分发
+    linux_zip = make_linux_zip(linux_folder, f"fyt-server-linux-v{version}")  # Linux ZIP 带权限与校验
     source_zip = make_zip(source_folder, f"峰运通数据管理系统_源码_v{version}")
     print(f"[完成] 纯净源码包：{source_zip}")
     print(f"[完成] Windows 整合包：{windows_zip}")

@@ -248,7 +248,7 @@ def _write_match_report(out_dir, invoice_totals, both, no_invoice, no_purchase):
                     cell.fill = warn_fill  # 异常行统一底色，便于打开报告快速定位。
             row_index += 1
         target = common_core.unique_path(os.path.join(out_dir, "票货匹配表_%s.xlsx" % datetime.now().strftime("%Y%m%d_%H%M%S")))
-        workbook.save(target)  # 保存完成后再返回，调用方可立即提供下载。
+        workbook.save(target)
         return target
     finally:
         workbook.close()  # 即使保存失败也释放 openpyxl 句柄。

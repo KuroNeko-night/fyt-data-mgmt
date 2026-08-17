@@ -95,7 +95,7 @@ function AttendanceRows({ title, records, onChange }: {
   onChange: (personId: number, values: Partial<DailyAttendance>) => void;
 }) {
   // 出勤率仅统计布尔 present；迟到等非正常状态按缺勤侧展示并保留具体原因。
-  const present = records.filter((item) => item.present).length;
+  const present = records.filter((item) => item.present).length;  // 出勤率只统计布尔 present，非正常状态按缺勤展示
   return <section className="fyt-daily-attendance-group">
     <header><div><h3>{title}</h3><p>{present} / {records.length} 人出勤</p></div><strong>{records.length ? `${Math.round(present / records.length * 100)}%` : "--"}</strong></header>
     {records.length ? <div className="fyt-daily-attendance-list">{records.map((record) => <article key={record.person_id} data-present={record.present ? "true" : "false"}>
@@ -118,7 +118,7 @@ function ProductionAttendanceRows({ records, onChange }: {
   const totals = records.reduce((result, item) => ({
     staffing: result.staffing + item.staffing_count,
     attendance: result.attendance + item.attendance_count,
-  }), { staffing: 0, attendance: 0 });
+  }), { staffing: 0, attendance: 0 });  // 汇总值基于当前编辑状态，改人数无需保存即可看到总差异
   const grouped = useMemo(() => {
     // Map 用于快速定位已有班组，result 数组同时保留服务端返回的稳定展示顺序。
     const result: Array<{ groupId: number; groupName: string; records: DailyProductionAttendance[] }> = [];
@@ -136,7 +136,7 @@ function ProductionAttendanceRows({ records, onChange }: {
     return result;
   }, [records]);
   // 差异定义始终是编制减实际：正数表示缺口，负数表示超编。
-  const totalDifference = totals.staffing - totals.attendance;
+  const totalDifference = totals.staffing - totals.attendance;  // 编制减实际：正数缺口，负数超编
   return <section className="fyt-daily-attendance-group fyt-daily-production-attendance">
     <header><div><h3>生产人员</h3><p>按班组和班次填写当天出勤，系统自动计算编制差异</p></div><strong>{totals.attendance} 人</strong></header>
     {records.length ? <div className="fyt-daily-production-attendance-list">{grouped.map((group) => {
@@ -179,7 +179,7 @@ export function AttendanceTab({ date, data, onRefresh }: { date: string; data: D
 
   /** 只更新指定人员的本地日报副本，最终由“保存当天考勤”统一提交。 */
   function updateRecord(personId: number, values: Partial<DailyAttendance>) {
-    setRecords((current) => current.map((item) => item.person_id === personId ? { ...item, ...values } : item));
+    setRecords((current) => current.map((item) => item.person_id === personId ? { ...item, ...values } : item));  // 只更新指定人员的本地日报副本，最终统一保存
   }
 
   /** 更新指定班次并同步重算差异字段，保持输入区与汇总展示一致。 */
@@ -188,7 +188,7 @@ export function AttendanceTab({ date, data, onRefresh }: { date: string; data: D
       if (item.shift_id !== shiftId) return item;
       const next = { ...item, ...values };
       // 服务端保存时会再次计算；这里的值仅用于编辑过程中的即时反馈。
-      return { ...next, difference: next.staffing_count - next.attendance_count };
+      return { ...next, difference: next.staffing_count - next.attendance_count };  // 即时重算差异，服务端保存时会再次计算
     }));
   }
 

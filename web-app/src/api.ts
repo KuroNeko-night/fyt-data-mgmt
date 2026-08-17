@@ -41,12 +41,12 @@ async function request<T>(path: string, options: ApiRequestOptions = {}): Promis
     retryAttempts,
     ...fetchOptions
   } = options;
-  const headers = new Headers(fetchOptions.headers);
+  const headers = new Headers(fetchOptions.headers);  // 复制调用方头信息，后续统一叠加会话与内容类型
   if (fetchOptions.body && typeof fetchOptions.body === "string") headers.set("Content-Type", "application/json"); // 文件与 FormData 不应被误标为 JSON。
-  const token = getToken();
-  if (token) headers.set("X-Session-Token", token);
-  const retryable = retryNetwork || !fetchOptions.method || fetchOptions.method.toUpperCase() === "GET";
-  const attempts = retryable ? Math.max(1, retryAttempts ?? (retryNetwork ? 2 : 3)) : 1;
+  const token = getToken();  // 兼容未来需要显式 X-Session-Token 的部署场景
+  if (token) headers.set("X-Session-Token", token);  // 仅在存在令牌时附加，避免发送空请求头
+  const retryable = retryNetwork || !fetchOptions.method || fetchOptions.method.toUpperCase() === "GET";  // 默认只重试幂等 GET，非幂等接口须服务端保证安全
+  const attempts = retryable ? Math.max(1, retryAttempts ?? (retryNetwork ? 2 : 3)) : 1;  // 计算尝试次数，普通 GET 最多三次
   let lastError: unknown;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const controller = timeoutMs > 0 && !fetchOptions.signal ? new AbortController() : null; // 调用方信号优先，内部只补充缺失的超时能力。
@@ -62,19 +62,19 @@ async function request<T>(path: string, options: ApiRequestOptions = {}): Promis
         signal: fetchOptions.signal || controller?.signal,
       });
       const data = await response.json().catch(() => ({})); // 兼容空响应或反向代理生成的非 JSON 错误页。
-      if (!response.ok) throw new ApiResponseError(data.error || "请求失败");
+      if (!response.ok) throw new ApiResponseError(data.error || "请求失败");  // 业务错误不重试，避免把权限或校验失败重复提交
       return data as T;
     } catch (error) {
-      const timedOut = Boolean(controller?.signal.aborted);
+      const timedOut = Boolean(controller?.signal.aborted);  // 内部超时控制器中断视为超时，外部取消原样抛出
       lastError = timedOut ? new Error(timeoutMessage) : error;
       const canRetry = !(error instanceof ApiResponseError) && attempt + 1 < attempts; // 服务端明确返回的业务错误不属于瞬时网络故障。
-      if (canRetry) await new Promise((resolve) => window.setTimeout(resolve, 450 * (attempt + 1)));
+      if (canRetry) await new Promise((resolve) => window.setTimeout(resolve, 450 * (attempt + 1)));  // 指数退避避免瞬时故障期间密集重试
       else break;
     } finally {
       if (timeoutId) window.clearTimeout(timeoutId);
     }
   }
-  throw lastError instanceof Error ? lastError : new Error("请求失败");
+  throw lastError instanceof Error ? lastError : new Error("请求失败");  // 统一抛出 Error，调用方无需处理未知类型
 }
 
 // 认证、会话与工作台基础数据接口。
@@ -90,7 +90,7 @@ export function dashboard() { return request<DashboardData>("/api/dashboard"); }
 /** 读取指定业务日期的日清数据，并补齐旧版本或空日期缺失的数组与统计字段。 */
 export async function dailyReport(date: string) {
   const data = await request<Partial<DailyReportData>>(`/api/daily-report?date=${encodeURIComponent(date)}`);
-  return normalizeDailyReportData(data, date);
+  return normalizeDailyReportData(data, date);  // 旧版本或空日期缺失数组字段时在此补齐
 }
 
 // 日清基础资料、考勤、班组、事项和生产计划管理接口，仅管理员页面调用。
@@ -174,8 +174,8 @@ export function uploadMasterDataImport(file: File, onProgress?: (progress: numbe
     xhr.open("POST", `${API_BASE}/api/admin/master-data/imports?${query}`);
     const token = getToken();
     if (token) xhr.setRequestHeader("X-Session-Token", token);
-    xhr.withCredentials = true;
-    xhr.timeout = 180_000;
+    xhr.withCredentials = true;  // 上传请求同样携带同源会话，归属由服务端校验
+    xhr.timeout = 180_000;  // 大表解析需要较长时间，超时兜底防止 Promise 永不落定
     xhr.upload.onprogress = (event) => { if (event.lengthComputable) onProgress?.(Math.round(event.loaded / event.total * 100)); };
     xhr.upload.onload = () => onProcessing?.(); // 请求体发送完毕不代表解析完成，界面由此切换为“正在分析”。
     xhr.onerror = () => reject(new Error(`上传 ${file.name} 失败，请检查网络连接`));
@@ -210,7 +210,7 @@ export async function downloadMasterDataCatalog(): Promise<void> {
   document.body.appendChild(link);
   link.click();
   link.remove();
-  URL.revokeObjectURL(url);
+  URL.revokeObjectURL(url);  // 点击后立即释放对象地址，避免浏览器长期占用
 }
 export type BatchTrackItem = { job_id: string; action: string; title: string; status: string; created_at: string; files: string[] };
 export function batchTrack(q: string) { return request<{ keyword: string; items: BatchTrackItem[] }>(`/api/batch-track?q=${encodeURIComponent(q)}`); }
@@ -231,7 +231,7 @@ export function listLibraryFiles(values: { page?: number; page_size?: number; q?
   if (values.page) query.set("page", String(values.page));
   if (values.page_size) query.set("page_size", String(values.page_size));
   if (values.q) query.set("q", values.q);
-  if (values.scope && values.scope !== "all") query.set("scope", values.scope);
+  if (values.scope && values.scope !== "all") query.set("scope", values.scope);  // 默认 all 不写入查询串，由服务端按角色解析可见范围
   if (values.category) query.set("category", values.category);
   return request<LibraryResponse>(`/api/library/files${query.size ? `?${query}` : ""}`);
 }

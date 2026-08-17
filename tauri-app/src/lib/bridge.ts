@@ -93,7 +93,7 @@ let previewSettings: AppSettings = {
 
 /** 判断当前页面是否运行在 Tauri 注入了内部对象的桌面 WebView 中。 */
 export function isTauriRuntime(): boolean {
-  return "__TAURI_INTERNALS__" in window;
+  return "__TAURI_INTERNALS__" in window;  // 以 Tauri 注入的全局对象判断运行环境，避免能力检测被篡改
 }
 
 /**
@@ -147,7 +147,7 @@ async function previewResponse<T>(action: string, payload: BridgePayload): Promi
     },
   };
   if (!(action in responses)) {
-    throw new Error("当前功能需要在桌面端运行，请从桌面端重新打开。");
+    throw new Error("当前功能需要在桌面端运行，请从桌面端重新打开。");  // 未登记动作明确报错，避免预览看似成功
   }
   return responses[action] as T;
 }
@@ -162,7 +162,7 @@ export async function bridgeRequest<T>(action: string, payload: BridgePayload = 
   if (!isTauriRuntime()) {
     return previewResponse<T>(action, payload);
   }
-  return invoke<T>("bridge_request", { request: { action, payload, requestId } });
+  return invoke<T>("bridge_request", { request: { action, payload, requestId } });  // Tauri 运行时统一走白名单命令，业务页面不直接 invoke
 }
 
 /**
@@ -172,8 +172,8 @@ export async function bridgeRequest<T>(action: string, payload: BridgePayload = 
  * 分支统一解释。
  */
 export async function cancelBridgeRequest(requestId: string): Promise<boolean> {
-  if (!requestId || !isTauriRuntime()) return false;
-  return invoke<boolean>("cancel_bridge_request", { requestId });
+  if (!requestId || !isTauriRuntime()) return false;  // 预览或空编号无需向 Rust 发起取消
+  return invoke<boolean>("cancel_bridge_request", { requestId });  // 交给 Rust 按请求编号终止进程树
 }
 
 /** 通过受控桥接安装已下载更新；浏览器预览禁止触发本机安装。 */
@@ -190,5 +190,5 @@ export async function installUpdate(path: string): Promise<void> {
  */
 export async function syncRuntimeSettings(settings: AppSettings): Promise<void> {
   if (!isTauriRuntime()) return;
-  await invoke("set_minimize_to_tray", { enabled: settings.minimize_to_tray });
+  await invoke("set_minimize_to_tray", { enabled: settings.minimize_to_tray });  // 仅同步托盘开关到 Rust 内存，重启后恢复默认
 }

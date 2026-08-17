@@ -99,8 +99,8 @@ fn python_executable(root: &Path) -> Result<PathBuf, String> {
 /// 入口已经冻结在可执行文件中。
 fn make_command(executable: &Path, root: &Path) -> Command {
     let mut command = Command::new(executable);
-    command.env("PYTHONIOENCODING", "utf-8");
-    command.env("PYTHONUTF8", "1");
+    command.env("PYTHONIOENCODING", "utf-8");  // 固定子进程编码，防止中文日志在管道中乱码
+    command.env("PYTHONUTF8", "1");  // 显式启用 UTF-8 模式，兼容未设置系统区域的环境
     if executable
         .file_name()
         .and_then(|name| name.to_str())
@@ -108,7 +108,7 @@ fn make_command(executable: &Path, root: &Path) -> Command {
     {
         // 只有直接启动 python.exe 时才补模块参数；冻结 sidecar 已把桥接入口编译进可执行文件。
         command.args(["-m", "core.tauri_bridge"]);
-        command.current_dir(root);
+        command.current_dir(root);  // 开发模式必须切到项目根，Python 才能导入 core 包
     }
     #[cfg(target_os = "windows")]
     {
@@ -127,9 +127,9 @@ fn spawn_stderr_reader(
     event_sender: Option<mpsc::Sender<Value>>,
 ) -> thread::JoinHandle<String> {
     thread::spawn(move || {
-        let mut plain = Vec::new();
+        let mut plain = Vec::new();  // 普通 stderr 只积累不转发，避免调试信息进入客户界面
         if let Some(stream) = stderr {
-            for line in BufReader::new(stream).lines().map_while(Result::ok) {
+            for line in BufReader::new(stream).lines().map_while(Result::ok) {  // 持续抽干管道，防止日志写满后子进程死锁
                 if let Some(raw) = line.strip_prefix("__FYT_EVENT__") {
                     // 单条事件损坏或前端关闭接收端时只丢弃该事件，不中断核心业务。
                     if let (Some(sender), Ok(event)) =
@@ -173,18 +173,18 @@ fn bridge_request_sync_with_events(
     let root = project_root();
     let executable = python_executable(&root)?;
     let request_id = request.request_id.clone();
-    let body = serde_json::to_vec(&request)
+    let body = serde_json::to_vec(&request)  // 把请求序列化为 UTF-8 JSON 字节，作为子进程标准输入
         .map_err(|error| format!("桥接请求序列化失败：{error}"))?;
     let mut command = make_command(&executable, &root);
-    command.env("FYT_BRIDGE_EVENTS", "1");
-    command.env("FYT_REQUEST_ID", &request_id);
+    command.env("FYT_BRIDGE_EVENTS", "1");  // 通知桥接层在 stderr 输出结构化事件
+    command.env("FYT_REQUEST_ID", &request_id);  // 用环境变量传请求号，取消通知按它对齐
     let mut child = command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|error| format!("无法启动 Python 核心：{error}"))?;
-    let child_id = child.id();
+    let child_id = child.id();  // 启动后立即取 PID，取消命令按该编号终止进程树
     if !request_id.is_empty() {
         // 只登记有前端请求编号的长任务，普通同步查询不会进入可取消进程表。
         active_processes()
@@ -192,7 +192,7 @@ fn bridge_request_sync_with_events(
             .map_err(|_| "任务进程表已损坏".to_string())?
             .insert(request_id.clone(), child_id);
     }
-    let stderr_thread = spawn_stderr_reader(child.stderr.take(), event_sender);
+    let stderr_thread = spawn_stderr_reader(child.stderr.take(), event_sender);  // 先启动 stderr 消费线程，避免等待 stdout 时管道被写满
     child
         .stdin
         .take()
@@ -204,7 +204,7 @@ fn bridge_request_sync_with_events(
         .wait_with_output()
         .map_err(|error| format!("等待 Python 核心失败：{error}"))?;
     remove_active_process(&request_id);
-    let stderr = stderr_thread.join().unwrap_or_else(|_| "读取 Python 错误输出失败".into());
+    let stderr = stderr_thread.join().unwrap_or_else(|_| "读取 Python 错误输出失败".into());  // 等待 stderr 读取线程结束，避免漏掉尾部日志
     let envelope: BridgeEnvelope = serde_json::from_slice(&output.stdout).map_err(|error| {
         format!("Python 核心返回无效 JSON：{error}；{stderr}")
     })?;
@@ -233,8 +233,8 @@ fn bridge_request_sync(request: BridgeRequest) -> Result<Value, String> {
 /// 由前端通过白名单命令传入。返回 Python 桥接的业务结果或中文错误。事件转发线程
 /// 与阻塞任务线程分离，任务结束后会先释放 sender 再回收事件线程，确保残余事件不丢失。
 async fn bridge_request(app: tauri::AppHandle, request: BridgeRequest) -> Result<Value, String> {
-    let (event_sender, event_receiver) = mpsc::channel();
-    let event_thread = thread::spawn(move || {
+    let (event_sender, event_receiver) = mpsc::channel();  // 事件通道连接 stderr 解析线程与前端广播线程
+    let event_thread = thread::spawn(move || {  // 独立线程转发进度事件，不阻塞业务任务本身
         for event in event_receiver {
             let _ = app.emit("bridge-task-event", event); // WebView 已关闭时忽略发送失败，让子进程正常回收。
         }
@@ -330,11 +330,11 @@ fn set_minimize_to_tray(enabled: bool) {
 /// 参数 `path` 来自前端白名单命令，会先去除首尾空白。返回规范化后的 `PathBuf`；
 /// 相对路径或不存在的路径返回中文错误，禁止把任意路径交给系统打开能力。
 fn validate_open_path(path: &str) -> Result<PathBuf, String> {
-    let target = PathBuf::from(path.trim());
-    if !target.is_absolute() {
+    let target = PathBuf::from(path.trim());  // 先去首尾空白，避免前端传参带空格导致误判
+    if !target.is_absolute() {  // 拒绝相对路径，防止打开行为受当前工作目录影响
         return Err("只允许打开绝对路径。".into());
     }
-    if !target.exists() {
+    if !target.exists() {  // 不存在的路径不进入系统打开能力，避免无效调用
         return Err(format!("目标路径不存在：{}", target.display()));
     }
     Ok(target)
@@ -355,7 +355,7 @@ fn open_local_path(path: String) -> Result<(), String> {
 /// 额外封装 opener 插件调用失败的场景。
 fn open_local_path_sync(path: &str) -> Result<(), String> {
     let target = validate_open_path(&path)?;
-    tauri_plugin_opener::open_path(target, None::<&str>)
+    tauri_plugin_opener::open_path(target, None::<&str>)  // 只走白名单命令的受控入口，不向前端开放通用 opener 权限
         .map_err(|error| format!("无法打开本地路径：{error}"))
 }
 
@@ -403,7 +403,7 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                if MINIMIZE_TO_TRAY.load(Ordering::Relaxed) {
+                if MINIMIZE_TO_TRAY.load(Ordering::Relaxed) {  // 读取原子开关决定关闭按钮是隐藏窗口还是真正退出
                     api.prevent_close(); // 用户选择托盘模式时关闭按钮只隐藏窗口，托盘退出才结束进程。
                     let _ = window.hide();
                 }
@@ -428,7 +428,7 @@ mod tests {
 
     /// 保护 Python 标准流到 Rust JSON 反序列化之间的 UTF-8 中文传递能力。
     #[test]
-    fn 健康检查保持中文_utf8() {
+    fn health_check_preserves_chinese_utf8() {
         let data = bridge_request_sync(BridgeRequest {
             action: "system.health".into(),
             payload: Value::Object(Default::default()),
@@ -440,7 +440,7 @@ mod tests {
 
     /// 以金额转换覆盖一次完整的白名单请求、Python 执行和结果返回链路。
     #[test]
-    fn 金额转换可经桥接调用() {
+    fn currency_conversion_via_bridge() {
         let data = bridge_request_sync(BridgeRequest {
             action: "currency.convert".into(),
             payload: serde_json::json!({"amount": "12345.67"}),
@@ -452,7 +452,7 @@ mod tests {
 
     /// 防止未来能力配置绕过自有路径校验，直接向 WebView 暴露任意路径打开权限。
     #[test]
-    fn 前端未暴露直接路径打开权限() {
+    fn frontend_does_not_expose_open_path_permission() {
         let capability: Value = serde_json::from_str(include_str!("../capabilities/default.json"))
             .expect("桌面权限配置应为有效 JSON");
         let permissions = capability["permissions"]
@@ -463,7 +463,7 @@ mod tests {
 
     /// 验证路径打开命令只接受已经存在的绝对路径，拒绝依赖当前目录解析的相对路径。
     #[test]
-    fn 本地路径打开只接受存在的绝对路径() {
+    fn open_local_path_accepts_existing_absolute_paths() {
         let target = std::env::temp_dir().join(format!("fyt_open_path_{}", std::process::id()));
         fs::create_dir_all(&target).expect("应创建路径打开测试目录");
         assert_eq!(
@@ -478,7 +478,7 @@ mod tests {
     /// 仅在人工指定测试目录时调用操作系统打开能力，常规测试不弹出资源管理器。
     #[test]
     #[ignore = "仅供本机显式验证系统路径打开"]
-    fn 本地路径原生打开冒烟() {
+    fn open_local_path_native_smoke() {
         let target = std::env::var("FYT_OPEN_PATH_SMOKE").expect("应指定冒烟目录");
         open_local_path_sync(&target).expect("系统应成功打开指定目录");
     }
@@ -488,7 +488,7 @@ mod tests {
     /// 测试结束会恢复原环境变量并删除临时文件，避免污染用户任务历史。
     ///
     #[test]
-    fn 长任务事件可穿过_rust_桥接() {
+    fn long_task_events_cross_rust_bridge() {
         let temp_dir = std::env::temp_dir().join(format!(
             "fyt_rust_event_{}",
             std::process::id()
@@ -528,7 +528,7 @@ mod tests {
     #[cfg(target_os = "windows")]
     /// 登记一个无窗口测试子进程，验证取消只按请求编号终止对应 PID 并完成进程回收。
     #[test]
-    fn 取消仅终止登记的子进程() {
+    fn cancel_terminates_only_registered_child_process() {
         use std::os::windows::process::CommandExt;
         let mut child = Command::new("cmd")
             .args(["/C", "ping", "-n", "30", "127.0.0.1"])

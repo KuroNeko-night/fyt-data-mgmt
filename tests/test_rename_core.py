@@ -13,44 +13,44 @@ class TestNewFilename(unittest.TestCase):
 
     def test_find_replace(self):
         r = rc.RenameRule(find="旧", replace="新")
-        self.assertEqual(rc._new_filename("旧表.xlsx", r, 0), "新表.xlsx")
+        self.assertEqual(rc._new_filename("旧表.xlsx", r, 0), "新表.xlsx")  # 查找替换生效
 
     def test_prefix_suffix(self):
         r = rc.RenameRule(prefix="A_", suffix="_B")
-        self.assertEqual(rc._new_filename("x.txt", r, 0), "A_x_B.txt")
+        self.assertEqual(rc._new_filename("x.txt", r, 0), "A_x_B.txt")  # 前后缀组合
 
     def test_base_name_and_seq(self):
         r = rc.RenameRule(base_name="考勤表", seq_enabled=True,
                           seq_start=1, seq_digits=3, seq_sep="_")
-        self.assertEqual(rc._new_filename("whatever.xlsx", r, 0), "考勤表_001.xlsx")
-        self.assertEqual(rc._new_filename("whatever.xlsx", r, 4), "考勤表_005.xlsx")
+        self.assertEqual(rc._new_filename("whatever.xlsx", r, 0), "考勤表_001.xlsx")  # 序号从 1 开始
+        self.assertEqual(rc._new_filename("whatever.xlsx", r, 4), "考勤表_005.xlsx")  # 序号按索引递增
 
     def test_ext_lower(self):
         r = rc.RenameRule(ext_lower=True)
-        self.assertEqual(rc._new_filename("A.XLSX", r, 0), "A.xlsx")
+        self.assertEqual(rc._new_filename("A.XLSX", r, 0), "A.xlsx")  # 扩展名统一小写
 
     def test_regex(self):
         r = rc.RenameRule(find=r"\d+", replace="#", use_regex=True)
-        self.assertEqual(rc._new_filename("a12b3.txt", r, 0), "a#b#.txt")
+        self.assertEqual(rc._new_filename("a12b3.txt", r, 0), "a#b#.txt")  # 正则替换生效
 
 
 class TestNameInvalid(unittest.TestCase):
     """验证 Windows 非法字符、保留名和尾随点空格。"""
 
     def test_illegal_chars(self):
-        self.assertTrue(rc._name_invalid("a/b.txt"))
-        self.assertTrue(rc._name_invalid("a:b.txt"))
+        self.assertTrue(rc._name_invalid("a/b.txt"))  # 斜杠非法
+        self.assertTrue(rc._name_invalid("a:b.txt"))  # 冒号非法
 
     def test_trailing_dot_space(self):
-        self.assertTrue(rc._name_invalid("a .txt "))
-        self.assertTrue(rc._name_invalid("name."))
+        self.assertTrue(rc._name_invalid("a .txt "))  # 尾随空格非法
+        self.assertTrue(rc._name_invalid("name."))  # 尾随点非法
 
     def test_reserved(self):
-        self.assertTrue(rc._name_invalid("CON.txt"))
+        self.assertTrue(rc._name_invalid("CON.txt"))  # 保留设备名非法
         self.assertTrue(rc._name_invalid("nul"))
 
     def test_valid(self):
-        self.assertFalse(rc._name_invalid("normal_name.xlsx"))
+        self.assertFalse(rc._name_invalid("normal_name.xlsx"))  # 普通名称合法
 
 
 class TestBuildPlan(unittest.TestCase):
@@ -78,34 +78,34 @@ class TestBuildPlan(unittest.TestCase):
         p1 = self._touch("a.txt")
         r = rc.RenameRule(prefix="X_")
         items = rc.build_plan([p1], r)
-        self.assertEqual(items[0].status, "ok")
-        self.assertEqual(items[0].new_name, "X_a.txt")
+        self.assertEqual(items[0].status, "ok")  # 可执行计划
+        self.assertEqual(items[0].new_name, "X_a.txt")  # 新名正确
 
     def test_same_status(self):
         p1 = self._touch("a.txt")
         items = rc.build_plan([p1], rc.RenameRule(find="zzz", replace="q"))
-        self.assertEqual(items[0].status, "same")
+        self.assertEqual(items[0].status, "same")  # 无变化标记 same
 
     def test_dup_within_batch(self):
         p1 = self._touch("a.txt")
         p2 = self._touch("b.txt")
         r = rc.RenameRule(base_name="same")   # 两个都算成 same.txt
         items = rc.build_plan([p1, p2], r)
-        self.assertTrue(all(it.status == "dup" for it in items))
+        self.assertTrue(all(it.status == "dup" for it in items))  # 批内冲突全部拦截
 
     def test_exists_on_disk(self):
         p1 = self._touch("a.txt")
         self._touch("b.txt")                  # 目标已存在
         r = rc.RenameRule(find="a", replace="b")
         items = rc.build_plan([p1], r)
-        self.assertEqual(items[0].status, "exists")
+        self.assertEqual(items[0].status, "exists")  # 磁盘冲突标记
 
     def test_summarize(self):
         p1 = self._touch("a.txt")
         s = rc.summarize(rc.build_plan([p1], rc.RenameRule(prefix="X_")))
-        self.assertEqual(s["ok"], 1)
-        self.assertEqual(s["total"], 1)
-        self.assertEqual(s["blocked"], 0)
+        self.assertEqual(s["ok"], 1)  # 可执行数
+        self.assertEqual(s["total"], 1)  # 总数
+        self.assertEqual(s["blocked"], 0)  # 无阻塞
 
 
 class TestApplyUndo(unittest.TestCase):
@@ -136,14 +136,14 @@ class TestApplyUndo(unittest.TestCase):
         p2 = self._touch("b.txt")
         items = rc.build_plan([p1, p2], rc.RenameRule(prefix="N_"))
         n, failed, undo_map = rc.apply_plan(items)
-        self.assertEqual(n, 2)
-        self.assertEqual(failed, [])
+        self.assertEqual(n, 2)  # 两个文件都改名
+        self.assertEqual(failed, [])  # 无失败
         self.assertTrue(os.path.exists(os.path.join(self.d, "N_a.txt")))
-        self.assertFalse(os.path.exists(p1))
+        self.assertFalse(os.path.exists(p1))  # 原文件已消失
         # 撤销还原
         ok, ufailed = rc.undo(undo_map)
         self.assertEqual(ok, 2)
-        self.assertTrue(os.path.exists(p1))
+        self.assertTrue(os.path.exists(p1))  # 原文件恢复
         self.assertFalse(os.path.exists(os.path.join(self.d, "N_a.txt")))
 
     def test_swap_names(self):
@@ -155,11 +155,11 @@ class TestApplyUndo(unittest.TestCase):
         r = rc.RenameRule(find="A", replace="TMP")  # 不用，构造手动 items
         items = [rc.PlanItem(p1, "B.txt", "ok"), rc.PlanItem(p2, "A.txt", "ok")]
         n, failed, undo_map = rc.apply_plan(items)
-        self.assertEqual(n, 2)
+        self.assertEqual(n, 2)  # 两个互换都完成
         with open(os.path.join(self.d, "B.txt"), encoding="utf-8") as f:
             pass  # 存在即可
-        self.assertTrue(os.path.exists(os.path.join(self.d, "A.txt")))
-        self.assertTrue(os.path.exists(os.path.join(self.d, "B.txt")))
+        self.assertTrue(os.path.exists(os.path.join(self.d, "A.txt")))  # 互换后 A 存在
+        self.assertTrue(os.path.exists(os.path.join(self.d, "B.txt")))  # 互换后 B 存在
 
 
 if __name__ == "__main__":

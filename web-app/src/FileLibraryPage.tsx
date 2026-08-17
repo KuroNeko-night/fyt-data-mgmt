@@ -88,13 +88,13 @@ export function FileLibraryPage() {
     setUploadFiles((current) => Array.from(new Map(
       // 同名文件仍可能是不同版本，加入大小和最后修改时间后只过滤真正重复的选择。
       [...current, ...files].map((file) => [`${file.name}:${file.size}:${file.lastModified}`, file]),
-    ).values()));
+    ).values()));  // 名称、大小、修改时间组合去重，保留真正版本差异
   }
 
   /** 提交搜索草稿并回到第一页，避免旧页码超出新结果的总页数。 */
   function search(event: FormEvent) {
     event.preventDefault();
-    setPage(1);
+    setPage(1);  // 新搜索回到第一页，避免旧页码超出新结果总页数
     setQuery(queryInput.trim());
   }
 
@@ -176,7 +176,7 @@ export function FileLibraryPage() {
   const summary = data?.summary;
   const pagination = data?.pagination;
   // 配额显示最多钳制到 100%，即使服务端暂时超额也不会让进度条越出卡片。
-  const quotaPercent = summary?.quota_bytes ? Math.min(100, Math.round(summary.own_bytes / summary.quota_bytes * 100)) : 0;
+  const quotaPercent = summary?.quota_bytes ? Math.min(100, Math.round(summary.own_bytes / summary.quota_bytes * 100)) : 0;  // 配额进度最多钳制到 100%
   const hasLibraryFilters = Boolean(query || categoryFilter || filter !== "all");
   // 空态按钮复用此重置动作，恢复默认结果并跳回第一页。
   const clearLibraryFilters = () => { setQueryInput(""); setQuery(""); setCategoryFilter(""); setFilter("all"); setPage(1); };

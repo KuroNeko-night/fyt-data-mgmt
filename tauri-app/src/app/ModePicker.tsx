@@ -12,7 +12,7 @@ const SERVER_URL_KEY = "fyt-server-url";
  * @returns 用户上次保存的地址；没有记录时回退到本机默认 Web 服务端口。
  */
 function serverUrlOrDefault() {
-  return localStorage.getItem(SERVER_URL_KEY) || "http://127.0.0.1:8787";
+  return localStorage.getItem(SERVER_URL_KEY) || "http://127.0.0.1:8787";  // 没有历史地址时回退本机默认 Web 服务端口
 }
 
 /**

@@ -16,25 +16,25 @@ class DeployScriptTests(unittest.TestCase):
         """Linux ZIP 的使用说明必须调用 unzip，并使用当前 ASCII 包目录名。"""
 
         source = (ROOT / "scripts" / "build_deploy.py").read_text(encoding="utf-8")
-        self.assertIn("sudo unzip", source)
-        self.assertIn("fyt-server-linux-v<VERSION>", source)
+        self.assertIn("sudo unzip", source)  # 使用 unzip 解包
+        self.assertIn("fyt-server-linux-v<VERSION>", source)  # 包目录为 ASCII 名
         self.assertNotIn("tar -xzf 峰运通服务端_linux_*.zip", source)
 
     def test_linux_service_runs_as_dedicated_user(self):
         """systemd 服务必须保持低权限账号、UTF-8 环境和数据目录写白名单。"""
 
         source = (ROOT / "packaging" / "linux" / "fyt-web.service").read_text(encoding="utf-8")
-        self.assertIn("User=fyt-web", source)
-        self.assertIn("NoNewPrivileges=true", source)
-        self.assertIn("ReadWritePaths=__DATA_DIR__", source)
-        self.assertIn("Environment=PYTHONUTF8=1", source)
-        self.assertIn("Environment=HOME=__DATA_DIR__", source)
+        self.assertIn("User=fyt-web", source)  # 专用低权限账号
+        self.assertIn("NoNewPrivileges=true", source)  # 禁止提权
+        self.assertIn("ReadWritePaths=__DATA_DIR__", source)  # 仅数据目录可写
+        self.assertIn("Environment=PYTHONUTF8=1", source)  # 强制 UTF-8
+        self.assertIn("Environment=HOME=__DATA_DIR__", source)  # HOME 指向数据目录
 
     def test_linux_installer_migrates_existing_service_home(self):
         """升级旧安装时应把服务账号 home 迁到正式数据目录，避免中文旧路径不可写。"""
 
         source = (ROOT / "packaging" / "linux" / "install.sh").read_text(encoding="utf-8")
-        self.assertIn('usermod --home "$DATA_DIR" --shell "$NOLOGIN" fyt-web', source)
+        self.assertIn('usermod --home "$DATA_DIR" --shell "$NOLOGIN" fyt-web', source)  # 服务账号 home 迁移
 
     def test_management_scripts_only_use_systemd(self):
         """启停脚本只能管理明确的 systemd 单元，不能按进程名误杀其他服务。"""
@@ -43,10 +43,10 @@ class DeployScriptTests(unittest.TestCase):
             (ROOT / "packaging" / "linux" / name).read_text(encoding="utf-8")
             for name in ("start.sh", "stop.sh", "restart.sh", "status.sh")
         )
-        self.assertNotIn("pkill -f", source)
+        self.assertNotIn("pkill -f", source)  # 禁止进程名误杀
         self.assertNotIn("pgrep -f", source)
-        self.assertNotIn("web-service.pid", source)
-        self.assertIn("systemctl", source)
+        self.assertNotIn("web-service.pid", source)  # 禁止旧 PID 文件
+        self.assertIn("systemctl", source)  # 统一走 systemd
         self.assertIn("fyt_reexec_root", source)
 
     def test_web_bridge_does_not_depend_on_deployment_cwd(self):
@@ -57,21 +57,21 @@ class DeployScriptTests(unittest.TestCase):
         source = (ROOT / "web_backend" / "tasks" / "bridge.py").read_text(
             encoding="utf-8"
         )
-        self.assertIn('environment["PYTHONPATH"]', source)
-        self.assertIn("deps.data_root", source)
-        self.assertIn('cwd=str(work_dir)', source)
-        self.assertIn('"HOME": str(runtime_root)', source)
-        self.assertIn('"FYT_CONFIG_PATH": str(runtime_root / "配置.json")', source)
-        self.assertIn('"FYT_TASK_HISTORY_PATH": str(runtime_root / "任务历史.db")', source)
-        self.assertNotIn("cwd=deps.root", source)
+        self.assertIn('environment["PYTHONPATH"]', source)  # 显式传入代码路径
+        self.assertIn("deps.data_root", source)  # 使用数据根
+        self.assertIn('cwd=str(work_dir)', source)  # 工作目录为任务运行目录
+        self.assertIn('"HOME": str(runtime_root)', source)  # HOME 隔离到运行目录
+        self.assertIn('"FYT_CONFIG_PATH": str(runtime_root / "配置.json")', source)  # 配置按账号隔离
+        self.assertIn('"FYT_TASK_HISTORY_PATH": str(runtime_root / "任务历史.db")', source)  # 任务历史隔离
+        self.assertNotIn("cwd=deps.root", source)  # 禁止依赖部署包 cwd
 
     def test_windows_launchers_use_managed_controller(self):
         """Windows 启停入口必须委托控制台维护 PID，禁止退回 taskkill 全局结束。"""
 
         source = (ROOT / "scripts" / "build_deploy.py").read_text(encoding="utf-8")
-        self.assertIn('峰运通服务控制台.exe\\\" --start', source)
-        self.assertIn('峰运通服务控制台.exe\\\" --stop', source)
-        self.assertNotIn("taskkill /IM web_server.exe", source)
+        self.assertIn('峰运通服务控制台.exe\\\" --start', source)  # 启动委托控制台
+        self.assertIn('峰运通服务控制台.exe\\\" --stop', source)  # 停止委托控制台
+        self.assertNotIn("taskkill /IM web_server.exe", source)  # 禁止全局强杀
 
     def test_split_web_backend_is_included_in_all_deployment_paths(self):
         """服务端拆分后的 web_backend 必须同时进入完整包、增量补丁和 PyInstaller。"""
@@ -85,12 +85,12 @@ class DeployScriptTests(unittest.TestCase):
         )
         pyinstaller_spec = (ROOT / "packaging" / "web_server.spec").read_text(encoding="utf-8")
 
-        self.assertIn('"web_backend",', build_source)
+        self.assertIn('"web_backend",', build_source)  # 完整包白名单含 web_backend
         self.assertIn('os.path.join(ROOT, "web_backend")', build_source)
-        self.assertIn('ROOT / "web_backend"', patch_builder)
+        self.assertIn('ROOT / "web_backend"', patch_builder)  # 增量补丁包含
         self.assertIn('"$PAYLOAD_DIR/web_backend/__init__.py"', patch_script)
         self.assertIn('program_paths+=(web_backend)', patch_script)
-        self.assertIn('collect_submodules("web_backend")', pyinstaller_spec)
+        self.assertIn('collect_submodules("web_backend")', pyinstaller_spec)  # PyInstaller 收集
 
     def test_linux_upgrade_patch_uses_runtime_requirements_only(self):
         """增量补丁必须与完整 Linux 包一致，只部署锁定的运行依赖。"""
@@ -98,8 +98,8 @@ class DeployScriptTests(unittest.TestCase):
         source = (ROOT / "scripts" / "build_linux_upgrade_patch.py").read_text(
             encoding="utf-8"
         )
-        self.assertIn('RUNTIME_REQUIREMENTS = ROOT / "requirements-runtime.txt"', source)
-        self.assertIn('shutil.copy2(RUNTIME_REQUIREMENTS, payload / "requirements.txt")', source)
+        self.assertIn('RUNTIME_REQUIREMENTS = ROOT / "requirements-runtime.txt"', source)  # 运行依赖锁文件
+        self.assertIn('shutil.copy2(RUNTIME_REQUIREMENTS, payload / "requirements.txt")', source)  # 只复制运行依赖
         self.assertNotIn(
             'shutil.copy2(ROOT / "requirements.txt", payload / "requirements.txt")',
             source,
@@ -109,36 +109,36 @@ class DeployScriptTests(unittest.TestCase):
         """部署冒烟必须执行 dist 中的真实交付物，并覆盖新增对账单桥接动作。"""
 
         source = (ROOT / "scripts" / "smoke_deploy_package.py").read_text(encoding="utf-8")
-        self.assertIn('"dist", "deploy", "windows"', source)
-        self.assertIn("reconcile_statement.scan", source)
+        self.assertIn('"dist", "deploy", "windows"', source)  # 冒烟面向 dist 产物
+        self.assertIn("reconcile_statement.scan", source)  # 覆盖对账单动作
 
     def test_dockerfile_keeps_portable_defaults_and_non_root_runtime(self):
         """标准 Dockerfile 应使用通用默认源，并以固定低权限用户运行最终镜像。"""
 
         source = (ROOT / "docker" / "Dockerfile").read_text(encoding="utf-8")
-        self.assertIn("ARG NODE_IMAGE=node:22-bookworm-slim", source)
+        self.assertIn("ARG NODE_IMAGE=node:22-bookworm-slim", source)  # 基础镜像可配置
         self.assertIn("ARG PYTHON_IMAGE=python:3.13-slim-bookworm", source)
-        self.assertIn("ARG NPM_REGISTRY=https://registry.npmjs.org", source)
+        self.assertIn("ARG NPM_REGISTRY=https://registry.npmjs.org", source)  # 默认公开源
         self.assertIn("ARG PIP_INDEX_URL=https://pypi.org/simple", source)
-        self.assertIn("useradd --system --uid 10001", source)
-        self.assertIn("USER fyt", source)
-        self.assertIn("FYT_WEB_DATA=/data", source)
+        self.assertIn("useradd --system --uid 10001", source)  # 低权限系统账号
+        self.assertIn("USER fyt", source)  # 运行时降权
+        self.assertIn("FYT_WEB_DATA=/data", source)  # 数据根在卷内
         self.assertIn("/api/health", source)
 
     def test_compose_preserves_data_and_hardens_runtime(self):
         """Compose 必须把运行数据留在卷中，并保持只读、降权和日志限制。"""
 
         source = (ROOT / "docker" / "docker-compose.yml").read_text(encoding="utf-8")
-        self.assertIn('FYT_ADMIN_PASSWORD_FILE: "/run/secrets/fyt_admin_password"', source)
-        self.assertIn('${FYT_DATA_DIR:-fyt-data}:/data', source)
-        self.assertIn("read_only: true", source)
-        self.assertIn("no-new-privileges:true", source)
-        self.assertIn("cap_drop:\n      - ALL", source)
-        self.assertIn("pids_limit: 256", source)
-        self.assertIn("stop_grace_period: 30s", source)
-        self.assertIn('max-size: "10m"', source)
-        self.assertIn('max-file: "3"', source)
-        self.assertNotIn("/var/run/docker.sock", source)
+        self.assertIn('FYT_ADMIN_PASSWORD_FILE: "/run/secrets/fyt_admin_password"', source)  # 密码走 secret 文件
+        self.assertIn('${FYT_DATA_DIR:-fyt-data}:/data', source)  # 数据保留在卷
+        self.assertIn("read_only: true", source)  # 根文件系统只读
+        self.assertIn("no-new-privileges:true", source)  # 禁止提权
+        self.assertIn("cap_drop:\n      - ALL", source)  # 丢弃全部能力
+        self.assertIn("pids_limit: 256", source)  # 限制进程数
+        self.assertIn("stop_grace_period: 30s", source)  # 优雅停机窗口
+        self.assertIn('max-size: "10m"', source)  # 日志单文件上限
+        self.assertIn('max-file: "3"', source)  # 日志文件数上限
+        self.assertNotIn("/var/run/docker.sock", source)  # 不挂载 Docker socket
 
     def test_docker_build_sources_are_configurable_without_credentials(self):
         """受限网络可覆盖公开镜像地址，但示例不能携带用户名、密码或 Token。"""
@@ -151,11 +151,11 @@ class DeployScriptTests(unittest.TestCase):
             "FYT_DOCKER_NPM_REGISTRY",
             "FYT_DOCKER_PIP_INDEX_URL",
         ):
-            self.assertIn(name, compose)
+            self.assertIn(name, compose)  # 镜像与源均可配置
             self.assertIn(name, example)
-        self.assertNotIn("github" + "_pat_", example)
+        self.assertNotIn("github" + "_pat_", example)  # 示例不含 PAT
         self.assertNotIn("gh" + "p_", example)
-        self.assertNotIn("token=", example.lower())
+        self.assertNotIn("token=", example.lower())  # 示例不含 token
 
 
 if __name__ == "__main__":

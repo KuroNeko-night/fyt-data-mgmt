@@ -482,6 +482,29 @@ def _final_has_qty(rec):
         return False
 
 
+def _version_delete_reason(rec, has_ver):
+    """返回版本列触发的删除原因；未启用版本规则或该行可保留时返回 ``None``。"""
+    if not has_ver:
+        return None
+    version = rec[F_VER]
+    if _is_blank(version):
+        return "版本序号为空"
+    if _is_zero(version):
+        return "版本序号为0"
+    if _has_chinese(str(version)):
+        return "版本序号含文字(%s)" % str(version).strip()
+    return None
+
+
+def _final_should_drop(rec):
+    """判断最终采购数量规则是否要求删除该行。"""
+    final_value = rec[F_FINAL]
+    if _is_zero(final_value) or _is_blank(final_value):
+        name = rec[F_NAME]
+        return KEEP_TOKEN not in str(name if name is not None else "")
+    return False
+
+
 def clean_rows_ex(rows):
     """清洗并区分结果, 供人工复核。
 
@@ -499,36 +522,26 @@ def clean_rows_ex(rows):
     has_ver = any(not _is_blank(rec[F_VER]) for rec in rows)
     out = []
     for rec in rows:
-        if has_ver:
-            v = rec[F_VER]
-            reason = None
-            if _is_blank(v):
-                reason = "版本序号为空"
-            elif _is_zero(v):
-                reason = "版本序号为0"
-            elif _has_chinese(str(v)):
-                reason = "版本序号含文字(%s)" % str(v).strip()
-            if reason is not None:
-                d1 += 1
-                # 只要有采购量就疑似真实数据, 挑出交人工确认(不再要求编码有效)
-                if _final_has_qty(rec):
-                    held.append({"rec": rec, "reason": reason,
-                                 "has_code": _is_valid_code(rec[F_CODE])})
-                continue
+        reason = _version_delete_reason(rec, has_ver)
+        if reason is not None:
+            d1 += 1
+            # 只要有采购量就疑似真实数据, 挑出交人工确认(不再要求编码有效)
+            if _final_has_qty(rec):
+                held.append({"rec": rec, "reason": reason,
+                             "has_code": _is_valid_code(rec[F_CODE])})
+            continue
         out.append(rec)
     kept = []
     for rec in out:
-        g = rec[F_FINAL]; nm = rec[F_NAME]
-        if _is_zero(g) or _is_blank(g):
-            if KEEP_TOKEN not in str(nm if nm is not None else ""):
-                d2 += 1
-                # 区分“公式未刷新”与“真实空/0”: 最终采购数量为 None(非 0/非空串)且本行
-                # 有有效编码, 极可能是公式未刷新读出 None, 不当真实空行静默删, 挑入 held。
-                if g is None and _is_valid_code(rec[F_CODE]):
-                    held.append({"rec": rec,
-                                 "reason": "最终采购数量为空(疑似公式未刷新)",
-                                 "has_code": True})
-                continue
+        if _final_should_drop(rec):
+            d2 += 1
+            # 区分“公式未刷新”与“真实空/0”: 最终采购数量为 None(非 0/非空串)且本行
+            # 有有效编码, 极可能是公式未刷新读出 None, 不当真实空行静默删, 挑入 held。
+            if rec[F_FINAL] is None and _is_valid_code(rec[F_CODE]):
+                held.append({"rec": rec,
+                             "reason": "最终采购数量为空(疑似公式未刷新)",
+                             "has_code": True})
+            continue
         kept.append(rec)
     return kept, held, d1, d2
 

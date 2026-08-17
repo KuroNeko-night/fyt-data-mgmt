@@ -62,6 +62,46 @@ def _safe_sheet_title(name, used):
     return t
 
 
+def _read_xlsx_sheets(path):
+    """读取现代 xlsx/xlsm 的每个页签为 ``(页签名, 行值列表)``。"""
+    wb = _common.load_data_only(path)
+    try:
+        return [
+            (ws.title, [list(row) for row in ws.iter_rows(values_only=True)])
+            for ws in wb.worksheets
+        ]
+    finally:
+        wb.close()
+
+
+def _xls_cell_value(cell, datemode):
+    """把 xlrd 单元格转换为普通 Python 值，日期序列号还原为 datetime。"""
+    if cell.ctype != xlrd.XL_CELL_DATE:
+        return cell.value
+    try:
+        return xlrd.xldate.xldate_as_datetime(cell.value, datemode)
+    except Exception:
+        # 转换失败时保留原值，比丢弃整行更利于人工发现异常。
+        return cell.value
+
+
+def _read_xls_sheets(path):
+    """读取旧版 xls 的每个页签，并恢复日期单元格。"""
+    if not _HAS_XLRD:
+        raise ExcelToolError("未安装 xlrd,无法读取老式 .xls 文件")
+    book = xlrd.open_workbook(path)
+    return [
+        (
+            sheet.name,
+            [
+                [_xls_cell_value(sheet.cell(r, c), book.datemode) for c in range(sheet.ncols)]
+                for r in range(sheet.nrows)
+            ],
+        )
+        for sheet in book.sheets()
+    ]
+
+
 def _read_sheets(path):
     """把一个支持的表格文件读取为 ``[(页签名, 行值列表)]``。
 
@@ -72,38 +112,9 @@ def _read_sheets(path):
     """
     ext = os.path.splitext(path)[1].lower()
     if ext in (".xlsx", ".xlsm"):
-        wb = _common.load_data_only(path)
-        out = []
-        for ws in wb.worksheets:
-            # 此辅助结构只承载值，不保留单元格坐标或样式；格式操作使用其他路径。
-            rows = [list(r) for r in ws.iter_rows(values_only=True)]
-            out.append((ws.title, rows))
-        wb.close()
-        return out
+        return _read_xlsx_sheets(path)
     if ext == ".xls":
-        if not _HAS_XLRD:
-            raise ExcelToolError("未安装 xlrd,无法读取老式 .xls 文件")
-        book = xlrd.open_workbook(path)
-        out = []
-        for sh in book.sheets():
-            rows = []
-            for r in range(sh.nrows):
-                # xls 把日期存成受工作簿日期制影响的浮点序列号，必须结合 datemode
-                # 逐格还原；转换失败时保留原值，比丢弃整行更利于人工发现异常。
-                cells = []
-                for c in range(sh.ncols):
-                    cell = sh.cell(r, c)
-                    if cell.ctype == xlrd.XL_CELL_DATE:
-                        try:
-                            cells.append(xlrd.xldate.xldate_as_datetime(
-                                cell.value, book.datemode))
-                        except Exception:
-                            cells.append(cell.value)
-                    else:
-                        cells.append(cell.value)
-                rows.append(cells)
-            out.append((sh.name, rows))
-        return out
+        return _read_xls_sheets(path)
     if ext == ".csv":
         return [(os.path.splitext(os.path.basename(path))[0], _read_csv(path))]
     raise ExcelToolError("不支持的文件类型:%s" % ext)
@@ -201,6 +212,56 @@ def merge_books(files, out_dir=None, out_name="合并工作簿.xlsx",
     return {"out_file": out_file, "out_dir": out_dir, "out_files": [out_file]}
 
 
+def _safe_filename_component(name):
+    """过滤 Windows 文件名非法字符，同时保留可读的原页签名称。"""
+    return "".join("_" if c in '\\/:*?"<>|' else c for c in name)
+
+
+def _split_modern_sheets(file, out_dir, stem, log):
+    """深复制现代工作簿，为每个页签导出一个保留绘图对象的独立文件。"""
+    outs = []
+    full = openpyxl.load_workbook(file)
+    names = list(full.sheetnames)
+    if len(names) < 2:
+        full.close()
+        raise ExcelToolError("该工作簿只有 1 个工作表,无需拆分")
+    for target in names:
+        wb = _copy.deepcopy(full)
+        for sn in list(wb.sheetnames):
+            if sn != target:
+                del wb[sn]
+        # 原页可能是隐藏页；作为唯一页签时 Excel 要求至少一个可见页，因此强制可见。
+        wb[target].sheet_state = "visible"
+        wb.active = 0
+        of = os.path.join(out_dir, "%s_%s.xlsx" % (stem, _safe_filename_component(target)))
+        wb.save(of)
+        wb.close()
+        outs.append(of)
+        log("导出工作表「%s」(含格式)→ %s" % (target, os.path.basename(of)))
+    full.close()
+    return outs
+
+
+def _split_legacy_sheets(file, out_dir, stem, log):
+    """按值读取旧版 xls/CSV，并为每个页签生成纯数据工作簿。"""
+    sheets = _read_sheets(file)
+    if len(sheets) < 2:
+        raise ExcelToolError("该工作簿只有 1 个工作表,无需拆分")
+    outs = []
+    for name, rows in sheets:
+        of = os.path.join(out_dir, "%s_%s.xlsx" % (stem, _safe_filename_component(name)))
+        wb = openpyxl.Workbook()
+        try:
+            _write_rows(wb.active, rows)
+            wb.active.title = _safe_sheet_title(name, set())
+            wb.save(of)
+        finally:
+            wb.close()
+        outs.append(of)
+        log("导出工作表「%s」(仅数据,老 .xls 无格式)→ %s" % (name, os.path.basename(of)))
+    return outs
+
+
 def split_sheets(file, out_dir=None, log=None):
     """把一个多页工作簿拆成每页一个 xlsx 文件。
 
@@ -213,46 +274,11 @@ def split_sheets(file, out_dir=None, log=None):
     out_dir = out_dir or _paths.resolve_output_dir("excel_tools")
     stem = os.path.splitext(os.path.basename(file))[0]
     ext = os.path.splitext(file)[1].lower()
-
-    def _safe(name):
-        """过滤 Windows 文件名非法字符，同时保留可读的原页签名称。"""
-        return "".join("_" if c in '\\/:*?"<>|' else c for c in name)
-
-    outs = []
-    if ext in (".xlsx", ".xlsm"):
-        # 只读盘一次；每个输出在内存深复制，保留绘图关系并减少磁盘解析次数。
-        full = openpyxl.load_workbook(file)
-        names = list(full.sheetnames)
-        if len(names) < 2:
-            full.close()
-            raise ExcelToolError("该工作簿只有 1 个工作表,无需拆分")
-        for target in names:
-            wb = _copy.deepcopy(full)
-            for sn in list(wb.sheetnames):
-                if sn != target:
-                    del wb[sn]
-            # 原页可能是隐藏页；作为唯一页签时 Excel 要求至少一个可见页，因此强制可见。
-            wb[target].sheet_state = "visible"
-            wb.active = 0
-            of = os.path.join(out_dir, "%s_%s.xlsx" % (stem, _safe(target)))
-            wb.save(of)
-            wb.close()
-            outs.append(of)
-            log("导出工作表「%s」(含格式)→ %s" % (target, os.path.basename(of)))
-        full.close()
-    else:
-        sheets = _read_sheets(file)
-        if len(sheets) < 2:
-            raise ExcelToolError("该工作簿只有 1 个工作表,无需拆分")
-        for name, rows in sheets:
-            of = os.path.join(out_dir, "%s_%s.xlsx" % (stem, _safe(name)))
-            wb = openpyxl.Workbook()
-            _write_rows(wb.active, rows)
-            wb.active.title = _safe_sheet_title(name, set())
-            wb.save(of)
-            outs.append(of)
-            log("导出工作表「%s」(仅数据,老 .xls 无格式)→ %s"
-                % (name, os.path.basename(of)))
+    outs = (
+        _split_modern_sheets(file, out_dir, stem, log)
+        if ext in (".xlsx", ".xlsm")
+        else _split_legacy_sheets(file, out_dir, stem, log)
+    )
     log("已按工作表拆分为 %d 个文件" % len(outs))
     return {"out_files": outs, "out_dir": out_dir, "out_file": outs[0] if outs else ""}
 
@@ -284,6 +310,49 @@ def _read_csv(path, log=None):
     raise ExcelToolError("无法识别 CSV 编码:%s" % os.path.basename(path))
 
 
+def _convert_one_to_xlsx(f, out_dir, log):
+    """把单个源文件转换为 xlsx；返回已保存的工作簿路径。"""
+    ext = os.path.splitext(f)[1].lower()
+    stem = os.path.splitext(os.path.basename(f))[0]
+    # 删除 openpyxl 默认页，后续按源结构创建，避免多出一个空 Sheet。
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+    used = set()
+    try:
+        if ext == ".csv":
+            _write_rows(wb.create_sheet(_safe_sheet_title(stem, used)), _read_csv(f, log))
+        else:
+            for name, rows in _read_sheets(f):
+                _write_rows(wb.create_sheet(_safe_sheet_title(name, used)), rows)
+        of = os.path.join(out_dir, stem + ".xlsx")
+        wb.save(of)
+    finally:
+        wb.close()
+    log("%s → %s" % (os.path.basename(f), os.path.basename(of)))
+    return of
+
+
+def _convert_one_to_csv(f, out_dir, log):
+    """把单个源文件的全部页签转换为 UTF-8 BOM CSV，返回新文件路径列表。"""
+    ext = os.path.splitext(f)[1].lower()
+    if ext == ".csv":
+        return []  # 同格式转换既不产生新内容，也避免覆盖原文件。
+    stem = os.path.splitext(os.path.basename(f))[0]
+    sheets = _read_sheets(f)
+    outs = []
+    for name, rows in sheets:
+        suffix = ("_" + name) if len(sheets) > 1 else ""
+        of = os.path.join(out_dir, "%s%s.csv" % (stem, suffix))
+        # utf-8-sig 带 BOM，可让 Windows Excel 默认按 UTF-8 打开中文内容。
+        with open(of, "w", encoding="utf-8-sig", newline="") as fh:
+            writer = csv.writer(fh)
+            for r in rows:
+                writer.writerow(["" if c is None else c for c in r])
+        outs.append(of)
+        log("%s[%s] → %s" % (os.path.basename(f), name, os.path.basename(of)))
+    return outs
+
+
 def convert(files, target, out_dir=None, log=None):
     """批量执行 xlsx 与 CSV 方向的值级格式转换。
 
@@ -298,34 +367,10 @@ def convert(files, target, out_dir=None, log=None):
     out_dir = out_dir or _paths.resolve_output_dir("excel_tools")
     outs = []
     for f in files:
-        ext = os.path.splitext(f)[1].lower()
-        stem = os.path.splitext(os.path.basename(f))[0]
         if target == "xlsx":
-            # 删除 openpyxl 默认页，后续按源结构创建，避免多出一个空 Sheet。
-            wb = openpyxl.Workbook(); wb.remove(wb.active); used = set()
-            if ext == ".csv":
-                ws = wb.create_sheet(_safe_sheet_title(stem, used))
-                _write_rows(ws, _read_csv(f, log))
-            else:
-                for name, rows in _read_sheets(f):
-                    _write_rows(wb.create_sheet(_safe_sheet_title(name, used)), rows)
-            of = os.path.join(out_dir, stem + ".xlsx")
-            wb.save(of); outs.append(of)
-            log("%s → %s" % (os.path.basename(f), os.path.basename(of)))
-        else:  # csv
-            if ext == ".csv":
-                continue  # 同格式转换既不产生新内容，也避免覆盖原文件。
-            sheets = _read_sheets(f)
-            for name, rows in sheets:
-                suffix = ("_" + name) if len(sheets) > 1 else ""
-                of = os.path.join(out_dir, "%s%s.csv" % (stem, suffix))
-                # utf-8-sig 带 BOM，可让 Windows Excel 默认按 UTF-8 打开中文内容。
-                with open(of, "w", encoding="utf-8-sig", newline="") as fh:
-                    w = csv.writer(fh)
-                    for r in rows:
-                        w.writerow(["" if c is None else c for c in r])
-                outs.append(of)
-                log("%s[%s] → %s" % (os.path.basename(f), name, os.path.basename(of)))
+            outs.append(_convert_one_to_xlsx(f, out_dir, log))
+        else:
+            outs.extend(_convert_one_to_csv(f, out_dir, log))
     if not outs:
         raise ExcelToolError("没有可转换的文件(目标格式与源相同?)")
     return {"out_files": outs, "out_dir": out_dir, "out_file": outs[0]}

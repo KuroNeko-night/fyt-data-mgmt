@@ -25,10 +25,10 @@ class TestResolveOutputDir(unittest.TestCase):
     def test_custom_mode_uses_feature_cn(self):
         out = paths.resolve_output_dir("arrival", mode="custom",
                                        custom_root=self.d, ts="20260101_0000")
-        self.assertTrue(os.path.isdir(out))
+        self.assertTrue(os.path.isdir(out))  # 输出目录真实创建
         # 归档到 中文功能名/时间戳
         self.assertEqual(os.path.basename(out), "20260101_0000")
-        self.assertEqual(os.path.basename(os.path.dirname(out)), "到料明细")
+        self.assertEqual(os.path.basename(os.path.dirname(out)), "到料明细")  # 功能目录使用中文名
 
     def test_beside_mode(self):
         src = os.path.join(self.d, "src", "x.xlsx")
@@ -37,29 +37,29 @@ class TestResolveOutputDir(unittest.TestCase):
                                        ts="20260101_0000")
         self.assertTrue(os.path.isdir(out))
         # 源文件旁 output/时间戳
-        self.assertIn("output", out)
+        self.assertIn("output", out)  # 输出落源文件旁
         self.assertTrue(out.startswith(os.path.join(self.d, "src")))
 
     def test_unknown_feature_falls_back_to_key(self):
         out = paths.resolve_output_dir("zzz_unknown", mode="custom",
                                        custom_root=self.d, ts="t")
-        self.assertEqual(os.path.basename(os.path.dirname(out)), "zzz_unknown")
+        self.assertEqual(os.path.basename(os.path.dirname(out)), "zzz_unknown")  # 未注册功能回退键名
 
     def test_web_output_root_overrides_global_settings(self):
         """Web 子进程必须写入任务隔离目录，不能落到共享文档目录。"""
         with mock.patch.dict(os.environ, {"FYT_WEB_OUTPUT_ROOT": self.d}):
             out = paths.resolve_output_dir(
                 "delivery", mode="custom", custom_root="C:\\shared", ts="web-job")
-        self.assertTrue(out.startswith(os.path.join(self.d, "送货计划")))
+        self.assertTrue(out.startswith(os.path.join(self.d, "送货计划")))  # Web 根覆盖共享目录
 
     def test_feature_dirs_cover_all_features(self):
         for key in ("attendance", "reconcile", "arrival", "pivot",
                     "purchase", "shipping_review", "delivery", "invoice", "excel_tools", "pdf_tools"):
-            self.assertIn(key, paths.FEATURE_DIRS)
+            self.assertIn(key, paths.FEATURE_DIRS)  # 核心功能目录已注册
 
     def test_timestamp_format(self):
         ts = paths.timestamp()
-        self.assertRegex(ts, r"^\d{8}_\d{4}$")
+        self.assertRegex(ts, r"^\d{8}_\d{4}$")  # 时间戳格式稳定
 
     def test_same_timestamp_does_not_overwrite(self):
         """同一分钟(同一时间戳)多次生成,应得到互不相同的目录,不再互相覆盖。"""
@@ -68,7 +68,7 @@ class TestResolveOutputDir(unittest.TestCase):
                                          custom_root=self.d, ts=ts)
                 for _ in range(3)]
         # 三次调用得到三个不同、且都真实存在的目录
-        self.assertEqual(len(set(dirs)), 3)
+        self.assertEqual(len(set(dirs)), 3)  # 同时间戳不覆盖
         for d in dirs:
             self.assertTrue(os.path.isdir(d))
         # 第一个是原始时间戳,后两个带 _2 / _3 后缀
@@ -80,7 +80,7 @@ class TestResolveOutputDir(unittest.TestCase):
         base = os.path.join(self.d, "x")
         self.assertEqual(paths._unique_dir(base), base)   # 不存在则原样
         os.makedirs(base)
-        self.assertEqual(paths._unique_dir(base), base + "_2")
+        self.assertEqual(paths._unique_dir(base), base + "_2")  # 已存在追加序号
 
 
 class TestCrashLogRotation(unittest.TestCase):
@@ -93,7 +93,7 @@ class TestCrashLogRotation(unittest.TestCase):
         self.log = os.path.join(self.d, "错误日志.txt")
         # 把 crash_log_path 临时指到临时目录,避免污染用户文档
         self._orig = paths.crash_log_path
-        paths.crash_log_path = lambda: self.log
+        paths.crash_log_path = lambda: self.log  # 重定向崩溃日志到临时目录
         self._orig_max = paths._CRASH_LOG_MAX
         paths._CRASH_LOG_MAX = 1024          # 调小上限便于测试
 
@@ -102,13 +102,13 @@ class TestCrashLogRotation(unittest.TestCase):
 
         paths.crash_log_path = self._orig
         paths._CRASH_LOG_MAX = self._orig_max
-        shutil.rmtree(self.d, ignore_errors=True)
+        shutil.rmtree(self.d, ignore_errors=True)  # 清理轮换样本
 
     def test_append_writes_with_stamp(self):
         paths.append_crash_log("boom traceback")
         with open(self.log, encoding="utf-8") as f:
             content = f.read()
-        self.assertIn("boom traceback", content)
+        self.assertIn("boom traceback", content)  # 崩溃内容写入
         self.assertIn("=====", content)     # 带时间戳头
 
     def test_rotation_caps_size(self):
@@ -117,7 +117,7 @@ class TestCrashLogRotation(unittest.TestCase):
         # 反复写超过上限,应触发轮转:主文件重开、旧内容进 .old
         for i in range(50):
             paths.append_crash_log("X" * 200 + (" line%d" % i))
-        self.assertTrue(os.path.isfile(self.log + ".old"))
+        self.assertTrue(os.path.isfile(self.log + ".old"))  # 旧内容轮转到 .old
         # 主文件在最近一次轮转后重开,远小于"累计总量"
         self.assertLess(os.path.getsize(self.log), paths._CRASH_LOG_MAX + 4096)
         # 最新一条一定在主文件里(轮转不丢当前写入)
@@ -129,15 +129,15 @@ class TestCrashLogRotation(unittest.TestCase):
         for i in range(120):
             paths.append_crash_log("Y" * 200)
         olds = [n for n in os.listdir(self.d) if n.endswith(".old")]
-        self.assertEqual(len(olds), 1)
+        self.assertEqual(len(olds), 1)  # 多次轮转只保留一份历史
 
     def test_never_raises(self):
         # 写日志本身绝不抛异常(目录不存在等也吞掉)
-        paths.crash_log_path = lambda: os.path.join(self.d, "no", "such", "dir", "e.txt")
+        paths.crash_log_path = lambda: os.path.join(self.d, "no", "such", "dir", "e.txt")  # 目录不存在
         try:
             paths.append_crash_log("whatever")
         except Exception:
-            self.fail("append_crash_log 不应抛异常")
+            self.fail("append_crash_log 不应抛异常")  # 写日志绝不抛异常
 
 
 if __name__ == "__main__":

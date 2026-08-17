@@ -57,7 +57,7 @@ export function getNavigationItem(key: string): NavigationItem | undefined {
  * @param role 当前用户角色。
  */
 export function isNavigationAllowed(item: NavigationItem | undefined, role: UserRole): boolean {
-  return !item?.allowedRoles || item.allowedRoles.includes(role);
+  return !item?.allowedRoles || item.allowedRoles.includes(role);  // 未设置角色限制即所有正常账号可见
 }
 
 /**
@@ -67,7 +67,7 @@ export function isNavigationAllowed(item: NavigationItem | undefined, role: User
  * @returns 是否应高亮该导航项。
  */
 export function isRouteActive(itemKey: WebRouteKey, activeKey: string): boolean {
-  return itemKey === "features" ? activeKey === "features" || activeKey.startsWith("feature:") : itemKey === activeKey;
+  return itemKey === "features" ? activeKey === "features" || activeKey.startsWith("feature:") : itemKey === activeKey;  // 具体业务工作区归属到“业务模块”入口高亮
 }
 
 /**

@@ -19,7 +19,7 @@ export interface NavItem {
 }
 
 // 数组顺序就是侧栏展示顺序，组内项目不再做额外排序。
-export const NAV_ITEMS: NavItem[] = [
+export const NAV_ITEMS: NavItem[] = [  // 数组顺序即侧栏顺序，新增功能必须在此注册
   { key: "home", group: "", title: "首页", description: "业务工作台总览", icon: "home" },
   { key: "attendance", group: "人事", title: "考勤数据填报", description: "上传打卡记录，自动生成考勤填报表", icon: "calendar" },
   { key: "attendance_archive", group: "人事", title: "考勤月度归档", description: "上传考勤填报表，汇总月度出勤统计", icon: "chart" },
@@ -51,6 +51,6 @@ export const NAV_ITEMS: NavItem[] = [
 ];
 
 // 工作台只从完整导航中挑选高频入口，标题、说明和图标继续复用同一对象。
-export const HOME_SHORTCUTS = NAV_ITEMS.filter((item) =>
+export const HOME_SHORTCUTS = NAV_ITEMS.filter((item) =>  // 工作台只挑高频入口，继续复用同一导航对象
   ["attendance", "reconcile", "arrival", "pivot", "purchase", "shipping_review", "delivery", "supplier_batch", "library", "invoice", "currency"].includes(item.key),
 );

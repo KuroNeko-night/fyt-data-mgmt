@@ -50,7 +50,7 @@ export function AccountSecurityPage({ onLoggedOut }: { onLoggedOut: () => void }
     }
     setBusy("password"); setError(""); setNotice("");
     try {
-      const result = await changePassword({ current_password: currentPassword, new_password: newPassword });
+      const result = await changePassword({ current_password: currentPassword, new_password: newPassword });  // 复杂度与会话失效策略由服务端执行
       setNotice(result.message);
       setCurrentPassword(""); setNewPassword(""); setConfirmation("");
       // 改密会撤销其他设备会话，重新读取以让设备列表立即反映结果。
@@ -69,7 +69,7 @@ export function AccountSecurityPage({ onLoggedOut }: { onLoggedOut: () => void }
       const result = await deleteLoginSession(session.id);
       if (session.current) {
         // 当前令牌已经失效，不能继续请求刷新列表，直接执行统一退出流程。
-        onLoggedOut();
+        onLoggedOut();  // 当前会话撤销后立即返回登录页
         return;
       }
       setNotice(result.message);

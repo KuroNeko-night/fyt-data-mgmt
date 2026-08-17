@@ -24,7 +24,7 @@ class _TmpOut(unittest.TestCase):
 
         self._tmp = tempfile.mkdtemp(prefix="fyt_it_")
         self._old_catalog = os.environ.get("FYT_CATALOG_PATH")
-        os.environ["FYT_CATALOG_PATH"] = os.path.join(self._tmp, "catalog.json")
+        os.environ["FYT_CATALOG_PATH"] = os.path.join(self._tmp, "catalog.json")  # 主数据库隔离
 
     def tearDown(self):
         """恢复环境并删除业务输出。"""
@@ -51,16 +51,16 @@ class TestAttendance(_TmpOut):
 
         tgt, src = sd.attendance_target(), sd.attendance_source()
         if not (tgt and src):
-            self.skipTest("缺少考勤填报样本")
+            self.skipTest("缺少考勤填报样本")  # 样本缺失跳过
         from core import attendance_core
         res = attendance_core.run([tgt], [src], out_dir=self.out("att"))
-        self.assertTrue(res["out_files"])
-        self.assertTrue(os.path.isfile(res["out_files"][0]))
+        self.assertTrue(res["out_files"])  # 输出文件列表非空
+        self.assertTrue(os.path.isfile(res["out_files"][0]))  # 输出文件落盘
         # 每个待填表返回 (文件, 表名/结果, stats)
         stats = res["results"][0][2]
-        self.assertGreater(stats["matched"], 0)
+        self.assertGreater(stats["matched"], 0)  # 有匹配人员
         # 填了的时间行数不应超过匹配到的人天数
-        self.assertLessEqual(stats["filled_time"], stats["matched"])
+        self.assertLessEqual(stats["filled_time"], stats["matched"])  # 填充不超匹配
 
 
 class TestReconcile(_TmpOut):
@@ -76,9 +76,9 @@ class TestReconcile(_TmpOut):
             self.skipTest("缺少工时对账样本")
         from core import reconcile_core
         res = reconcile_core.run(tgt, src, labor, out_dir=self.out("rec"))
-        self.assertTrue(os.path.isfile(res["filled_path"]))
-        self.assertTrue(os.path.isfile(res["summary_path"]))
-        self.assertIn("credibility", res)
+        self.assertTrue(os.path.isfile(res["filled_path"]))  # 填充表落盘
+        self.assertTrue(os.path.isfile(res["summary_path"]))  # 汇总表落盘
+        self.assertIn("credibility", res)  # 可信度结果存在
 
 
 class TestPurchase(_TmpOut):
@@ -92,10 +92,10 @@ class TestPurchase(_TmpOut):
             self.skipTest("缺少采购数对账样本")
         from core import purchase_core
         res = purchase_core.run(f1, f2, out_dir=self.out("pur"))
-        self.assertTrue(os.path.isfile(res["report"]))
-        self.assertTrue(os.path.isfile(res["out1"]))
-        self.assertTrue(os.path.isfile(res["out2"]))
-        self.assertGreater(len(res["pairs"]), 0)
+        self.assertTrue(os.path.isfile(res["report"]))  # 报告落盘
+        self.assertTrue(os.path.isfile(res["out1"]))  # 我方副本
+        self.assertTrue(os.path.isfile(res["out2"]))  # 供方副本
+        self.assertGreater(len(res["pairs"]), 0)  # 存在匹配对
         # matched 列表长度应与各自行数一致
         self.assertEqual(len(res["matched1"]), len(res["rows1"]))
         self.assertEqual(len(res["matched2"]), len(res["rows2"]))
@@ -113,13 +113,13 @@ class TestDelivery(_TmpOut):
         from core import delivery_core
         res = delivery_core.run(bom, sup, out_dir=self.out("deliv"),
                                 order_type="SUB")
-        self.assertTrue(os.path.isfile(res["plan_path"]))
-        self.assertGreater(res["rows"], 0)
-        self.assertEqual(res["order_type"], "SUB")
+        self.assertTrue(os.path.isfile(res["plan_path"]))  # 送货计划落盘
+        self.assertGreater(res["rows"], 0)  # 有明细行
+        self.assertEqual(res["order_type"], "SUB")  # 订单类型透传
         # 顺序任意也应正确辨识主表/供应商来源（不抛异常即通过辨识）
-        self.assertTrue(res["master_file"])
-        self.assertTrue(res["supplier_file"])
-        self.assertTrue(res.get("supplier_used"))
+        self.assertTrue(res["master_file"])  # 主表来源辨识
+        self.assertTrue(res["supplier_file"])  # 供应商来源辨识
+        self.assertTrue(res.get("supplier_used"))  # 供应商补全生效
 
     def test_run_without_supplier(self):
         """供应商明细可选：只给物料清单也应正常生成，供应商列留空不报未匹配。"""
@@ -129,12 +129,12 @@ class TestDelivery(_TmpOut):
         from core import delivery_core
         res = delivery_core.run(bom, out_dir=self.out("deliv_nosup"),
                                 order_type="KD")
-        self.assertTrue(os.path.isfile(res["plan_path"]))
+        self.assertTrue(os.path.isfile(res["plan_path"]))  # 无供应商也生成
         self.assertGreater(res["rows"], 0)
-        self.assertEqual(res["order_type"], "KD")
+        self.assertEqual(res["order_type"], "KD")  # 订单类型透传
         # 若样本 bom 自带供应商列会 supplier_used=True；否则应留空且不计未匹配
         if not res["supplier_used"]:
-            self.assertEqual(res["missing"], [])
+            self.assertEqual(res["missing"], [])  # 无未匹配
             self.assertEqual(res["supplier_file"], "")
 
 
@@ -152,8 +152,8 @@ class TestArrival(_TmpOut):
                  "remark": "", "include": True} for p in plans]
         res = arrival_core.run(rows, top_label="截止16点的数据",
                                out_dir=self.out("arr"))
-        self.assertTrue(os.path.isfile(res["out_file"]))
-        self.assertEqual(len(res["results"]), len(plans))
+        self.assertTrue(os.path.isfile(res["out_file"]))  # 输出落盘
+        self.assertEqual(len(res["results"]), len(plans))  # 逐批返回结果
 
     def test_detect_batch(self):
         plans = sd.arrival_plans()
@@ -161,7 +161,7 @@ class TestArrival(_TmpOut):
             self.skipTest("缺少到料明细样本")
         from core import arrival_core
         # 批次识别应返回字符串（识别不到为空串，不应抛异常）
-        self.assertIsInstance(arrival_core.detect_batch(plans[0]), str)
+        self.assertIsInstance(arrival_core.detect_batch(plans[0]), str)  # 识别返回字符串
 
 
 class TestPivotMeasureText(unittest.TestCase):
@@ -186,7 +186,7 @@ class TestPivotMeasureText(unittest.TestCase):
         self.assertEqual(xml.count("<n "), 5)         # 两行度量(10,5)+三行数量(1,1,1)
         # 静态聚合把文本计 0,A1 合计=10,与缓存口径一致
         a1 = [g for g in P.aggregate(rows) if g[0] == "A1"][0]
-        self.assertEqual(a1[4], 10.0)
+        self.assertEqual(a1[4], 10.0)  # 聚合结果与缓存口径一致
 
 
 class TestPivot(_TmpOut):
@@ -200,12 +200,12 @@ class TestPivot(_TmpOut):
             self.skipTest("缺少透视表样本")
         from core import pivot_core
         res = pivot_core.run(srcs, out_dir=self.out("piv"))
-        self.assertTrue(os.path.isfile(res["out"]))
-        self.assertGreater(res["groups"], 0)
-        self.assertGreater(res["total"], 0)
+        self.assertTrue(os.path.isfile(res["out"]))  # 结果落盘
+        self.assertGreater(res["groups"], 0)  # 有分组
+        self.assertGreater(res["total"], 0)  # 有总量
         # 勾稽：分组数不应超过清洗行数
-        self.assertLessEqual(res["groups"], res["clean_rows"])
-        self.assertIn(res["level"], ("可信", "需复核", "存疑"))
+        self.assertLessEqual(res["groups"], res["clean_rows"])  # 分组不超行数
+        self.assertIn(res["level"], ("可信", "需复核", "存疑"))  # 可信度等级合法
         # 生成了可信度报告
         if res.get("report"):
             self.assertTrue(os.path.isfile(res["report"]))
@@ -223,13 +223,13 @@ class TestInvoice(_TmpOut):
         from core import invoice_core
         result = invoice_core.scan(folder)
         specials = [i for i in result.invoices if i.special]
-        self.assertGreater(len(specials), 0, "应识别到至少一张专用发票")
+        self.assertGreater(len(specials), 0, "应识别到至少一张专用发票")  # 至少一张专票
         ym = invoice_core.detect_month(specials)
         rows = [i.as_row() for i in invoice_core.filter_month(specials, ym)]
         res = invoice_core.generate(result, rows, ym, out_dir=self.out("inv"))
-        self.assertTrue(os.path.isfile(res["xlsx"]))
-        self.assertTrue(os.path.isdir(res["review_dir"]))
-        self.assertEqual(res["count"], len(rows))
+        self.assertTrue(os.path.isfile(res["xlsx"]))  # 台账落盘
+        self.assertTrue(os.path.isdir(res["review_dir"]))  # 复核目录存在
+        self.assertEqual(res["count"], len(rows))  # 行数一致
 
 
 if __name__ == "__main__":

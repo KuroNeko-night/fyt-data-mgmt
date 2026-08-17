@@ -144,14 +144,51 @@ class _BatchRowContext:
     learned_items: list[dict[str, object]] = field(default_factory=list)
 
 
+def _resolve_supplier_code(context, supplier):
+    """
+    解析供应商编码；模板子表优先，主数据档案兜底，都缺失时明确报错。
+
+    任何路径都不能产生空编码，否则采购系统无法导入；模板子表没有该供应商时才请求
+    主数据档案补全，避免档案中的旧编码覆盖模板里当前维护值。
+    """
+    supplier_code = context.supplier_codes.get(supplier)
+    if supplier_code:
+        return supplier_code
+    if context.resolver is not None:
+        supplier_code = context.resolver.complete_supplier_code(
+            supplier, counts=context.fill_counts,
+        )
+    if not supplier_code:
+        raise ValueError(
+            "模板与主数据档案中都缺少供应商“%s”的代码，请先在模板子表或主数据档案维护"
+            % supplier
+        )
+    return supplier_code
+
+
+def _record_learning_candidates(context, code, supplier):
+    """记录档案外材料和供应商，供整批成功后统一学习。"""
+
+    if context.resolver is not None:
+        material_known = context.resolver.has_material(code)
+        supplier_known = context.resolver.has_supplier(supplier)
+    else:
+        material_known = code in context.known_materials
+        supplier_known = supplier in context.known_suppliers
+    if not material_known:
+        context.unknown_materials.add(code)
+    if not supplier_known:
+        context.unknown_suppliers.add(supplier)
+
+
 def _purchase_row_item(values, columns, context):
     """
     把一行辅料清单转换为模板业务列；无采购意义的行返回 ``None``。
 
     业务过滤口径：材料编号为空或属于 ``(空白)``/``总计`` 等汇总伪编号的行不进入
     输出；数量缺失、非正数或供应商为空的行同样视为没有采购意义；材料名称含“原厂”
-    的记录按约定排除并计数。供应商代码优先取模板子表，其次由主数据档案兜底，两者都
-    没有时立即报错，避免生成采购系统无法导入的空编码。
+    的记录按约定排除并计数。供应商编码解析与学习候选记录拆分到独立助手，使本函数
+    只保留行级过滤和最终装配职责。
 
     :param values: 业务页签当前行的单元格元组
     :param columns: ``_best_sheet`` 识别出的字段名到 1 基列号的映射
@@ -160,7 +197,6 @@ def _purchase_row_item(values, columns, context):
         无采购意义时返回 ``None``
     :raises ValueError: 供应商名称在模板子表和主数据档案中都找不到编码
     """
-
     code = _text(_row_value(values, columns.get("code")))
     if not code or code in SUMMARY_IDS:
         return None
@@ -184,33 +220,8 @@ def _purchase_row_item(values, columns, context):
     if quantity is None or quantity <= 0 or not supplier:
         return None
 
-    supplier_code = context.supplier_codes.get(supplier)
-    if not supplier_code and context.resolver is not None:
-        # 模板子表没有该供应商时才用主数据档案兜底，任何路径都不能产生空编码。
-        supplier_code = context.resolver.complete_supplier_code(
-            supplier, counts=context.fill_counts,
-        )
-    if not supplier_code:
-        raise ValueError(
-            "模板与主数据档案中都缺少供应商“%s”的代码，请先在模板子表或主数据档案维护"
-            % supplier
-        )
-
-    # 只记录档案外材料/供应商作为学习候选；本行是否写入取决于前面的业务过滤。
-    material_known = (
-        context.resolver.has_material(code)
-        if context.resolver is not None
-        else code in context.known_materials
-    )
-    supplier_known = (
-        context.resolver.has_supplier(supplier)
-        if context.resolver is not None
-        else supplier in context.known_suppliers
-    )
-    if not material_known:
-        context.unknown_materials.add(code)
-    if not supplier_known:
-        context.unknown_suppliers.add(supplier)
+    supplier_code = _resolve_supplier_code(context, supplier)
+    _record_learning_candidates(context, code, supplier)
 
     spec = str(item["spec"])
     unit = str(item["unit"])
@@ -323,18 +334,7 @@ def _write_purchase_output(template_path, target, rows):
         output.close()
 
 
-def _convert_batch(
-    template_path: str,
-    batch_path: str,
-    target: str,
-    batch_name: str,
-    supplier_codes: dict[str, str],
-    known_materials: set[str],
-    known_suppliers: set[str],
-    log=None,
-    resolver=None,
-    fill_counts=None,
-) -> tuple[int, int, set[str], set[str], list[dict[str, object]]]:
+def _convert_batch(context, batch_path, target, batch_name, log=None):
     """
     把一个辅料批次清单转换到模板副本，写入指定临时路径并返回处理统计。
 
@@ -342,16 +342,11 @@ def _convert_batch(
     函数只准备文件和学习候选，不直接更新主数据库；调用方确认所有批次均成功提交后
     才统一学习，保证输出与主数据状态的一致性。
 
-    :param template_path: 采购计划模板路径
+    :param context: 冻结好的采购计划任务上下文，承载模板、供应商编码和主数据快照
     :param batch_path: 当前辅料批次清单路径
     :param target: 当前批次输出文件的暂存路径
     :param batch_name: 从文件名识别出的批次号，用于日志和错误提示
-    :param supplier_codes: 模板子表与主数据档案合并后的供应商编码映射
-    :param known_materials: 任务开始时主数据档案已知的材料编号集合
-    :param known_suppliers: 任务开始时主数据档案已知的供应商名称集合
     :param log: 可选的日志回调
-    :param resolver: 主数据目录解析器，仅补齐源表中缺失的属性
-    :param fill_counts: 主数据补全计数，跨批次累计
     :return: ``(有效行数, 原厂排除数, 新材料集合, 新供应商集合, 可学习材料明细)``
     :raises ValueError: 批次没有可制作的采购记录
     """
@@ -360,27 +355,27 @@ def _convert_batch(
     workbook = openpyxl.load_workbook(batch_path, read_only=True, data_only=True)
     try:
         worksheet, layout = _best_sheet(workbook)
-        context = _BatchRowContext(
-            supplier_codes=supplier_codes,
-            known_materials=known_materials,
-            known_suppliers=known_suppliers,
-            resolver=resolver,
-            fill_counts=fill_counts,
+        row_context = _BatchRowContext(
+            supplier_codes=context.supplier_codes,
+            known_materials=context.known_materials,
+            known_suppliers=context.known_suppliers,
+            resolver=context.resolver,
+            fill_counts=context.fill_counts,
         )
-        rows = _collect_purchase_rows(worksheet, layout, context)
+        rows = _collect_purchase_rows(worksheet, layout, row_context)
     finally:
         workbook.close()
 
     if not rows:
         raise ValueError("批次 %s 没有可制作的采购记录" % batch_name)
 
-    _write_purchase_output(template_path, target, rows)
+    _write_purchase_output(context.template_path, target, rows)
     return (
         len(rows),
-        context.excluded_original,
-        context.unknown_materials,
-        context.unknown_suppliers,
-        context.learned_items,
+        row_context.excluded_original,
+        row_context.unknown_materials,
+        row_context.unknown_suppliers,
+        row_context.learned_items,
     )
 
 
@@ -445,28 +440,31 @@ class _PurchasePlanTotals:
         self.learned_items.extend(items)
 
 
-def _resolve_purchase_plan_output_dir(batches, out_dir):
+def _resolve_output_dir(feature, batches, out_dir):
     """
-    解析采购计划输出目录，并为源文件旁模式提供首批次定位基准。
+    解析业务输出目录，并为源文件旁输出模式提供首批次定位基准。
 
     未显式传入 ``out_dir`` 时委托 ``paths.resolve_output_dir``，其可能按配置把输出
-    放到源文件旁或统一输出根；显式传入时先展开为绝对路径并确保目录存在。
-
-    :param batches: 已校验的批次文件绝对路径列表
-    :param out_dir: 可选的输出目录，为 ``None`` 时按设置解析
-    :return: 已存在的输出目录绝对路径
+    放到源文件旁或统一输出根；显式传入时先展开为绝对路径并确保目录存在。采购计划
+    主流程和实收差异报告使用同一规则，仅 ``feature`` 名称不同。
     """
 
     if out_dir is None:
         current = settings.get_settings()
         return paths.resolve_output_dir(
-            "purchase_plan",
+            feature,
             src_path=os.path.abspath(str(batches[0])),
             **current.output_kwargs(),
         )
     resolved = os.path.abspath(str(out_dir))
     os.makedirs(resolved, exist_ok=True)
     return resolved
+
+
+def _resolve_purchase_plan_output_dir(batches, out_dir):
+    """解析采购计划输出目录，规则与实收差异报告保持一致。"""
+
+    return _resolve_output_dir("purchase_plan", batches, out_dir)
 
 
 def _prepare_purchase_plan_context(template_paths, batch_paths, out_dir, log, progress):
@@ -602,16 +600,11 @@ def _convert_purchase_plans(context, plans, log, progress):
         for index, (path, batch_name, final_target) in enumerate(plans, start=1):
             staged_target = os.path.join(staging, os.path.basename(final_target))
             converted = _convert_batch(
-                context.template_path,
+                context,
                 path,
                 staged_target,
                 batch_name,
-                context.supplier_codes,
-                context.known_materials,
-                context.known_suppliers,
                 log=log,
-                resolver=context.resolver,
-                fill_counts=context.fill_counts,
             )
             prepared.append((staged_target, final_target))
             totals.add_batch(final_target, converted)
@@ -856,24 +849,9 @@ def _read_diff_batch(path, batch_name, accumulator, log):
 
 
 def _resolve_diff_output_dir(batches, out_dir):
-    """
-    解析实收差异报告目录，并确保显式目录存在。
+    """解析实收差异报告目录，规则与采购计划主流程保持一致。"""
 
-    :param batches: 已校验的批次文件绝对路径列表
-    :param out_dir: 可选输出目录，为 ``None`` 时按设置解析
-    :return: 已存在的输出目录绝对路径
-    """
-
-    if out_dir is None:
-        current = settings.get_settings()
-        return paths.resolve_output_dir(
-            "purchase_plan",
-            src_path=os.path.abspath(str(batches[0])),
-            **current.output_kwargs(),
-        )
-    resolved = os.path.abspath(str(out_dir))
-    os.makedirs(resolved, exist_ok=True)
-    return resolved
+    return _resolve_output_dir("purchase_plan", batches, out_dir)
 
 
 def _write_diff_report(out_dir, rows):

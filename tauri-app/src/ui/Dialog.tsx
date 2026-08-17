@@ -45,7 +45,7 @@ export function useOverlayFocus(open: boolean, onClose: () => void, dialogRef: R
       else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
     };
     document.addEventListener("keydown", handleKeyDown);
-    return () => { document.removeEventListener("keydown", handleKeyDown); returnFocus.current?.focus(); };
+    return () => { document.removeEventListener("keydown", handleKeyDown); returnFocus.current?.focus(); };  // 卸载或关闭时解除监听并恢复原焦点
   }, [dialogRef, onClose, open]);
 }
 

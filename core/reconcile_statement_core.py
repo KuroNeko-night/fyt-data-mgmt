@@ -328,6 +328,17 @@ def scan(files, log=None, progress=None) -> dict[str, object]:
     return {"files": result_files}
 
 
+def _append_group_rows(grouped, rows, batch, resolver, fill_counts):
+    """补全一个批次的主数据，并把未排除行并入分组结果。"""
+    if resolver is not None:
+        _complete_rows_from_catalog(rows, resolver, fill_counts)
+    grouped.extend(
+        {**item, "batch": batch}
+        for item in rows
+        if not item["excluded"]  # 排除色是业务决定，正式输出阶段才真正丢弃这些行。
+    )
+
+
 def _group_rows(path, batch_keys: set[str], file_index: int,
                 resolver=None, fill_counts=None) -> list[dict[str, object]]:
     """重新读取单个文件，汇总被选批次中未标记排除的正式数据行。
@@ -340,13 +351,7 @@ def _group_rows(path, batch_keys: set[str], file_index: int,
     try:
         for worksheet in workbook.worksheets:
             for batch, _, rows in _iter_blocks(worksheet, file_index, want_keys=batch_keys):
-                if resolver is not None:
-                    _complete_rows_from_catalog(rows, resolver, fill_counts)
-                for item in rows:
-                    if item["excluded"]:
-                        # 排除色是业务决定，正式输出阶段才真正丢弃这些行。
-                        continue
-                    grouped.append({**item, "batch": batch})
+                _append_group_rows(grouped, rows, batch, resolver, fill_counts)
     finally:
         workbook.close()
     return grouped
@@ -535,5 +540,7 @@ def _write_statement(target: str, supplier: str, month: str, rows: list[dict[str
             if column in (1, 5, 6):
                 # 序号、单位和数量采用居中，名称和规格保留默认左对齐以提高可读性。
                 cell.alignment = Alignment(horizontal="center", vertical="center")
-    workbook.save(target)
-    workbook.close()
+    try:
+        workbook.save(target)
+    finally:
+        workbook.close()  # 保存失败也释放工作簿，便于用户关闭占用文件后重试。

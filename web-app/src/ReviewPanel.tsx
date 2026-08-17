@@ -24,7 +24,7 @@ type ReviewPanelProps = {
 function unwrap(value: unknown): Record<string, any> {
   if (!value || typeof value !== "object") return {};
   const record = value as Record<string, unknown>;
-  return record.result && typeof record.result === "object" ? record.result as Record<string, any> : record as Record<string, any>;
+  return record.result && typeof record.result === "object" ? record.result as Record<string, any> : record as Record<string, any>;  // 兼容历史结果外层多包一层 result
 }
 
 /** 把计划中的嵌套记录压缩为复核列表可读文本，不修改原始值。 */
@@ -60,10 +60,10 @@ function ReconcileReview({ plan, onConfirm, busy }: { plan: ReconcilePlan; onCon
   const [aliases, setAliases] = useState<Record<string, string>>({});
   const candidates = plan.only_zong || [];
   // 列选择范围至少二十列，并在识别列后预留十列，同时限制为六十列避免下拉项过长。
-  const upper = Math.max(20, Math.min(60, Math.max(target.name_col || 0, target.comp_col || 0, target.work_col || 0) + 10));
+  const upper = Math.max(20, Math.min(60, Math.max(target.name_col || 0, target.comp_col || 0, target.work_col || 0) + 10));  // 列选择范围至少 20 列且不超 60 列
   const choices = () => ({
     target_sheet: sheet && sheet !== target.sheet ? sheet : null,
-    target_roles: Object.fromEntries(Object.entries(roles).filter(([key, value]) => value && value !== (target as Record<string, any>)[`${key}_col`])),
+    target_roles: Object.fromEntries(Object.entries(roles).filter(([key, value]) => value && value !== (target as Record<string, any>)[`${key}_col`])),  // 只提交相对默认值变化的列角色覆盖
     aliases: Object.fromEntries(Object.entries(aliases).filter(([, value]) => value.trim())),
     save_mapping: true,
   });
@@ -88,15 +88,15 @@ function PivotReview({ plan, onConfirm, busy }: { plan: PivotPlan; onConfirm: (c
   const [unitValues, setUnitValues] = useState<Record<string, string>>(() => Object.fromEntries(units.map((item, index) => [`${index}`, item.default || ""])));
   const [specValues, setSpecValues] = useState<Record<string, string>>(() => Object.fromEntries(specs.map((item, index) => [`${index}`, item.default || ""])));
   /** 合并系统默认值与全部候选值并去重，确保默认值始终可重新选择。 */
-  function options(item: { default?: string; dist?: Record<string, number>; variants?: Record<string, number> }) { return Array.from(new Set([item.default || "", ...Object.keys(item.dist || item.variants || {})])); }
+  function options(item: { default?: string; dist?: Record<string, number>; variants?: Record<string, number> }) { return Array.from(new Set([item.default || "", ...Object.keys(item.dist || item.variants || {})])); }  // 默认值与候选值合并去重
 
   /** 仅发送相对默认值发生变化的单位和规格覆盖，减少复核载荷。 */
   function choices() {
     return {
       sheets: sheetUse,
       held: held.map((item) => ({ sid: item.sid, ridx: item.ridx, keep: Boolean(heldKeep[`${item.sid}:${item.ridx}`]) })),
-      unit_overrides: units.map((item, index) => ({ gk: item.gk, value: unitValues[String(index)] || "" })).filter((item, index) => item.value !== (units[index].default || "")),
-      spec_overrides: specs.map((item, index) => ({ gk: item.gk, value: specValues[String(index)] || "" })).filter((item, index) => item.value !== (specs[index].default || "")),
+      unit_overrides: units.map((item, index) => ({ gk: item.gk, value: unitValues[String(index)] || "" })).filter((item, index) => item.value !== (units[index].default || "")),  // 仅提交与默认值不同的单位覆盖
+      spec_overrides: specs.map((item, index) => ({ gk: item.gk, value: specValues[String(index)] || "" })).filter((item, index) => item.value !== (specs[index].default || "")),  // 仅提交与默认值不同的规格覆盖
     };
   }
   return <ReviewShell kind="pivot" result={plan} onConfirm={() => onConfirm(choices())} busy={busy} title="销售透视确认" description="确认工作表、疑似误删行和单位/规格归并后再生成透视表。" actionLabel="按此生成">
@@ -117,11 +117,11 @@ function InvoiceReview({ plan, onConfirm, busy }: { plan: { invoices?: InvoiceIt
   const [includeNormal, setIncludeNormal] = useState(false);
   const [rows, setRows] = useState<InvoiceRow[]>(() => (plan.invoices || []).map((item) => ({ selected: Boolean(item.special), num: item.num || "", date: item.date || "", seller: item.seller || "", item: item.item_seed || "", amount: item.amount, tax: item.tax, total: item.total, rate: item.rate, note: item.note_seed || "", special: Boolean(item.special) })));
   // 过滤可能遍历整月发票，仅在记录、月份或类型开关变化时重算。
-  const visible = useMemo(() => rows.filter((row) => (includeNormal || row.special) && (!month || row.date.startsWith(month))), [rows, includeNormal, month]);
+  const visible = useMemo(() => rows.filter((row) => (includeNormal || row.special) && (!month || row.date.startsWith(month))), [rows, includeNormal, month]);  // 只在记录、月份或类型开关变化时重算筛选
   /** 以不可变数组更新原始行索引，保留筛选前后的编辑状态。 */
   function patch(index: number, value: Partial<InvoiceRow>) { setRows((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, ...value } : row)); }
   /** 只提交当前筛选范围内被勾选的行，并移除界面专用状态字段。 */
-  function choices() { return { month, include_normal: includeNormal, rows: visible.filter((row) => row.selected).map(({ selected: _selected, special: _special, ...row }) => row) }; }
+  function choices() { return { month, include_normal: includeNormal, rows: visible.filter((row) => row.selected).map(({ selected: _selected, special: _special, ...row }) => row) }; }  // 只提交当前筛选范围内勾选的行并移除界面专用字段
   return <ReviewShell kind="invoice" result={plan} onConfirm={() => onConfirm(choices())} busy={busy} title="发票逐张复核" description="号码、日期和金额保持识别原值；销售方、费用项目、税率和备注可调整。" actionLabel="生成发票台账">
     <div className="fyt-review-toolbar"><FormField label="统计月份" htmlFor="review-invoice-month"><input id="review-invoice-month" type="month" value={month} onChange={(event) => setMonth(event.target.value)} /></FormField><label className="fyt-review-check" htmlFor="review-include-normal"><input id="review-include-normal" type="checkbox" checked={includeNormal} onChange={(event) => setIncludeNormal(event.target.checked)} />同时包含普通发票</label><span>当前显示 {visible.length} 张</span></div>
     <div className="fyt-review-table-wrap"><table className="fyt-review-table fyt-review-invoice-table"><thead><tr><th>保留</th><th>发票号码</th><th>日期</th><th>销售方</th><th>费用项目</th><th>不含税</th><th>税额</th><th>合计</th><th>税率</th><th>备注</th></tr></thead><tbody>{visible.map((row) => { const index = rows.indexOf(row); return <tr key={`${row.num}-${row.date}`}><td><input type="checkbox" checked={row.selected} onChange={(event) => patch(index, { selected: event.target.checked })} /></td><td>{row.num}</td><td>{row.date}</td><td><input value={row.seller} onChange={(event) => patch(index, { seller: event.target.value })} /></td><td><input value={row.item} onChange={(event) => patch(index, { item: event.target.value })} /></td><td>{row.amount ?? ""}</td><td>{row.tax ?? ""}</td><td>{row.total ?? ""}</td><td><input value={String(row.rate ?? "")} onChange={(event) => patch(index, { rate: event.target.value })} /></td><td><input value={row.note} onChange={(event) => patch(index, { note: event.target.value })} /></td></tr>; })}</tbody></table></div>
@@ -140,7 +140,7 @@ function CompareReview({ plan, onConfirm, busy }: { plan: { headers1?: string[];
     setKey(next);
     setColumns((current) => {
       const valid = current.filter((item) => item !== next && common.includes(item));
-      return valid.length ? valid : common.filter((item) => item !== next);
+      return valid.length ? valid : common.filter((item) => item !== next);  // 原选择全部失效时默认比较其余公共列
     });
   }
   /** 以不可变数组切换单个比较列。 */
@@ -168,7 +168,7 @@ function SupplierBatchReview({ plan, onConfirm, busy }: { plan: SupplierBatchPla
   const [selected, setSelected] = useState<Record<string, boolean>>(() => Object.fromEntries(suppliers.map((item) => [item.name, true])));
   const [batchDates, setBatchDates] = useState<Record<string, string>>(() => Object.fromEntries(batches.map((item) => [item.batch, ""])));
   const selectedNames = suppliers.filter((item) => selected[item.name]).map((item) => item.name);
-  const missingDateCount = batches.filter((item) => !batchDates[item.batch]?.trim()).length;
+  const missingDateCount = batches.filter((item) => !batchDates[item.batch]?.trim()).length;  // 所有识别批次都填日期后才允许生成
   /** 对当前分析计划中的供应商执行全选或清空。 */
   function setAll(value: boolean) {
     setSelected(Object.fromEntries(suppliers.map((item) => [item.name, value])));

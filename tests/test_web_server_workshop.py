@@ -26,7 +26,7 @@ class WebServerWorkshopTests(WebServerTestBase):
         for username, display_name in (("workshop_a", "车间甲"), ("workshop_b", "车间乙")):
             self.assertEqual(self.call("/api/auth/register", {
                 "username": username, "display_name": display_name, "password": "password123",
-            })[0], 201)
+            })[0], 201)  # 注册
             account = next(
                 item for item in self.call("/api/admin/users", token=self.admin)[1]["users"]
                 if item["username"] == username
@@ -34,7 +34,7 @@ class WebServerWorkshopTests(WebServerTestBase):
             self.assertEqual(
                 self.call(f"/api/admin/users/{account['id']}/approve", {}, token=self.admin)[0],
                 200,
-            )
+            )  # 审核
             if username == "workshop_a":
                 self.assertEqual(
                     self.call(
@@ -42,17 +42,17 @@ class WebServerWorkshopTests(WebServerTestBase):
                         {"role": "team_leader"}, token=self.admin,
                     )[0],
                     200,
-                )
+                )  # 甲为班组长
             tokens[username] = self.call("/api/auth/login", {
                 "username": username, "password": "password123",
-            })[1]["token"]
+            })[1]["token"]  # 登录
 
-        issue_date = datetime.now().strftime("%Y-%m-%d")
-        future_date = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+        issue_date = datetime.now().strftime("%Y-%m-%d")  # 业务日
+        future_date = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")  # 未来日
         status, rejected = self.call("/api/workshop/issues", {
             "issue_date": future_date, "cause": "未来问题", "primary_owner": "负责人",
         }, token=tokens["workshop_a"])
-        self.assertEqual(status, 400)
+        self.assertEqual(status, 400)  # 未来日期拒绝
         self.assertIn("不能晚于今天", rejected["error"])
 
         status, invalid_category = self.call("/api/workshop/issues", {
@@ -60,7 +60,7 @@ class WebServerWorkshopTests(WebServerTestBase):
             "cause": "旧分类不应继续使用",
             "category": "quality",
         }, token=tokens["workshop_a"])
-        self.assertEqual(status, 400)
+        self.assertEqual(status, 400)  # 旧分类拒绝
         self.assertIn("主料异常", invalid_category["error"])
 
         status, wrong_fields = self.call("/api/workshop/issues", {
@@ -70,7 +70,7 @@ class WebServerWorkshopTests(WebServerTestBase):
             "discoverer": "李工",
             "country": "印度尼西亚",
         }, token=tokens["workshop_a"])
-        self.assertEqual(status, 400)
+        self.assertEqual(status, 400)  # 模板外字段拒绝
         self.assertIn("不使用以下字段", wrong_fields["error"])
 
         status, created = self.call("/api/workshop/issues", {
@@ -95,17 +95,17 @@ class WebServerWorkshopTests(WebServerTestBase):
             "carrier": "承运商甲",
             "supplier": "供应商甲",
         }, token=tokens["workshop_a"])
-        self.assertEqual(status, 201)
+        self.assertEqual(status, 201)  # 创建草稿成功
         issue_id = created["issue"]["id"]
-        self.assertEqual(created["issue"]["batch_no"], "GKMYR26027-06")
+        self.assertEqual(created["issue"]["batch_no"], "GKMYR26027-06")  # 模板字段保留
         self.assertEqual(created["issue"]["external_inspection_owner"], "王工")
-        self.assertEqual(created["issue"]["status"], "draft")
+        self.assertEqual(created["issue"]["status"], "draft")  # 初始草稿
         self.assertEqual(self.call(
             f"/api/workshop/issues?date={issue_date}", token=tokens["workshop_b"],
-        )[1]["issues"], [])
+        )[1]["issues"], [])  # 他人草稿不可见
         self.assertEqual(self.call(
             f"/api/workshop/issues/{issue_id}/publish", {}, token=tokens["workshop_a"],
-        )[0], 400)
+        )[0], 400)  # 无图片不可发布
 
         bad_query = urllib.parse.urlencode({"name": "损坏图片.jpg"})
         status, invalid = self.call(
@@ -113,11 +113,11 @@ class WebServerWorkshopTests(WebServerTestBase):
             token=tokens["workshop_a"], raw=b"not-an-image",
             headers={"Content-Length": "12"},
         )
-        self.assertEqual(status, 400)
+        self.assertEqual(status, 400)  # 非图片拒绝
         self.assertIn("损坏", invalid["error"])
 
         stream = BytesIO()
-        Image.new("RGB", (80, 60), "#3d7df0").save(stream, format="PNG")
+        Image.new("RGB", (80, 60), "#3d7df0").save(stream, format="PNG")  # 生成合法 PNG
         image_content = stream.getvalue()
         for index in range(web_server.MAX_WORKSHOP_IMAGES):
             image_query = urllib.parse.urlencode({"name": f"现场-{index + 1}.png"})
@@ -126,8 +126,8 @@ class WebServerWorkshopTests(WebServerTestBase):
                 token=tokens["workshop_a"], raw=image_content,
                 headers={"Content-Length": str(len(image_content))},
             )
-            self.assertEqual(status, 201)
-            self.assertEqual(len(uploaded["issue"]["images"]), index + 1)
+            self.assertEqual(status, 201)  # 图片上传成功
+            self.assertEqual(len(uploaded["issue"]["images"]), index + 1)  # 图片计数递增
         status, limited = self.call(
             f"/api/workshop/issues/{issue_id}/images?{bad_query}",
             token=tokens["workshop_a"], raw=image_content,

@@ -21,7 +21,7 @@ def _write_attendance(path, rows, headers=None):
     for row in rows:
         worksheet.append(row)
     workbook.save(path)
-    workbook.close()
+    workbook.close()  # 关闭工作簿释放文件
 
 
 class AttendanceArchiveCoreTests(unittest.TestCase):
@@ -42,7 +42,7 @@ class AttendanceArchiveCoreTests(unittest.TestCase):
             ["张三", "2026-08-05", 8, 1, ""],
             ["李四", "2026-08-04", 8, 0, ""],
             ["王五", "2026-08-04", 8, 0, ""],
-        ], headers=["姓名", "日期", "工时", "加班工时"])
+        ], headers=["姓名", "日期", "工时", "加班工时"])  # 别名表头验证识别
 
     def tearDown(self):
         """删除合成输入与月度归档输出。"""
@@ -59,10 +59,10 @@ class AttendanceArchiveCoreTests(unittest.TestCase):
 
         out_dir = self.path("输出")
         result = attendance_archive_core.archive([self.file_a, self.file_b], out_dir=out_dir)
-        self.assertEqual(result["month"], "2026-08")
-        self.assertEqual(result["persons"], 3)
-        self.assertEqual(result["days"], 6)
-        self.assertTrue(os.path.isfile(result["path"]))
+        self.assertEqual(result["month"], "2026-08")  # 月份从数据日期推断
+        self.assertEqual(result["persons"], 3)  # 三个人员
+        self.assertEqual(result["days"], 6)  # 六条明细
+        self.assertTrue(os.path.isfile(result["path"]))  # 归档表落盘
 
         workbook = openpyxl.load_workbook(result["path"], data_only=True)
         summary = workbook["月度汇总"]
@@ -74,15 +74,15 @@ class AttendanceArchiveCoreTests(unittest.TestCase):
         self.assertEqual(rows["李四"][1], 2)
         self.assertEqual(rows["王五"][1], 1)
         detail = workbook["每日明细"]
-        detail_rows = [row for row in detail.iter_rows(min_row=2, values_only=True) if row[0]]
-        self.assertEqual(len(detail_rows), 6)
+        detail_rows = [row for row in detail.iter_rows(min_row=2, values_only=True) if row[0]]  # 跳过空行
+        self.assertEqual(len(detail_rows), 6)  # 六条明细全保留
         workbook.close()
 
     def test_archive_requires_valid_inputs(self):
         """空输入或无考勤字段的工作簿应明确拒绝。"""
 
         with self.assertRaises(ValueError):
-            attendance_archive_core.archive([])
+            attendance_archive_core.archive([])  # 空输入拒绝
         bad = self.path("无表头.xlsx")
         workbook = openpyxl.Workbook()
         worksheet = workbook.active
@@ -92,7 +92,7 @@ class AttendanceArchiveCoreTests(unittest.TestCase):
         workbook.close()
         with self.assertRaises(ValueError) as context:
             attendance_archive_core.archive([bad], out_dir=self.path("输出2"))
-        self.assertIn("识别", str(context.exception))
+        self.assertIn("识别", str(context.exception))  # 错误信息指出表头无法识别
 
 
 if __name__ == "__main__":

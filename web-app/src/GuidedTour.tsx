@@ -26,13 +26,13 @@ export function GuidedTour({ open, onClose }: { open: boolean; onClose: () => vo
   const [index, setIndex] = useState(0);
   const [box, setBox] = useState<DOMRect | null>(null);
   // 索引夹紧到末步，防止异常状态导致取步越界。
-  const step = STEPS[Math.min(index, STEPS.length - 1)];
+  const step = STEPS[Math.min(index, STEPS.length - 1)];  // 索引夹紧到末步，防止异常状态取步越界
   const last = index >= STEPS.length - 1;
 
   /** 测量当前目标；目标因权限隐藏时使用居中的对话框回退。 */
   const update = useCallback(() => {
     const element = document.querySelector(step.target);
-    setBox(element ? element.getBoundingClientRect() : null);
+    setBox(element ? element.getBoundingClientRect() : null);  // 目标因权限隐藏时回退到居中对话框
   }, [step]);
 
   useEffect(() => {

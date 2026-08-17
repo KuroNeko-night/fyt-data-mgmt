@@ -32,14 +32,14 @@ export function NotificationCenterPage({ onChanged }: Props) {
     finally { setLoading(false); }
   }, [onChanged]);
   useEffect(() => { void load(); }, [load]);
-  const unread = useMemo(() => items.filter((item) => !item.read_at), [items]);
+  const unread = useMemo(() => items.filter((item) => !item.read_at), [items]);  // 未读列表只作筛选与计数，不单独请求接口
   const visible = filter === "unread" ? unread : items;
   /** 标记单条消息已读，并只更新对应 kind 与 id 的本地记录。 */
   async function read(item: NotificationItem) {
     if (item.read_at || busy) return;
     setBusy(true); setError("");
     // 公告和定向消息可能使用各自的数字 id，因此必须同时比较 kind 才能唯一定位。
-    try { const result = await markNotificationRead(item.kind, item.id); setItems((current) => current.map((entry) => entry.id === item.id && entry.kind === item.kind ? { ...entry, read_at: result.read_at } : entry)); onChanged(Math.max(0, unread.length - 1)); }
+    try { const result = await markNotificationRead(item.kind, item.id); setItems((current) => current.map((entry) => entry.id === item.id && entry.kind === item.kind ? { ...entry, read_at: result.read_at } : entry)); onChanged(Math.max(0, unread.length - 1)); }  // 同时比较 kind 与 id 才能唯一定位公告或消息
     catch (reason) { setError(reason instanceof Error ? reason.message : "更新消息状态失败"); }
     finally { setBusy(false); }
   }
@@ -48,7 +48,7 @@ export function NotificationCenterPage({ onChanged }: Props) {
     if (!unread.length || busy) return;
     setBusy(true); setError("");
     // 已有 read_at 保持服务端原时间，只有原未读记录使用当前时间作为界面占位。
-    try { await markAllNotificationsRead(); setItems((current) => current.map((item) => ({ ...item, read_at: item.read_at || new Date().toISOString() }))); onChanged(0); }
+    try { await markAllNotificationsRead(); setItems((current) => current.map((item) => ({ ...item, read_at: item.read_at || new Date().toISOString() }))); onChanged(0); }  // 仅原未读记录用当前时间做即时占位
     catch (reason) { setError(reason instanceof Error ? reason.message : "更新消息状态失败"); }
     finally { setBusy(false); }
   }

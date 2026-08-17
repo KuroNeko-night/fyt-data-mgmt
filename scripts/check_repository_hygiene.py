@@ -119,7 +119,7 @@ def _repository_files() -> list[str]:
         stdout=subprocess.PIPE,
     )
     # ``-z`` 用 NUL 分隔输出，文件名中的换行、引号和中文都能被完整还原。
-    return [item.decode("utf-8") for item in result.stdout.split(b"\0") if item]
+    return [item.decode("utf-8") for item in result.stdout.split(b"\0") if item]  # 按 NUL 切分并过滤空项
 
 
 def _is_text(path: Path) -> bool:
@@ -132,7 +132,7 @@ def _is_text(path: Path) -> bool:
     """
 
     if path.name.lower() in {"dockerfile", "license"}:
-        return True
+        return True  # 无后缀的文本规范文件也要扫描
     return path.suffix.lower() in TEXT_SUFFIXES
 
 
@@ -149,12 +149,12 @@ def _path_problem(relative: str) -> str | None:
 
     # 使用 POSIX 路径语义并折叠大小写，保证 Windows 上 git 输出的斜杠与大小写差异不影响判定。
     path = PurePosixPath(relative)
-    lowered_parts = {part.lower() for part in path.parts}
+    lowered_parts = {part.lower() for part in path.parts}  # 统一小写后比对
     forbidden = sorted(lowered_parts & FORBIDDEN_PARTS)
     if forbidden:
-        return f"包含本地或生成目录：{forbidden[0]}"
+        return f"包含本地或生成目录：{forbidden[0]}"  # 优先报告命中的首个目录
     if path.suffix.lower() in FORBIDDEN_SUFFIXES:
-        return f"不应跟踪此类文件：{path.suffix.lower()}"
+        return f"不应跟踪此类文件：{path.suffix.lower()}"  # 运行产物与私密后缀
     return None
 
 
@@ -171,11 +171,11 @@ def _content_problems(relative: str) -> list[str]:
 
     path = ROOT / relative
     if not path.is_file() or not _is_text(path):
-        return []
+        return []  # 二进制文件跳过内容扫描
     try:
         text = path.read_text(encoding="utf-8")
     except UnicodeDecodeError:
-        return ["文本文件不是有效 UTF-8"]
+        return ["文本文件不是有效 UTF-8"]  # 编码不合规立即返回
 
     problems: list[str] = []
     # U+FFFD 通常表示 GBK/UTF-8 转换失败；一旦出现在源码中，说明某次转换已不可逆地丢失原文。
@@ -204,7 +204,7 @@ def check_repository() -> list[tuple[str, str]]:
     for relative in sorted(_repository_files()):
         path_problem = _path_problem(relative)
         if path_problem:
-            problems.append((relative, path_problem))
+            problems.append((relative, path_problem))  # 路径违规无需再读内容
             continue
         for content_problem in _content_problems(relative):
             problems.append((relative, content_problem))
@@ -224,13 +224,13 @@ def main() -> int:
         problems = check_repository()
     except (OSError, subprocess.CalledProcessError, UnicodeError) as exc:
         print(f"[失败] 无法完成仓库卫生检查：{exc}", file=sys.stderr)
-        return 2
+        return 2  # 基础设施失败用独立退出码
 
     if problems:
         print(f"[失败] 发现 {len(problems)} 个仓库卫生问题：")
         for relative, reason in problems:
             print(f"- {relative}：{reason}")
-        return 1
+        return 1  # 发现问题返回非零便于 CI 拦截
 
     print("[通过] 仓库未跟踪运行数据、生成物、敏感凭据或已知编码残留。")
     return 0
