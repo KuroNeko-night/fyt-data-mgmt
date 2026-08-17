@@ -133,6 +133,10 @@ cp -a "$SOURCE_DIR/web-app" "$STAGE/"
 cp -a "$SOURCE_DIR/requirements.txt" "$STAGE/"
 cp -a "$SOURCE_DIR/fyt-web.service" "$STAGE/"
 [ -f "$SOURCE_DIR/VERSION" ] && cp -a "$SOURCE_DIR/VERSION" "$STAGE/"
+# Git 直接部署会附带提交和引用信息；这些是可公开的版本元数据，不包含凭据或业务数据。
+for metadata in SOURCE_COMMIT SOURCE_REF; do
+    [ -f "$SOURCE_DIR/$metadata" ] && cp -a "$SOURCE_DIR/$metadata" "$STAGE/"
+done
 for script in "$SOURCE_DIR"/*.sh; do
     [ -f "$script" ] || continue
     cp -a "$script" "$STAGE/"

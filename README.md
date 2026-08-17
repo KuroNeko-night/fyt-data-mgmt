@@ -1,389 +1,155 @@
 # 峰运通数据管理系统
 
-峰运通数据管理系统是一套面向企业内部业务的桌面端与 Web 数据工作台。它把考勤、到料、采购、对账、主数据、现场问题、日清看板和文件工具放在统一的工作流中，并让 Windows 桌面端与浏览器端复用同一套 Python 业务核心。
+![峰运通数据管理系统](assets/logo.png)
 
-当前版本：`v1.3.0`（版本唯一来源：`core/version.py`）
+> 把常用的 Excel、PDF 业务处理、团队协作、现场问题和日清数据集中到同一个桌面与 Web 工作台。
 
-## 适用场景
+当前版本：`v1.3.0`
 
-- **桌面端**：适合个人或办公室电脑离线处理业务表格，使用 Tauri 安装包运行。
-- **Web 端**：适合局域网协作；账号注册由管理员审核，任务、资料和输出按账号隔离。
-- **服务端**：Windows 服务端包适合快速部署，Linux 服务端包适合 systemd 长期运行，也可以在 Caddy/Nginx 后面提供 HTTPS。
+## 项目简介
 
-## 功能概览
+峰运通数据管理系统是一套面向企业日常业务的桌面端与 Web 数据工作台，适合处理考勤、到料、采购、对账、发票、生产资料和现场问题等工作。
 
-### 业务模块
+系统将分散在多个表格、文件夹和人工步骤中的工作整理成统一流程：上传资料、调整参数、人工复核、在线查看结果，并按需下载正式报告。程序只处理上传文件的副本，不会直接修改电脑中的原始文件。
 
-| 分组 | 功能 |
+系统提供三种使用方式：
+
+- **Windows 桌面端**：适合个人或办公室电脑处理业务文件。
+- **Web 端**：通过浏览器访问，适合局域网或企业内部多人协作。
+- **移动端浏览器**：重点支持现场问题拍照、填写、查看和闭环。
+
+## 主要功能
+
+### 业务数据处理
+
+| 分类 | 功能 |
 | --- | --- |
 | 人事 | 考勤填报、考勤月度归档、工时对账 |
-| 业务 | 每日到料明细、销售透视、采购对账、送货计划、供应商批次表、采购计划导入、采购差异清单、对账单制作 |
-| 财务 | 发票统计、票货匹配、金额大写 |
-| 工具 | 批量重命名、文本工具、PDF 工具、Excel 工具、表格比对 |
+| 到料与生产 | 每日到料明细、送货计划、发运评审对比 |
+| 采购与供应商 | 采购对账、供应商批次表、采购计划导入、采购差异清单、对账单制作 |
+| 销售与财务 | 销售透视、发票统计、票货匹配、金额大写 |
+| 文件工具 | 批量重命名、文本处理、PDF 工具、Excel 工具、表格比对 |
 
-### 协作与管理
+适用的业务会在处理完成后直接展示关键指标、明细、差异、可信度和核对提示，同时保留正式 Excel 或 PDF 报告下载。
 
-- **工作台**：查看任务状态、待处理事项、最近任务和处理趋势。
-- **现场问题**：移动端优先提交图片和问题信息；按五类标准模板校验、编辑、闭环和导出。
-- **日清看板**：管理员按业务日期查看到料、考勤、生产计划、安全检查、现场问题、事项与待办。
-- **数据库**：班组长和管理员上传、下载、分类和维护团队资料，列表记录上传者和修改时间。
-- **主数据治理**：管理员上传表格学习供应商与材料对应关系，冲突先进入待治理区，确认后再合并正式主数据库。
-- **任务中心**：查看进度、日志、结果版本，支持取消、重试、在线预览和下载。
-- **消息中心**：接收全局公告与定向消息，支持未读筛选和阅读状态。
-- **系统管理**：管理员审核账号、调整角色、维护资料、发布消息、管理回收站和备份。
+### 团队协作
 
-## 角色权限
+- **工作台**：集中查看待办、任务状态、近期结果和处理趋势。
+- **现场问题**：按标准问题类型提交图片和信息，支持编辑、跟进、标记已解决和按日期导出。
+- **日清看板**：展示当天到料、出勤、生产计划、安全检查、现场问题、重大事项和会议待办。
+- **团队数据库**：上传、下载和分类管理共享资料，并记录上传者和最后修改时间。
+- **批次跟踪**：按批次查看关联的处理记录和业务结果。
+- **任务中心**：查看运行进度、结果预览、历史版本和异常提示。
+- **消息中心**：接收全局公告和定向消息。
+- **报表中心**：由管理人员汇总和导出业务报表。
 
-系统角色只有业务成员、班组长和管理员。前端隐藏入口不能替代服务端鉴权，所有接口都会再次检查角色与资源所属关系。
+### 主数据治理
 
-| 功能 | 业务成员 | 班组长 | 管理员 |
-| --- | --- | --- | --- |
-| 工作台、业务模块、任务中心、消息中心、账号安全 | 可用 | 可用 | 可用 |
-| 现场问题查看与提交 | 可用 | 可用 | 可用 |
-| 已发布现场问题维护 | 仅自己的草稿 | 可编辑、闭环、删除自己发布的内容 | 可维护全部内容 |
-| 数据库、批次跟踪 | 不可用 | 可用 | 可用 |
-| 日清看板、报表中心、系统管理 | 不可用 | 不可用 | 可用 |
+管理员可以上传新的业务表格，让系统学习材料、供应商和业务字段之间的对应关系。发现冲突时，系统会先提醒管理员人工确认，不会直接覆盖已有的正式数据。
 
-新账号注册后必须等待管理员审核。管理员可以把已审核账号调整为业务成员、班组长或管理员；内置管理员、当前账号和最后一名管理员受到保护。
+确认后的主数据可以帮助各业务模块自动补全源文件中缺少的信息，减少重复填写和人工查找。
 
-## 系统架构
+## 使用流程
 
-```text
-Tauri React ──> Rust 白名单命令 ──> core.tauri_bridge ──> core/*
+普通业务处理通常只需要以下几步：
 
-Web React ────> 同源 /api ────────> web_server.py + web_backend
-                                      └─> 任务桥接 ──> core.tauri_bridge ──> core/*
-```
+1. 打开桌面端，或使用浏览器进入 Web 端。
+2. 登录账号并选择需要使用的业务功能。
+3. 上传待处理的表格、PDF 或图片。
+4. 根据需要调整日期、容差、统计方式等参数。
+5. 检查系统给出的分析结果和人工复核内容。
+6. 确认后生成结果，直接在线查看或下载正式报告。
 
-- `core/` 是业务算法、主数据、路径、缓存、任务历史和桥接协议的唯一事实源，不导入桌面 UI。
-- `web_server.py` 是兼容启动入口和依赖组合根；实际 HTTP 协议、路由、数据库、领域服务和任务执行位于 `web_backend/`。
-- `business_result_core.py` 统一把业务结果投影成标题、指标、明细、可信度和核对提示，桌面端与 Web 端都使用同一投影。
-- Web 长任务以持久化任务 ID 运行在独立 Python 子进程中；上传句柄、任务、缓存、输出和运行目录都按用户隔离。
-- SQLite 保存账号、会话、审核、任务、资料、日清、消息、现场问题和管理记录；运行数据不属于源码。
+部分业务采用“先分析、后确认”的两阶段流程。只有经过人工确认后，系统才会生成最终文件，避免自动识别错误直接进入正式结果。
 
-## 目录结构
+## 账号与权限
 
-```text
-峰运通数据管理系统/
-├─ core/               纯业务逻辑、主数据、缓存、任务历史和桥接
-├─ web_backend/        Web 配置、HTTP、数据库、领域服务和任务运行器
-├─ web_server.py       Web 兼容启动入口
-├─ web_control_gui.py  Web 服务与 Cloudflare Tunnel 控制台
-├─ web-app/            React/Vite Web 前端
-├─ tauri-app/          React/Vite/Tauri 桌面端
-├─ design-system/      双端设计令牌
-├─ assets/             品牌和已验收美术资源
-├─ packaging/          Tauri sidecar、Windows/Linux 部署脚本
-├─ scripts/            构建、打包、升级补丁、质量检查和 Windows PowerShell 入口
-├─ docker/             Dockerfile 与 Compose 运行编排
-├─ tests/              unittest 合成数据回归
-└─ docs/               当前实现与维护文档
-```
+Web 端账号注册后需要管理员审核。系统提供三种角色：
 
-## 环境要求
+| 角色 | 主要权限 |
+| --- | --- |
+| 业务成员 | 使用工作台、业务模块、任务与消息功能；查看和提交现场问题 |
+| 班组长 | 包含业务成员能力，并可使用团队数据库、批次跟踪，维护自己发布的现场问题 |
+| 管理员 | 查看日清看板和报表中心，审核账号、调整角色、维护主数据及管理全部现场问题 |
 
-### Windows 开发环境
+权限不仅控制页面入口，服务端也会再次校验账号角色和资料所属关系。
 
-- Windows 10/11 64 位。
-- Python 3.13，建议通过 `py -3.13` 创建虚拟环境。
-- Node.js 与 npm，使用与 Vite 8 兼容的 LTS 版本。
-- Rust stable MSVC、Visual Studio C++ 构建工具和 WebView2；只有构建 Tauri 安装包时需要。
-- PowerShell 5.1 或更高版本。
+## 数据与安全
 
-### Linux 服务端
+- 账号、上传文件、任务结果和个人配置按用户隔离。
+- 注册账号必须经过管理员审核，密码需满足系统安全要求。
+- 修改密码、撤销设备或重置账号后，相关登录会话会自动失效。
+- 管理员可以管理回收站、备份和恢复，业务结果不会无限增长。
+- 公网部署应使用 HTTPS，并由管理员配置域名、反向代理和访问控制。
+- 管理员密码、证书私钥、Token、账号数据库和真实业务资料不应出现在截图或公开问题中。
 
-- x86_64 Linux；部署脚本已覆盖 Alibaba Cloud Linux 3、Ubuntu、Debian 和 CentOS Stream 等 systemd 系统。
-- Python 3.10～3.13。安装器会创建项目私有虚拟环境，不替换系统 Python。
-- `systemd`、`sudo`、`unzip`、`tar`、`curl`。
+## 支持的文件
 
-## Windows 源码运行
+- Excel：`.xlsx`、`.xlsm`、`.xls`、`.csv`
+- PDF：发票识别、合并、拆分、提取页等
+- 图片：现场问题上传，支持一条问题附带多张图片
 
-以下命令在 `峰运通数据管理系统` 目录执行。
+不同业务模块支持的文件类型可能不同，实际选择文件时以页面提示为准。
 
-### 安装依赖
+## 部署指令
 
-```powershell
-.\scripts\setup-modern.ps1
-npm --prefix web-app ci
-npm --prefix tauri-app ci
-```
-
-`scripts\setup-modern.ps1` 只安装 `requirements.txt` 中锁定的 Python 依赖，不修改系统 Python。中文控制台建议先设置：
-
-```powershell
-$env:PYTHONIOENCODING = "utf-8"
-```
-
-### 启动 Web 服务
-
-先构建静态前端，再启动 Web 服务：
-
-```powershell
-npm --prefix web-app run build
-.\scripts\run-web-gui.ps1
-```
-
-图形控制台可以设置端口、启动或关闭 Web 服务、启动或关闭 Cloudflare Tunnel，并显示局域网地址和公网地址。首次创建数据库时，密码通过控制台安全输入；管理员凭据不会写入登录页、帮助文案或普通运行日志。
-
-需要前台查看服务日志时使用：
-
-```powershell
-.\scripts\run-web.ps1 -Foreground
-```
-
-默认监听 `0.0.0.0:8787`，本机地址为 `http://127.0.0.1:8787/`，局域网用户访问 `http://本机IPv4地址:8787/`。首次访问前请在 Windows 防火墙放行对应 TCP 端口。常规启停优先使用图形控制台；由隧道脚本启动的 Web 服务和隧道可用以下入口一起关闭：
-
-```powershell
-.\scripts\stop-web-tunnel.ps1
-```
-
-### 管理员密码
-
-系统初始化会创建受保护的管理员账号；账号信息不在登录页面、帮助文案或普通日志中展示。管理员密码必须是至少 10 位且同时包含字母和数字的强密码。
-
-忘记密码时先停止服务，再运行：
-
-```powershell
-.\scripts\reset-web-admin-password.ps1
-```
-
-脚本会以安全输入读取新密码，复用服务端的哈希实现，不把密码写入脚本或配置文件。
-
-### 启动 Tauri 桌面端
-
-```powershell
-cd tauri-app
-npm run tauri -- dev --no-watch
-```
-
-桌面端开发模式通过 Rust 白名单调用 `core.tauri_bridge`。正式桌面安装包使用无控制台的 sidecar，不需要单独启动 Python 服务。
-
-## Windows 服务端交付包
-
-使用 `scripts/build_deploy.py` 生成的 Windows 包是免安装 Python 的服务端整合包，包含静态前端、任务桥接、Tkinter 服务控制台和 Cloudflare 客户端。
-
-1. 解压包到不含重要业务数据的目录。
-2. 双击服务控制台或启动脚本。
-3. 首次初始化时在控制台安全设置管理员密码。
-4. 浏览器访问 `http://127.0.0.1:8787/` 或局域网地址。
-
-升级时先停止服务并备份包内 `web-data/`，再替换程序文件；不要覆盖 `web-data/`。Windows 包不包含 Tauri 安装程序。
-
-## Linux 一键部署
-
-Linux 包目录名和正式安装路径使用 ASCII，包本身可以从中文目录或 `/root` 解压。以下示例适用于新包目录：
+### Linux：从公开 Git 仓库部署
 
 ```bash
-sudo mkdir -p /opt/fyt
+sudo dnf install -y curl ca-certificates && curl -fsSL https://raw.githubusercontent.com/KuroNeko-night/fyt-data-mgmt/main/packaging/linux/deploy-from-git.sh | sudo bash
+```
+
+### Linux：从部署包安装
+
+```bash
 sudo unzip fyt-server-linux-v1.3.0.zip -d /opt/fyt
 cd /opt/fyt/fyt-server-linux-v1.3.0
 sudo bash install.sh
 ```
 
-安装器会创建低权限 `fyt-web` 服务账号、项目私有虚拟环境、SQLite 数据目录和 systemd 服务，并执行本机健康检查。首次建库时可通过环境变量显式提供密码：
+### Docker
 
 ```bash
-sudo env FYT_ADMIN_PASSWORD='请替换为强密码' bash install.sh
+umask 077
+mkdir -p secrets
+{ printf 'Aa1'; openssl rand -hex 16; } > secrets/admin-password.local.txt
+FYT_ADMIN_PASSWORD_FILE=../secrets/admin-password.local.txt docker compose -f docker/docker-compose.yml up -d --build
 ```
 
-如果没有提供，安装器会生成一次性随机管理员密码并在安装过程显示；请立即记录并登录后修改。密码不会写入发布包。生产环境建议使用密钥管理或受保护的部署终端，不要把密码写进历史脚本。
-
-固定目录如下：
-
-| 内容 | 路径 |
-| --- | --- |
-| 程序与虚拟环境 | `/opt/fyt/server` |
-| 服务配置 | `/etc/fyt-web/fyt-web.env` |
-| 账号、上传、任务和输出 | `/var/lib/fyt-web` |
-| 安装备份 | `/var/backups/fyt-web` |
-| systemd 服务 | `fyt-web.service` |
-
-常用运维命令：
-
-```bash
-sudo bash /opt/fyt/server/status.sh
-sudo bash /opt/fyt/server/restart.sh
-sudo bash /opt/fyt/server/stop.sh
-sudo bash /opt/fyt/server/logs.sh 100
-sudo bash /opt/fyt/server/backup.sh
-```
-
-升级新版时重新解压并执行 `sudo bash install.sh`。安装器会先备份程序和配置，再切换版本；不会覆盖 `/var/lib/fyt-web`。升级失败或健康检查失败时会回滚程序和服务状态。
-
-## HTTPS 与公网访问
-
-正式公网访问推荐以下流程（零基础分步操作见 `docs/运维部署完全指南.md`）：
-
-1. 域名 DNS 托管到 Cloudflare，添加 A 记录指向服务器公网 IP，并开启橙色云代理。
-2. 在 Cloudflare `SSL/TLS → Origin Server` 创建源站证书和私钥，加密模式设为 `Full (strict)`。
-3. 阿里云安全组只对 Cloudflare 的 IP 段放行 80/443，`8787` 不对公网开放。
-4. Caddy 监听 443，使用上述源站证书和私钥反向代理到 `127.0.0.1:8787`；80 端口只负责跳转 HTTPS：
-
-```text
-fyt.example.com {
-    tls /etc/caddy/certs/fyt.example.com.pem /etc/caddy/certs/fyt.example.com.key
-    reverse_proxy 127.0.0.1:8787
-}
-```
-
-备选方案：Cloudflare Named Tunnel 连接到本机 Web 服务，服务器无需开放 80/443 入站，域名路由和 Tunnel 服务由 Cloudflare 管理。
-
-临时 Quick Tunnel 适合测试，不适合作为固定入口；每次重启或重新建立连接都可能更换 `trycloudflare.com` 地址。无论使用代理还是 Tunnel，都应让 Web 服务只监听回环地址，并在 Cloudflare、反向代理和应用层分别配置访问控制。
-
-Linux 包随附：
-
-- `cloudflared.sh`：临时 Tunnel 的前台/后台启动、停止和状态查看。
-- `cloudflared-named.sh`：授权、创建固定 Tunnel、绑定域名并可注册 systemd 服务。
-
-不要把 Tunnel token、证书私钥、管理员密码或真实 `web-data` 放进源码包、Git 仓库或截图。
-
-## Docker 运行与 GitHub 同步
-
-Docker 构建与 Compose 编排文件统一放在 `docker/`：`docker/Dockerfile` 为多阶段构建，`docker/docker-compose.yml` 为运行编排。容器只运行 Web 服务，业务数据通过 `FYT_DATA_DIR` 挂载到 `/data`，不会写入镜像层。构建上下文仍是仓库根目录，`.dockerignore` 保留在根目录。
-
-Dockerfile 默认使用官方源；Compose 示例为国内网络覆盖使用 AWS Public ECR、npmmirror
-和清华 PyPI 镜像。可通过 `.env` 中的 `FYT_DOCKER_NODE_IMAGE`、
-`FYT_DOCKER_PYTHON_IMAGE`、`FYT_DOCKER_NPM_REGISTRY` 和 `FYT_DOCKER_PIP_INDEX_URL`
-切换为 Docker Hub、官方依赖源或内部镜像仓库。构建参数只允许放公开地址，不要嵌入仓库凭据。
-
-```powershell
-Copy-Item .env.example .env
-New-Item -ItemType Directory secrets -Force
-[System.IO.File]::WriteAllText(
-  (Join-Path (Resolve-Path secrets) "admin-password.txt"),
-  "请替换为至少10位且包含字母和数字的强密码",
-  [System.Text.UTF8Encoding]::new($false)
-)
-docker compose -f docker/docker-compose.yml up -d --build
-docker compose -f docker/docker-compose.yml ps
-```
-
-默认端口只绑定本机 `127.0.0.1:8787`，适合放在 Caddy/Nginx 或 Cloudflare Tunnel 后面。局域网直连时把 `.env` 中的 `FYT_WEB_BIND` 改为 `0.0.0.0`。详细说明见 `docs/docker与github同步.md`。
-
-源码同步入口：
-
-```powershell
-.\scripts\sync-github.ps1 -Message "说明本次修改" -Push
-```
-
-脚本默认关联 `https://github.com/KuroNeko-night/fyt-data-mgmt.git`，会拒绝提交 `web-data`、`docker-data`、数据库、日志、证书、压缩包、构建产物和本地依赖。Linux/macOS 使用 `bash scripts/sync-github.sh --message "说明本次修改" --push`。提交前请先配置 GitHub SSH 或 Personal Access Token；不要把凭据写入项目。
-
-## 配置项
-
-配置统一通过环境变量或 Linux 的 `/etc/fyt-web/fyt-web.env` 提供。常用项如下：
-
-| 变量 | 默认值 | 作用 |
-| --- | --- | --- |
-| `FYT_WEB_HOST` | `0.0.0.0` | Web 监听地址；反向代理或 Tunnel 建议设为 `127.0.0.1` |
-| `FYT_WEB_PORT` | `8787` | Web 服务端口 |
-| `FYT_WEB_DATA` | 项目下 `web-data` | Web 数据根目录；Linux 安装器会改为 `/var/lib/fyt-web` |
-| `FYT_ADMIN_PASSWORD` | 首次安装时生成或显式提供 | 仅用于首次初始化管理员密码，不用于覆盖既有密码 |
-| `FYT_BUSINESS_TZ_OFFSET` | `8` | 日清业务时区偏移，默认 UTC+8 |
-| `FYT_OUTPUT_RETENTION_COUNT` | `20` | 每个账号保留的最近结果版本数量 |
-| `FYT_TRASH_RETENTION_DAYS` | `30` | 回收站自动清理天数 |
-| `FYT_AUTO_BACKUP_KEEP` | `7` | 自动备份保留份数 |
-| `FYT_LIBRARY_USER_QUOTA_BYTES` | `2 GiB` | 单账号数据库文件配额 |
-| `FYT_NOTIFY_WEBHOOK_URL` | 空 | 可选的企业微信/钉钉兼容文本通知地址 |
-
-JSON 请求体、普通上传、主数据导入和现场图片还有独立大小限制，具体以 `web_backend/config.py` 当前值为准。
-
-## 数据、备份与恢复
-
-- 桌面端默认把配置和业务输出放在当前用户文档目录的“峰运通数据管理系统”目录。
-- Web 源码运行默认使用项目下的 `web-data`；部署时建议通过 `FYT_WEB_DATA` 与程序目录分离。
-- Web 结果默认只保留最近 20 次；超出部分进入回收站，回收站默认保留 30 天。
-- Linux `backup.sh` 会一致性备份账号数据库、上传资料、任务结果、回收站和服务配置，并生成 SHA-256 校验文件。
-- 恢复前必须停止服务并验证备份校验值；恢复完成后应重新检查 `/api/health`，服务端会撤销已有会话。
-- 任何升级、迁移或恢复前都应先保留一份可离线读取的备份。
-
-## 测试与质量检查
-
-以下命令在项目根目录执行：
+### Windows：构建服务端交付包
 
 ```powershell
 $env:PYTHONIOENCODING = "utf-8"
-.\.venv\Scripts\python.exe scripts\check_repository_hygiene.py
-.\.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"
-npm --prefix web-app run build
-npm --prefix tauri-app run build
-cd tauri-app\src-tauri
-cargo test
-```
-
-按改动范围还可以运行：
-
-```powershell
-npm --prefix tauri-app run qa:visual
-npm --prefix tauri-app run qa:functional
-npm --prefix tauri-app run qa:web-smoke
-```
-
-部署包冒烟检查：
-
-```powershell
-.\.venv\Scripts\python.exe scripts\smoke_deploy_package.py
-```
-
-测试使用合成 Excel 和临时目录。不要把真实业务资料、账号数据库、日志、缓存或备份复制进仓库。
-
-## 打包与发布
-
-### 构建三类服务端交付物
-
-先构建 Web 静态文件，再执行：
-
-```powershell
-npm --prefix web-app run build
 .\.venv\Scripts\python.exe scripts\build_deploy.py
 ```
 
-产物位于 `dist/`：
-
-- `峰运通数据管理系统_源码_v<版本>.zip`：纯净源码包，不含运行数据和可执行文件。
-- `峰运通服务端_windows_v<版本>.zip`：Windows Web 服务包，含 Cloudflare 客户端。
-- `fyt-server-linux-v<版本>.zip`：Linux 一键部署包。
-
-只构建 Linux 包可使用：
+### Tauri：构建桌面安装包
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\build_deploy.py --linux-only
+npm --prefix tauri-app ci
+npm --prefix tauri-app run tauri:build
 ```
 
-### 构建 Linux 增量补丁
+## 常见问题
 
-```powershell
-.\.venv\Scripts\python.exe scripts\build_linux_upgrade_patch.py
-```
+### 上传文件后会修改原文件吗？
 
-补丁只包含 `web_server.py`、`web_backend/`、`core/*.py`、`web-app/dist`、依赖清单和升级脚本，不读取、不复制、不删除或覆盖 `/var/lib/fyt-web`。
+不会。系统处理上传文件的副本，生成的结果会保存为新文件。
 
-### 版本发布
+### 为什么有些功能需要人工复核？
 
-1. 只修改 `core/version.py` 的 `VERSION`、`VERSION_TUPLE` 和 `BUILD_DATE`。
-2. 运行 `node scripts/release.mjs` 同步 Web、Tauri 和 Cargo 版本。
-3. 运行双端构建、Python 回归和对应部署检查。
-4. 运行 `npm --prefix tauri-app run tauri:build` 生成 MSI/NSIS。
-5. 发布包、更新清单和校验值经人工核对后再交付。
+业务表格可能存在合并单元格、非固定表头、人工备注和历史模板差异。人工复核用于确认系统识别出的批次、供应商、日期和匹配关系，避免错误结果被直接采用。
 
-## 安全与维护约束
+### Web 端是否可以在手机上使用？
 
-- 不在登录页、README、日志、截图或提交记录中写入管理员密码、Token、证书私钥或内部公网地址。
-- 不把 `web-data`、`.venv`、`node_modules`、`dist`、`target`、sidecar、数据库、日志、缓存、备份和真实业务数据提交到 Git。
-- 业务算法只维护在 `core/`；Web 和 Tauri 通过白名单、桥接协议和结构化结果调用，不在前端复制 Excel 解析逻辑。
-- 修改权限、接口、数据目录、输出格式、部署脚本或模块边界时，同步更新 `docs/项目全景-模块与实现.md` 和本 README。
-- 代码注释优先说明业务不变量、事务顺序、路径边界、兼容原因和失败回滚；不要在客户界面暴露动作 key、任务 ID、绝对路径、Python 或调试过程。
+可以。大部分页面支持移动端浏览，其中现场问题功能针对手机拍照和竖屏填写进行了重点适配。
 
-## 相关文档
+### 忘记密码怎么办？
 
-- [项目全景：模块与实现](docs/项目全景-模块与实现.md)
-- [运维部署完全指南（零基础版）](docs/运维部署完全指南.md)
-- [源码注释与编码风格规范](docs/源码注释与编码风格规范.md)
-- [仓库维护与目录规范](docs/仓库维护与目录规范.md)
-- [Docker 运行与 GitHub 同步](docs/docker与github同步.md)
-- [Web 前端说明](web-app/README.md)
-- [设计令牌说明](design-system/README.md)
-- [MIT License](LICENSE)
+普通用户联系管理员重置密码。管理员账号使用部署环境提供的受控密码重置入口，不要在公开页面发送旧密码、数据库或私钥。
 
 ## 许可证
 
-本项目采用 [MIT License](LICENSE)。Copyright © 2026 KuroNeko-night。
+本项目采用 [MIT License](LICENSE)。
+
+Copyright © 2026 KuroNeko-night

@@ -72,6 +72,14 @@ sudo bash install.sh
 
 升级时只需解压新版包并重新执行 `sudo bash install.sh`。安装器会先备份数据，再切换程序目录；运行数据不会跟随新版程序覆盖。
 
+## 从 GitHub 直接部署
+
+仓库公开后，可以不上传 ZIP，直接在服务器执行：
+```bash
+curl -fsSL https://raw.githubusercontent.com/KuroNeko-night/fyt-data-mgmt/main/packaging/linux/deploy-from-git.sh | sudo bash
+```
+脚本会临时克隆源码、构建 Web 前端，再复用本包的安装器；正式数据仍保存在 `/var/lib/fyt-web`。
+
 ## 常用命令
 ```bash
 sudo bash /opt/fyt/server/status.sh
@@ -211,6 +219,13 @@ SOURCE_DIRS = (
     "web_backend",
 )
 
+# 这些面向内部运维和 AI 协作的长篇资料只保留在维护电脑，不进入公开仓库或纯净源码包。
+SOURCE_LOCAL_ONLY_DOCS = {
+    "AI协作排错指南.md",
+    "Git源码自动部署指南.md",
+    "运维部署完全指南.md",
+}
+
 # 即使某个候选源码目录内部嵌套了运行数据或生成目录，也会在 copytree 回调中再次排除。
 SOURCE_IGNORED_DIRS = {
     ".codex-audit",
@@ -285,6 +300,9 @@ def _source_ignore(directory: str, names: list[str]) -> set[str]:
         lower = name.lower()  # 统一小写，锁定扩展名匹配
         if os.path.isdir(path) and name in SOURCE_IGNORED_DIRS:
             ignored.add(name)  # 排除运行数据与生成目录
+            continue
+        if relative_dir == "docs" and name in SOURCE_LOCAL_ONLY_DOCS:
+            ignored.add(name)  # 本地运维资料不得随纯净源码包对外分发
             continue
         if relative_dir == "assets/generated" and name == "_source":
             # 对话生成的原始大图不属于运行资产，正式资源只取 manifest 中已验收的输出。

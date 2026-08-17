@@ -94,3 +94,8 @@ baseline-*.jpg
 baseline-*.png
 tmp/art-generation/
 assets/generated/_source/
+
+# 本地运维资料：保留在维护电脑，不提交到公开仓库或纯净源码包
+/docs/运维部署完全指南.md
+/docs/AI协作排错指南.md
+/docs/Git源码自动部署指南.md

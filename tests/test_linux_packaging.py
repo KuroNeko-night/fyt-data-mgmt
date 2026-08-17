@@ -19,6 +19,24 @@ LINUX_DIR = ROOT / "packaging" / "linux"
 class LinuxPackagingTests(unittest.TestCase):
     """验证从 Windows 构建的 Linux 包仍满足编码、路径和 Unix 权限要求。"""
 
+    def test_local_ops_guides_are_excluded_from_source_bundle(self) -> None:
+        """本地部署和 AI 排错资料不得被纯净源码包重新带入公开交付物。"""
+
+        module_path = ROOT / "scripts" / "build_deploy.py"
+        spec = importlib.util.spec_from_file_location("build_deploy_docs_test", module_path)
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        local_guides = {
+            "AI协作排错指南.md",
+            "Git源码自动部署指南.md",
+            "运维部署完全指南.md",
+        }
+        ignored = module._source_ignore(os.fspath(ROOT / "docs"), sorted(local_guides))
+        self.assertEqual(local_guides, ignored)  # 三份本地资料必须全部命中源码包排除规则
+
     def test_scripts_are_utf8_lf_and_use_fixed_ascii_paths(self) -> None:
         """Shell 必须使用 UTF-8/LF，并把程序、数据和服务 home 固定到安全 ASCII 路径。"""
 
@@ -35,6 +53,19 @@ class LinuxPackagingTests(unittest.TestCase):
         self.assertIn('cp -a "$SOURCE_DIR/web_backend" "$STAGE/"', install)  # Web 后端整目录复制
         self.assertIn('(root / "web_backend").rglob("*.py")', install)  # Python 源码校验
         self.assertNotIn('WorkingDirectory=__DIR__', install)  # 不得使用相对工作目录
+        self.assertIn("SOURCE_COMMIT SOURCE_REF", install)  # Git 部署元数据随正式程序保留
+
+        git_deploy = (LINUX_DIR / "deploy-from-git.sh").read_text(encoding="utf-8")
+        self.assertIn(
+            "https://github.com/KuroNeko-night/fyt-data-mgmt.git",
+            git_deploy,
+        )  # 公开仓库是默认来源
+        self.assertIn('GIT_REF="${FYT_GIT_REF:-main}"', git_deploy)  # 默认部署 main，可覆盖为标签
+        self.assertIn("FYT_GIT_EXPECTED_COMMIT", git_deploy)  # 支持固定期望提交，防止引用漂移
+        self.assertIn('mktemp -d "$INSTALL_ROOT/.git-deploy.XXXXXX"', git_deploy)  # 克隆只落临时目录
+        self.assertIn('"$NPM_BIN" --prefix "$CHECKOUT_DIR/web-app" run build', git_deploy)  # Git 源码现场构建前端
+        self.assertIn('bash "$BUNDLE_DIR/install.sh"', git_deploy)  # 复用现有备份与回滚安装器
+        self.assertNotIn("/var/lib/fyt-web/*", git_deploy)  # Git 部署脚本不得清理运行数据
 
         service = (LINUX_DIR / "fyt-web.service").read_text(encoding="utf-8")
         self.assertIn("WorkingDirectory=__APP_DIR__", service)  # systemd 使用安装占位符
