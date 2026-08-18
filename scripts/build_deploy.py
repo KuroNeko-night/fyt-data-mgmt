@@ -65,6 +65,8 @@ sudo bash install.sh
 
 如需同时启用公网 HTTPS，可在执行安装前把 Cloudflare Origin CA 证书和对应的未加密私钥文件上传到 `/root` 顶层。安装器会自动验证配对关系、从证书读取域名、安装 Caddy、配置到 `127.0.0.1:8787` 的反向代理并注册 `caddy.service`；没有识别到完整配对时只跳过 Caddy，不影响应用安装。证书和私钥文件名可以自定义，私钥不得加密或提交到 Git。
 
+如果检测到旧版配置中重复的 `X-Forwarded-For` 或 `X-Forwarded-Proto` 规则，终端会显示文件和行号，并让你选择 `s` 跳过 Caddy 重配置，或选择 `o` 备份后覆盖峰运通配置。无人值守部署默认跳过；确认要覆盖时可提前设置 `FYT_CADDY_RECONFIGURE=overwrite`。
+
 ## 固定目录
 - 程序：`/opt/fyt/server`
 - 配置：`/etc/fyt-web/fyt-web.env`

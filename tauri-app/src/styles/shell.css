@@ -70,6 +70,8 @@
 
 /* 右侧快捷工作台在宽屏占据第三列，在中等视口转换为带遮罩的固定抽屉。 */
 .fyt-tauri-context-panel { min-width: 0; overflow: hidden; border-left: 1px solid var(--fyt-border); color: var(--fyt-text); background: var(--fyt-surface); }
+/* 宽屏关闭后必须退出网格布局，否则第三个网格子项会自动换到第二行并把主舞台压成半高。 */
+.fyt-tauri-context-panel:not(.is-open) { display: none; }
 .fyt-tauri-context-header { display: flex; min-height: var(--fyt-layout-tauri-topbar); align-items: center; justify-content: space-between; gap: var(--fyt-space-3); padding: 0 var(--fyt-space-4); border-bottom: 1px solid var(--fyt-border); }
 .fyt-tauri-context-header > div { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .fyt-tauri-context-header strong { font-size: var(--fyt-type-card); }
@@ -139,7 +141,8 @@
 @media (max-width: 1199px) {
   /* 快捷面板脱离网格后覆盖页面，避免主业务区域被压缩到不可用宽度。 */
   .fyt-tauri-shell[data-panel-open="true"] { grid-template-columns: var(--fyt-tauri-sidebar-width) minmax(0, 1fr); }
-  .fyt-tauri-context-panel { position: fixed; z-index: 30; top: 0; right: 0; bottom: 0; width: min(var(--fyt-layout-tauri-context-panel), 88vw); border-left: 1px solid var(--fyt-border-strong); box-shadow: var(--fyt-elevation-overlay); transform: translateX(100%); transition: transform var(--fyt-motion-slow) var(--fyt-motion-ease); }
+  .fyt-tauri-context-panel { position: fixed; z-index: 30; top: 0; right: 0; bottom: 0; display: block; width: min(var(--fyt-layout-tauri-context-panel), 88vw); border-left: 1px solid var(--fyt-border-strong); box-shadow: var(--fyt-elevation-overlay); transform: translateX(100%); transition: transform var(--fyt-motion-slow) var(--fyt-motion-ease); }
+  .fyt-tauri-context-panel:not(.is-open) { display: block; } /* 覆盖宽屏隐藏规则，让窄屏抽屉关闭时仍可执行滑出动画。 */
   .fyt-tauri-context-panel.is-open { transform: translateX(0); }
   .fyt-tauri-panel-backdrop { position: fixed; z-index: 29; display: block; inset: 0; border: 0; background: var(--fyt-overlay); }
 }
