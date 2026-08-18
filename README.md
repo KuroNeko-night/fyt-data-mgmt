@@ -1,106 +1,117 @@
-# 峰运通数据管理系统
+<div align="center">
+  <img src="assets/logo.png" alt="FYT Data Management logo" width="128" height="128" />
+  <h1>FYT Data Management</h1>
+  <p>A desktop and web workspace for manufacturing operations, business data processing, and daily management.</p>
+  <p>
+    <a href="README.zh-CN.md">简体中文</a>
+  </p>
+  <p>
+    <img src="https://img.shields.io/badge/Python-3.10--3.13-3776AB?logo=python&logoColor=white" alt="Python 3.10-3.13" />
+    <img src="https://img.shields.io/badge/React-19.2-61DAFB?logo=react&logoColor=20232A" alt="React 19.2" />
+    <img src="https://img.shields.io/badge/Vite-8.1-646CFF?logo=vite&logoColor=white" alt="Vite 8.1" />
+    <img src="https://img.shields.io/badge/Tauri-2.11-FFC131?logo=tauri&logoColor=black" alt="Tauri 2.11" />
+  </p>
+  <p>
+    <img src="https://img.shields.io/badge/Rust-stable-000000?logo=rust&logoColor=white" alt="Rust stable" />
+    <img src="https://img.shields.io/badge/SQLite-3-003B57?logo=sqlite&logoColor=white" alt="SQLite" />
+    <img src="https://img.shields.io/badge/Docker-optional-2496ED?logo=docker&logoColor=white" alt="Docker optional" />
+    <img src="https://img.shields.io/badge/License-MIT-2EA44F" alt="MIT License" />
+  </p>
+</div>
 
-![峰运通数据管理系统](assets/logo.png)
+> Turn scattered Excel files, PDFs, folders, and manual steps into a reviewable, traceable, and collaborative workflow.
 
-> 把常用的 Excel、PDF 业务处理、团队协作、现场问题和日清数据集中到同一个桌面与 Web 工作台。
+Current version: `v1.3.0`
 
-当前版本：`v1.3.0`
+## Overview
 
-## 项目简介
+FYT Data Management is an enterprise-oriented data workspace for attendance, material arrivals, procurement, reconciliation, invoicing, production data, shop-floor issues, and daily management.
 
-峰运通数据管理系统是一套面向企业日常业务的桌面端与 Web 数据工作台，适合处理考勤、到料、采购、对账、发票、生产资料和现场问题等工作。
+The typical workflow is:
 
-系统将分散在多个表格、文件夹和人工步骤中的工作整理成统一流程：上传资料、调整参数、人工复核、在线查看结果，并按需下载正式报告。程序只处理上传文件的副本，不会直接修改电脑中的原始文件。
+```text
+Upload files → recognize and analyze → review manually → inspect results online → download reports
+```
 
-系统提供三种使用方式：
+Business processing works on uploaded copies by default, so the original files are not modified directly.
 
-- **Windows 桌面端**：适合个人或办公室电脑处理业务文件。
-- **Web 端**：通过浏览器访问，适合局域网或企业内部多人协作。
-- **移动端浏览器**：重点支持现场问题拍照、填写、查看和闭环。
+The project supports three usage modes:
 
-## 主要功能
+- **Windows desktop application** — for individual or office-based file processing.
+- **Web application** — for LAN or internal multi-user collaboration.
+- **Mobile browser** — optimized for taking photos, submitting, reviewing, and closing shop-floor issues.
 
-### 业务数据处理
+## Feature map
 
-| 分类 | 功能 |
+| Area | Main capabilities |
 | --- | --- |
-| 人事 | 考勤填报、考勤月度归档、工时对账 |
-| 到料与生产 | 每日到料明细、送货计划、发运评审对比 |
-| 采购与供应商 | 采购对账、供应商批次表、采购计划导入、采购差异清单、对账单制作 |
-| 销售与财务 | 销售透视、发票统计、票货匹配、金额大写 |
-| 文件工具 | 批量重命名、文本处理、PDF 工具、Excel 工具、表格比对 |
+| Human resources | Attendance entry, monthly attendance archives, working-hour reconciliation |
+| Materials and production | Daily material arrivals, delivery plans, shipping review comparisons, production data |
+| Procurement and suppliers | Procurement reconciliation, supplier batch sheets, purchase-plan imports, variance lists, statement generation |
+| Sales and finance | Sales pivots, invoice statistics, invoice-to-shipment matching, amount capitalization |
+| Daily management and collaboration | Daily dashboard, shop-floor issues, notices and action items, task center, message center |
+| Data governance | Team file library, master-data learning, conflict review, file classification, recycle bin |
+| File utilities | Batch renaming, text tools, PDF tools, Excel tools, and table comparison |
 
-适用的业务会在处理完成后直接展示关键指标、明细、差异、可信度和核对提示，同时保留正式 Excel 或 PDF 报告下载。
+Where applicable, completed business tasks display key metrics, details, variances, confidence information, and review hints directly in the application. Formal Excel and PDF reports remain available for download.
 
-### 团队协作
+## Highlights
 
-- **工作台**：集中查看待办、任务状态、近期结果和处理趋势。
-- **现场问题**：按标准问题类型提交图片和信息，支持编辑、跟进、标记已解决和按日期导出。
-- **日清看板**：展示当天到料、出勤、生产计划、安全检查、现场问题、重大事项和会议待办。
-- **团队数据库**：上传、下载和分类管理共享资料，并记录上传者和最后修改时间。
-- **任务中心**：查看运行进度、结果预览、历史版本和异常提示。
-- **消息中心**：接收全局公告和定向消息。
-- **报表中心**：由管理人员汇总和导出业务报表。
+### One workflow for business files
 
-### 主数据治理
+Users can adjust dates, tolerances, and statistical options before processing. For workflows that need confirmation, the system returns an analysis plan first and only generates the formal result after manual confirmation.
 
-管理员可以上传新的业务表格，让系统学习材料、供应商和业务字段之间的对应关系。发现冲突时，系统会先提醒管理员人工确认，不会直接覆盖已有的正式数据。
+### Online results and formal reports
 
-确认后的主数据可以帮助各业务模块自动补全源文件中缺少的信息，减少重复填写和人工查找。
+Web and desktop views show structured results for quick review. Excel and PDF files remain available when a report needs to be archived, shared, or processed further.
 
-## 使用流程
+### Continuous master-data governance
 
-普通业务处理通常只需要以下几步：
+Administrators can upload new business tables so the system can learn relationships between materials, suppliers, and fields. Conflicts are surfaced for review instead of silently overwriting confirmed master data.
 
-1. 打开桌面端，或使用浏览器进入 Web 端。
-2. 登录账号并选择需要使用的业务功能。
-3. 上传待处理的表格、PDF 或图片。
-4. 根据需要调整日期、容差、统计方式等参数。
-5. 检查系统给出的分析结果和人工复核内容。
-6. 确认后生成结果，直接在线查看或下载正式报告。
+### Mobile shop-floor workflow
 
-部分业务采用“先分析、后确认”的两阶段流程。只有经过人工确认后，系统才会生成最终文件，避免自动识别错误直接进入正式结果。
+Shop-floor issues support photos, text fields, responsible people, notes, editing after publication, resolution updates, and date-range exports.
 
-## 账号与权限
+## Account roles
 
-Web 端账号注册后需要管理员审核。系统提供三种角色：
+Web registration requires administrator approval.
 
-| 角色 | 主要权限 |
+| Role | Main permissions |
 | --- | --- |
-| 业务成员 | 使用工作台、业务模块、任务与消息功能；查看和提交现场问题 |
-| 班组长 | 包含业务成员能力，并可使用团队数据库，维护自己发布的现场问题 |
-| 管理员 | 查看日清看板和报表中心，审核账号、调整角色、维护主数据及管理全部现场问题 |
+| Member | Workbench, business modules, tasks, messages, and submitting/viewing shop-floor issues |
+| Team leader | Member capabilities plus team database access and maintenance of self-published issues |
+| Administrator | Daily dashboard, report center, account review, role management, master-data maintenance, and all issue records |
 
-权限不仅控制页面入口，服务端也会再次校验账号角色和资料所属关系。
+The server enforces the same permissions again for API requests, task ownership, uploaded files, and generated results.
 
-## 数据与安全
+## Technology stack
 
-- 账号、上传文件、任务结果和个人配置按用户隔离。
-- 注册账号必须经过管理员审核，密码需满足系统安全要求。
-- 修改密码、撤销设备或重置账号后，相关登录会话会自动失效。
-- 管理员可以管理回收站、备份和恢复，业务结果不会无限增长。
-- 公网部署应使用 HTTPS，并由管理员配置域名、反向代理和访问控制。
-- 管理员密码、证书私钥、Token、账号数据库和真实业务资料不应出现在截图或公开问题中。
+| Layer | Technology |
+| --- | --- |
+| Shared business core | Python 3.10–3.13, Excel/PDF processing, SQLite |
+| Web frontend | React 19.2, TypeScript 7, Vite 8.1 |
+| Desktop application | Tauri 2.11, Rust stable, React |
+| Web server | Python standard-library HTTP server, SQLite, systemd |
+| Optional deployment | Docker Compose, Caddy reverse proxy, Cloudflare Origin CA |
 
-## 支持的文件
+## Supported files
 
-- Excel：`.xlsx`、`.xlsm`、`.xls`、`.csv`
-- PDF：发票识别、合并、拆分、提取页等
-- 图片：现场问题上传，支持一条问题附带多张图片
+- Excel: `.xlsx`, `.xlsm`, `.xls`, `.csv`
+- PDF: invoice recognition, merging, splitting, and page extraction
+- Images: shop-floor issue uploads with multiple images per issue
 
-不同业务模块支持的文件类型可能不同，实际选择文件时以页面提示为准。
+Supported formats vary by business module. Follow the file-type guidance shown on the selected page.
 
-## 部署指令
+## Deployment commands
 
-### Linux：从公开 Git 仓库部署
+### Linux: deploy from the public Git repository
 
 ```bash
 sudo dnf install -y curl ca-certificates && curl -fsSL https://raw.githubusercontent.com/KuroNeko-night/fyt-data-mgmt/main/packaging/linux/deploy-from-git.sh | sudo bash
 ```
 
-若 `/root` 顶层已有配套的 Cloudflare Origin CA 证书和未加密私钥，安装器会自动安装并配置 Caddy；未识别到完整配对时正常跳过。
-
-### Linux：从部署包安装
+### Linux: install from a deployment package
 
 ```bash
 sudo unzip fyt-server-linux-v1.3.0.zip -d /opt/fyt
@@ -117,40 +128,49 @@ mkdir -p secrets
 FYT_ADMIN_PASSWORD_FILE=../secrets/admin-password.local.txt docker compose -f docker/docker-compose.yml up -d --build
 ```
 
-### Windows：构建服务端交付包
+### Windows: build a server package
 
 ```powershell
 $env:PYTHONIOENCODING = "utf-8"
 .\.venv\Scripts\python.exe scripts\build_deploy.py
 ```
 
-### Tauri：构建桌面安装包
+### Tauri: build the desktop installer
 
 ```powershell
 npm --prefix tauri-app ci
 npm --prefix tauri-app run tauri:build
 ```
 
-## 常见问题
+## Data and security
 
-### 上传文件后会修改原文件吗？
+- Accounts, uploads, task results, and personal settings are isolated by user.
+- Registered accounts require administrator approval and passwords must meet the configured security policy.
+- Changing a password, revoking a device, or resetting an account invalidates affected sessions.
+- Administrators can manage backups, recovery, and the recycle bin.
+- Public deployments should use HTTPS, a configured domain, a reverse proxy, and access controls.
+- Do not commit administrator passwords, private keys, tokens, account databases, or real business files.
 
-不会。系统处理上传文件的副本，生成的结果会保存为新文件。
+## Common questions
 
-### 为什么有些功能需要人工复核？
+### Does processing modify the original file?
 
-业务表格可能存在合并单元格、非固定表头、人工备注和历史模板差异。人工复核用于确认系统识别出的批次、供应商、日期和匹配关系，避免错误结果被直接采用。
+No. Processing uses an uploaded copy and saves generated results as new files.
 
-### Web 端是否可以在手机上使用？
+### Why does some processing require manual review?
 
-可以。大部分页面支持移动端浏览，其中现场问题功能针对手机拍照和竖屏填写进行了重点适配。
+Business files may contain merged cells, non-standard headers, notes, and historical template variations. Review confirms recognized dates, batches, suppliers, and matching relationships before the formal output is generated.
 
-### 忘记密码怎么办？
+### Can the Web application be used on a phone?
 
-普通用户联系管理员重置密码。管理员账号使用部署环境提供的受控密码重置入口，不要在公开页面发送旧密码、数据库或私钥。
+Yes. Most pages support mobile browsers, and the shop-floor issue workflow is specifically optimized for phone cameras and portrait screens.
 
-## 许可证
+### What should I do if I forget my password?
 
-本项目采用 [MIT License](LICENSE)。
+Contact an administrator for a normal account reset. Administrator resets should use the controlled deployment or maintenance procedure; never post passwords, databases, certificates, or private keys in public issues.
+
+## License
+
+This project is released under the [MIT License](LICENSE).
 
 Copyright © 2026 KuroNeko-night
