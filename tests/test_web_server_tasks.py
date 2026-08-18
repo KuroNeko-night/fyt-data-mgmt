@@ -693,18 +693,17 @@ class WebServerTaskTests(WebServerTestBase):
         self.assertEqual(result["excluded_original_count"], 1)
         self.assertEqual(len(completed["files"]), 1)
 
-    def test_report_center_and_batch_track_include_result_files(self):
-        """报表中心与批次跟踪应关联可下载结果文件，而不是只显示任务元数据。"""
+    def test_report_center_includes_result_files(self):
+        """报表中心应统计任务结果文件，并提供可下载的历史报表。"""
 
-        job_id = "report-batch-job"
-        batch_name = "GKMYR26027-06"
+        job_id = "report-job"
         output = (
             web_server.DATA_ROOT / "users" / "1" / "jobs" / job_id
-            / "outputs" / f"{batch_name}到料结果.xlsx"
+            / "outputs" / "到料结果.xlsx"
         )
         output.parent.mkdir(parents=True)
         workbook = Workbook()
-        workbook.active.append(["批次号", batch_name])
+        workbook.active.append(["结果", "完成"])
         workbook.save(output)
         timestamp = web_server.now_iso()
         with web_server.DB_LOCK, web_server.db() as connection:
@@ -720,13 +719,6 @@ class WebServerTaskTests(WebServerTestBase):
                     timestamp,
                 ),
             )
-
-        query = urllib.parse.quote(batch_name)
-        status, tracked = self.call(f"/api/batch-track?q={query}", token=self.admin)
-        self.assertEqual(status, 200)
-        self.assertEqual(len(tracked["items"]), 1)
-        self.assertEqual(tracked["items"][0]["job_id"], job_id)
-        self.assertEqual(tracked["items"][0]["files"], [output.name])
 
         status, report = self.call("/api/reports?range=7d", token=self.admin)
         self.assertEqual(status, 200)

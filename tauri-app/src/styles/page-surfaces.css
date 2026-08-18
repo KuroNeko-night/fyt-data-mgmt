@@ -110,12 +110,6 @@
 .fyt-update-card h3 { margin-bottom: var(--fyt-space-2); }
 .fyt-update-card p { margin: 0; color: var(--fyt-text-secondary); font-size: var(--fyt-type-caption); }
 .fyt-report-range { margin-top: var(--fyt-space-1); }
-.fyt-batch-track-results { margin-top: var(--fyt-space-4); }
-.fyt-batch-track-item { align-items: stretch; flex-direction: column; }
-.fyt-batch-track-item-head { display: flex; align-items: center; flex-wrap: wrap; gap: var(--fyt-space-2); color: var(--fyt-text); }
-.fyt-batch-track-item-head > span:last-child { color: var(--fyt-text-secondary); }
-.fyt-batch-track-item-meta { display: flex; flex-wrap: wrap; gap: var(--fyt-space-2) var(--fyt-space-4); margin-top: var(--fyt-space-1); color: var(--fyt-text-muted); font-size: 11px; }
-.fyt-batch-track-empty { margin-top: var(--fyt-space-4); }
 
 @media (max-width: 920px) {
   .fyt-library-overview, .fyt-category-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }

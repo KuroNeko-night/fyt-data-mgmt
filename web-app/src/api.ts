@@ -252,12 +252,10 @@ export async function downloadMasterDataCatalog(): Promise<void> {
   link.remove();
   URL.revokeObjectURL(url);  // 点击后立即释放对象地址，避免浏览器长期占用
 }
-export type BatchTrackItem = { job_id: string; action: string; title: string; status: string; created_at: string; files: string[] };
-export function batchTrack(q: string) { return request<{ keyword: string; items: BatchTrackItem[] }>(`/api/batch-track?q=${encodeURIComponent(q)}`); }
 export type ReconcileScanBatch = { batch: string; sheet: string; rows: number; excluded_rows: number };
 export type ReconcileScanFile = { name: string; path: string; supplier: string | null; batches: ReconcileScanBatch[] };
 export type ArrivalScanRow = { path: string; name: string; batch_no: string; total: number; auto_total: number; missing_count: number; remark: string; include: boolean };
-// 批次跟踪、到料/对账单扫描、报表导出与任务结果分享接口。
+// 到料/对账单扫描、报表导出与任务结果分享接口。
 export function scanReconcile(paths: string[]) { return request<{ files: ReconcileScanFile[] }>("/api/reconcile/scan", { method: "POST", body: JSON.stringify({ paths }) }); }
 export function scanArrival(paths: string[]) { return request<{ rows: ArrivalScanRow[] }>("/api/arrival/scan", { method: "POST", body: JSON.stringify({ paths }) }); }
 export function buildReport(range: "7d" | "30d" | "month" | "all", scopeAll: boolean) { return request<{ url: string; name: string }>(`/api/reports?range=${range}&scope=${scopeAll ? "all" : "self"}`); }

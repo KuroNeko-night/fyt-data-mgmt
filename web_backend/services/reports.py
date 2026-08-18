@@ -1,4 +1,4 @@
-"""报表中心、批次跟踪与周期报表服务。"""
+"""报表中心与周期报表服务。"""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ REPORT_RANGE_LABELS = {
 
 @dataclass(frozen=True)
 class ReportDependencies:
-    """报表与批次跟踪服务所需的运行时依赖。"""
+    """报表生成、下载与周期任务所需的运行时依赖。"""
 
     db_lock: Any
     db: Callable[[], Any]
@@ -199,66 +199,6 @@ def auto_monthly_report_if_due(deps: ReportDependencies) -> str:
         notification_content="上月业务报表已生成，可在侧栏「报表中心」下载查看。",
         result_label="月报",
     )
-
-
-def _result_paths(value: object) -> list[str]:
-    """从任务结果的常用字段提取批次跟踪可展示的文件路径。"""
-    if not isinstance(value, dict):
-        return []
-    paths: list[str] = []
-    for key in ("files", "out_files", "xlsx", "report_path", "plan_path", "report"):  # 兼容各 Core 模块历史上使用的结果字段名。
-        item = value.get(key)
-        if isinstance(item, list):
-            paths.extend(str(path) for path in item if str(path).strip())
-        elif isinstance(item, str) and item.strip():
-            paths.append(item)
-    return paths
-
-
-def batch_track(handler: Any, deps: ReportDependencies) -> None:
-    """按关键词搜索当前账号近期任务及结果文件名中的批次线索。
-
-    入口仅允许班组长和管理员使用，但数据仍严格按当前账号隔离，不自动扩展为全系统
-    搜索。结果 JSON 先经兼容解析，再检查任务标题、动作和常用输出路径字段；最多扫描
-    三百条近期任务，避免批次跟踪因历史无限增长拖慢请求。
-    """
-    user = handler.require_role("admin", "team_leader")
-    query = parse_qs(urlparse(handler.path).query)
-    keyword = str((query.get("q") or [""])[0]).strip()[:80]
-    if not keyword:
-        handler.send_json({"keyword": "", "items": []})
-        return
-
-    with deps.db_lock, deps.db() as connection:
-        rows = connection.execute(
-            "SELECT id, action, title, status, created_at, updated_at, result FROM web_jobs "
-            "WHERE user_id = ? "
-            "ORDER BY created_at DESC LIMIT 300",  # 批次搜索服务于近期跟踪，限制扫描规模避免解析全部历史 JSON。
-            (int(user["id"]),),
-        ).fetchall()
-
-    keyword_lower = keyword.lower()
-    items = []
-    for row in rows:
-        result = deps.json_value(row["result"], None)
-        paths = _result_paths(result)
-        title_hit = keyword_lower in str(row["title"]).lower()
-        action_hit = keyword_lower in str(row["action"]).lower()
-        matched = [  # 标题和动作之外还必须检查文件名，批次号常只出现在输出文件中。
-            os.path.basename(path)
-            for path in paths
-            if keyword_lower in os.path.basename(path).lower()
-        ]
-        if title_hit or action_hit or matched:
-            items.append({
-                "job_id": row["id"],
-                "action": row["action"],
-                "title": row["title"],
-                "status": row["status"],
-                "created_at": row["created_at"],
-                "files": matched or [os.path.basename(path) for path in paths][:5],
-            })
-    handler.send_json({"keyword": keyword, "items": items})
 
 
 def build_report_endpoint(handler: Any, deps: ReportDependencies) -> None:

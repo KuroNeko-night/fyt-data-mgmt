@@ -84,7 +84,6 @@
 │  ├─ library_classification.py       文件分类评分器注册表
 │  ├─ library_scan.py                 Excel 文件有限扫描
 │  ├─ library_storage.py              文件归档、删除和回滚事务
-│  ├─ batch_track_core.py             批次关联追踪
 │  ├─ report_center_core.py           报表中心汇总
 │  ├─ invoice_core.py                 发票统计
 │  ├─ invoice_match_core.py           票货匹配
@@ -190,7 +189,6 @@
 │  ├─ src/DailyReportManagement.tsx     日清资料和人工维护
 │  ├─ src/WorkshopIssuePage.tsx         现场问题移动端页面
 │  ├─ src/FileLibraryPage.tsx           团队数据库
-│  ├─ src/BatchTrackPage.tsx            批次跟踪
 │  ├─ src/TaskCenterPage.tsx            任务中心
 │  ├─ src/NotificationCenterPage.tsx   消息中心
 │  ├─ src/AdminPage.tsx                 系统管理
@@ -243,6 +241,7 @@
 │     ├─ start/stop/restart/status/logs.sh      服务控制与日志
 │     ├─ backup.sh/common.sh                     备份和共享脚本函数
 │     ├─ fyt-web.service                         systemd 单元
+│     ├─ caddy-setup.sh/fyt-caddy.service        源站证书发现、Caddy 反向代理和静态服务回退
 │     └─ cloudflared*.sh                         临时与固定 Tunnel
 ├─ scripts/                            构建、同步、部署和质量检查工具
 │  ├─ setup-modern.ps1                  Windows 开发环境准备
@@ -388,7 +387,7 @@ def run(inputs, out_dir=None, log=None) -> dict:
 
 - 角色只有业务成员、班组长、管理员；角色键使用稳定英文值，客户文案使用 `web_backend/config.py` 的中文映射。
 - 所有角色可使用工作台、业务模块、任务中心、消息中心、账号安全，并可查看和提交现场问题。
-- 班组长和管理员可使用数据库、批次跟踪；只有管理员可使用日清看板、报表中心和系统管理。
+- 班组长和管理员可使用数据库；只有管理员可使用日清看板、报表中心和系统管理。
 - 普通成员只能维护自己的现场问题草稿；班组长可编辑、闭环和删除自己发布的问题；管理员可维护全部问题。
 - 注册账号必须经管理员审核。默认管理员凭据不得出现在登录页、README、帮助文案、截图或日志中。
 - 首次建库必须通过 `FYT_ADMIN_PASSWORD` 或控制台安全输入提供管理员密码；若使用安装器生成一次性随机密码，安装器仍须通过受保护环境变量传递，并在初始化后清理。

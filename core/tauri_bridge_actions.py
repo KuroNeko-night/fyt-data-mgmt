@@ -671,13 +671,6 @@ def _catalog_delete_material(payload):
     return material_catalog.list_all()
 
 
-def _batch_track_search(payload):
-    """在受管数据库中搜索批次、物料或订单关键词。"""
-    from . import batch_track_core
-    keyword = str((payload or {}).get("keyword") or "")
-    return batch_track_core.search(keyword)
-
-
 def _report_file_count(output_dir: str) -> int:
     """统计任务输出目录第一层普通文件数量；目录异常时返回零。"""
 
@@ -1056,7 +1049,6 @@ _ACTIONS = {
     "catalog.delete_supplier": _catalog_delete_supplier,
     "catalog.upsert_material": _catalog_upsert_material,
     "catalog.delete_material": _catalog_delete_material,
-    "batch_track.search": _batch_track_search,
     "report.build": _report_build,
     "invoice.scan": _invoice_scan,
     "invoice.generate": _invoice_generate,

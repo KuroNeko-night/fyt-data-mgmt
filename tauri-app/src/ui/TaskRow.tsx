@@ -2,7 +2,7 @@
  * 任务列表行 TaskRow。
  *
  * 任务状态、标题、时间、错误和操作区的统一列表行；配合 StatusBadge 展示注册状态，
- * 供任务中心、批次跟踪等列表页复用，业务数据由调用方组织后传入。
+ * 供任务中心等列表页复用，业务数据由调用方组织后传入。
  */
 import type { ReactNode } from "react";
 import StatusBadge from "./StatusBadge";

@@ -1,0 +1,22 @@
+[Unit]
+Description=Caddy web server for FYT
+Documentation=https://caddyserver.com/docs/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+User=caddy
+Group=caddy
+ExecStart=__CADDY_BIN__ run --environ --config __CADDYFILE__ --adapter caddyfile
+ExecReload=__CADDY_BIN__ reload --config __CADDYFILE__ --adapter caddyfile --force
+TimeoutStopSec=5s
+LimitNOFILE=1048576
+PrivateTmp=true
+ProtectSystem=full
+NoNewPrivileges=true
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target

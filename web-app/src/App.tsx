@@ -16,7 +16,6 @@ import { AccountSecurityPage } from "./AccountSecurityPage";
 import { NotificationCenterPage } from "./NotificationCenterPage";
 import { FileLibraryPage } from "./FileLibraryPage";
 import { WorkshopIssuePage } from "./WorkshopIssuePage";
-import { BatchTrackPage } from "./BatchTrackPage";
 import { ReportPage } from "./ReportPage";
 import { DailyReportPage } from "./DailyReportPage";
 import { FeaturesPage } from "./pages/FeaturesPage";
@@ -151,7 +150,6 @@ function Dashboard({ initialUser, onLogout }: { initialUser: User; onLogout: () 
     if (active === "workshop") return <SectionErrorBoundary title="现场问题" onRetry={() => void refresh()}><WorkshopIssuePage /></SectionErrorBoundary>;
     if (active === "features") return <SectionErrorBoundary title="业务模块" onRetry={() => retrySection("overview")}><FeaturesPage features={features} onOpen={openFeature} /></SectionErrorBoundary>;
     if (active === "library") return <SectionErrorBoundary title="数据库" onRetry={() => void refresh()}><FileLibraryPage /></SectionErrorBoundary>;
-    if (active === "batch-track") return <SectionErrorBoundary title="批次跟踪" onRetry={() => void refresh()}><BatchTrackPage /></SectionErrorBoundary>;
     if (active === "reports") return <SectionErrorBoundary title="报表中心" onRetry={() => void refresh()}><ReportPage /></SectionErrorBoundary>;
     if (active === "daily-report" && user.role === "admin") return <SectionErrorBoundary title="日清数据看板" onRetry={() => void refresh()}><DailyReportPage /></SectionErrorBoundary>;
     if (active === "tasks") return <SectionErrorBoundary title="任务中心" onRetry={() => void refresh()}><TaskCenterPage onOpenFeature={openAction} initialFilter={taskFilter} /></SectionErrorBoundary>;

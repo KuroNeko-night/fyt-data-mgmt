@@ -35,19 +35,25 @@
 
 /* 根节点至少铺满视口，但实际应用滚动由 .fyt-shell-scroll 接管。 */
 html {
+  height: 100%;
   min-height: 100%;
+  overflow: hidden;
   background: var(--fyt-canvas);
 }
 
 body {
+  height: 100%;
   min-width: 320px;
-  min-height: 100vh;
+  min-height: 100%;
   margin: 0;
+  overflow: hidden;
   background: var(--fyt-canvas);
 }
 
 #root {
-  min-height: 100vh;
+  height: 100%;
+  min-height: 100%;
+  overflow: hidden;
 }
 
 /* 防止业务表格或美术图片按原始像素撑破响应式容器。 */

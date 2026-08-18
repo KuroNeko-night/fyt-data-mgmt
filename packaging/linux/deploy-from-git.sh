@@ -18,7 +18,7 @@
 #   FYT_GIT_TOOLS_DIR        Node 与 npm 缓存目录，默认 /opt/fyt/git-tools
 #
 # install.sh 支持的 FYT_INSTALL_ROOT、FYT_INSTALL_DIR、FYT_DATA_DIR、FYT_WEB_PORT、
-# FYT_WEB_HOST、FYT_ADMIN_PASSWORD、FYT_PYTHON 和 PIP_INDEX_URL 等变量会原样继承。
+# FYT_WEB_HOST、FYT_ADMIN_PASSWORD、FYT_PYTHON、PIP_INDEX_URL 和 FYT_CADDY_* 等变量会原样继承。
 set -euo pipefail
 umask 077
 

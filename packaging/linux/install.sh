@@ -132,6 +132,7 @@ cp -a "$SOURCE_DIR/core" "$STAGE/"
 cp -a "$SOURCE_DIR/web-app" "$STAGE/"
 cp -a "$SOURCE_DIR/requirements.txt" "$STAGE/"
 cp -a "$SOURCE_DIR/fyt-web.service" "$STAGE/"
+[ -f "$SOURCE_DIR/fyt-caddy.service" ] && cp -a "$SOURCE_DIR/fyt-caddy.service" "$STAGE/"
 [ -f "$SOURCE_DIR/VERSION" ] && cp -a "$SOURCE_DIR/VERSION" "$STAGE/"
 # Git 直接部署会附带提交和引用信息；这些是可公开的版本元数据，不包含凭据或业务数据。
 for metadata in SOURCE_COMMIT SOURCE_REF; do
@@ -371,6 +372,13 @@ if grep -q '^FYT_ADMIN_PASSWORD=' "$ENV_FILE"; then
     sed -i '/^FYT_ADMIN_PASSWORD=/d' "$ENV_FILE"
     chown root:fyt-web "$ENV_FILE"
     chmod 640 "$ENV_FILE"
+fi
+
+# Caddy 自动化独立于应用切换：未在 /root 识别到配套证书/私钥时脚本正常跳过；识别成功
+# 后使用证书 SAN 生成反向代理配置，启用 caddy.service，并通过本机 443 再次检查健康接口。
+if [ -f "$APP_DIR/caddy-setup.sh" ]; then
+    bash "$APP_DIR/caddy-setup.sh" "$PORT" \
+        || die "应用服务已正常启动，但 Caddy 自动安装或反向代理配置失败；请查看上方 [Caddy] 日志"
 fi
 
 say "安装完成"

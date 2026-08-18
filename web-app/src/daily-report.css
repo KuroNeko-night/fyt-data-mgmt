@@ -504,27 +504,42 @@
 .fyt-daily-tab-view { display: grid; gap: var(--fyt-space-5); min-width: 0; animation: fyt-daily-tab-in var(--fyt-motion-base) var(--fyt-motion-ease) both; }
 .fyt-daily-tab-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--fyt-space-5); padding: var(--fyt-space-5); border: 1px solid var(--fyt-border); border-radius: var(--fyt-radius-card); background: var(--fyt-surface); }
 .fyt-daily-tab-heading p, .fyt-daily-roster header p, .fyt-daily-brief-form header p, .fyt-daily-plan-detail header p, .fyt-daily-category-summary header p { margin: 5px 0 0; color: var(--fyt-text-secondary); font-size: var(--fyt-type-caption); line-height: 1.65; }
+.fyt-daily-attendance-toolbar { display: flex; align-items: center; justify-content: space-between; gap: var(--fyt-space-4); padding: var(--fyt-space-3) var(--fyt-space-4); border: 1px solid var(--fyt-border); border-radius: var(--fyt-radius-card); background: color-mix(in srgb, var(--fyt-surface) 92%, var(--fyt-primary-soft)); }
+.fyt-daily-attendance-toolbar > p { margin: 0; color: var(--fyt-text-muted); font-size: var(--fyt-type-caption); }
+.fyt-daily-attendance-toolbar-actions { display: flex; align-items: center; gap: var(--fyt-space-2); }
+.fyt-daily-attendance-summary-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); overflow: hidden; border: 1px solid var(--fyt-border); border-radius: var(--fyt-radius-card); background: var(--fyt-surface); }
+.fyt-daily-attendance-summary-strip article { position: relative; display: grid; min-width: 0; gap: 5px; padding: var(--fyt-space-4) var(--fyt-space-5); border-left: 1px solid var(--fyt-border); }
+.fyt-daily-attendance-summary-strip article:first-child { border-left: 0; }
+.fyt-daily-attendance-summary-strip article::before { position: absolute; top: 0; right: var(--fyt-space-4); left: var(--fyt-space-4); height: 2px; border-radius: 0 0 var(--fyt-radius-pill) var(--fyt-radius-pill); background: var(--fyt-primary); content: ""; opacity: .56; }
+.fyt-daily-attendance-summary-strip article[data-tone="success"]::before { background: var(--fyt-success); }
+.fyt-daily-attendance-summary-strip article[data-tone="warning"]::before { background: var(--fyt-warning); }
+.fyt-daily-attendance-summary-strip span, .fyt-daily-attendance-summary-strip small { overflow: hidden; color: var(--fyt-text-muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.fyt-daily-attendance-summary-strip strong { overflow: hidden; color: var(--fyt-text); font: 700 23px/1.2 var(--fyt-type-font-mono); text-overflow: ellipsis; white-space: nowrap; }
 .fyt-daily-attendance-layout { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--fyt-space-5); }
-.fyt-daily-attendance-group, .fyt-daily-roster, .fyt-daily-brief-form, .fyt-daily-brief-list, .fyt-daily-plan-detail, .fyt-daily-category-summary { min-width: 0; border: 1px solid var(--fyt-border); border-radius: var(--fyt-radius-card); background: var(--fyt-surface); }
+.fyt-daily-attendance-group, .fyt-daily-roster, .fyt-daily-brief-form, .fyt-daily-brief-list, .fyt-daily-plan-detail, .fyt-daily-production-empty, .fyt-daily-category-summary { min-width: 0; border: 1px solid var(--fyt-border); border-radius: var(--fyt-radius-card); background: var(--fyt-surface); }
 .fyt-daily-attendance-group { overflow: hidden; }
 .fyt-daily-attendance-group > header, .fyt-daily-brief-list > header, .fyt-daily-category-summary > header { display: flex; align-items: center; justify-content: space-between; gap: var(--fyt-space-4); padding: var(--fyt-space-5); border-bottom: 1px solid var(--fyt-border); }
 .fyt-daily-attendance-group > header h3 { margin: 0; color: var(--fyt-text); font-size: var(--fyt-type-card); }
 .fyt-daily-attendance-group > header p { margin: 4px 0 0; color: var(--fyt-text-secondary); font-size: var(--fyt-type-caption); }
-.fyt-daily-attendance-group > header > strong { color: var(--fyt-success); font: 700 23px/1 var(--fyt-type-font-mono); }
+.fyt-daily-attendance-group > header > strong, .fyt-daily-attendance-section-actions > strong { color: var(--fyt-success); font: 700 23px/1 var(--fyt-type-font-mono); }
+.fyt-daily-attendance-section-actions { display: flex; align-items: center; gap: var(--fyt-space-2); }
+.fyt-daily-attendance-section-actions button { min-height: 34px; padding: 0 var(--fyt-space-3); border: 1px solid var(--fyt-border); border-radius: var(--fyt-radius-control); color: var(--fyt-text-secondary); background: var(--fyt-surface); font-size: 11px; font-weight: 700; }
+.fyt-daily-attendance-section-actions button:hover, .fyt-daily-attendance-section-actions button[aria-pressed="true"] { border-color: var(--fyt-primary); color: var(--fyt-primary-strong); background: var(--fyt-primary-soft); }
+.fyt-daily-attendance-section-actions button:disabled { opacity: .45; cursor: not-allowed; }
 .fyt-daily-attendance-summary-panel { overflow: hidden; }
 .fyt-daily-attendance-summary-table { overflow-x: auto; }
 .fyt-daily-attendance-summary-table table { width: 100%; min-width: 760px; border-collapse: collapse; }
 .fyt-daily-attendance-summary-table th, .fyt-daily-attendance-summary-table td { padding: 10px 12px; border-top: 1px solid var(--fyt-border); color: var(--fyt-text-secondary); font-size: var(--fyt-type-caption); text-align: left; vertical-align: top; }
 .fyt-daily-attendance-summary-table th { color: var(--fyt-text-muted); background: var(--fyt-surface-subtle); font-weight: 700; }
 .fyt-daily-attendance-list { display: grid; }
-.fyt-daily-attendance-list article { display: grid; grid-template-columns: minmax(130px, 1fr) 108px 104px minmax(170px, 1.2fr); align-items: center; gap: var(--fyt-space-3); min-height: 72px; padding: var(--fyt-space-3) var(--fyt-space-5); border-top: 1px solid var(--fyt-border); }
+.fyt-daily-attendance-list article { display: grid; grid-template-columns: minmax(130px, 1fr) 108px minmax(220px, 1.25fr); align-items: center; gap: var(--fyt-space-3); min-height: 68px; padding: var(--fyt-space-3) var(--fyt-space-5); border-top: 1px solid var(--fyt-border); }
 .fyt-daily-attendance-list article:first-child { border-top: 0; }
 .fyt-daily-attendance-list article[data-present="false"] { background: color-mix(in srgb, var(--fyt-warning-soft) 52%, var(--fyt-surface)); }
 .fyt-daily-attendance-person { min-width: 0; }
 .fyt-daily-attendance-person strong, .fyt-daily-attendance-person span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fyt-daily-attendance-person strong { color: var(--fyt-text); font-size: var(--fyt-type-body); }
 .fyt-daily-attendance-person span { margin-top: 4px; color: var(--fyt-text-muted); font-size: 11px; }
-.fyt-daily-switch { display: grid; grid-template-columns: 42px auto; align-items: center; gap: var(--fyt-space-2); cursor: pointer; }
+.fyt-daily-switch { position: relative; display: grid; grid-template-columns: 42px auto; align-items: center; gap: var(--fyt-space-2); cursor: pointer; }
 .fyt-daily-switch input { position: absolute; opacity: 0; pointer-events: none; }
 .fyt-daily-switch > span { position: relative; display: block; width: 42px; height: 24px; border-radius: var(--fyt-radius-pill); background: var(--fyt-border-strong); transition: background-color var(--fyt-motion-fast) var(--fyt-motion-ease); }
 .fyt-daily-switch > span::after { position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: var(--fyt-surface); box-shadow: 0 1px 4px color-mix(in srgb, var(--fyt-text) 20%, transparent); content: ""; transition: transform var(--fyt-motion-fast) var(--fyt-motion-ease); }
@@ -532,6 +547,8 @@
 .fyt-daily-switch input:checked + span::after { transform: translateX(18px); }
 .fyt-daily-switch input:focus-visible + span { outline: 3px solid color-mix(in srgb, var(--fyt-focus) 35%, transparent); outline-offset: 2px; }
 .fyt-daily-switch em { color: var(--fyt-text-secondary); font-size: var(--fyt-type-caption); font-style: normal; font-weight: 700; }
+.fyt-daily-attendance-normal { display: flex; min-height: 38px; align-items: center; justify-content: flex-end; gap: 6px; color: var(--fyt-success); font-size: var(--fyt-type-caption); font-weight: 700; }
+.fyt-daily-attendance-exception { display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: var(--fyt-space-2); }
 .fyt-daily-attendance-list select, .fyt-daily-attendance-list input, .fyt-daily-roster input, .fyt-daily-roster select, .fyt-daily-brief-form input, .fyt-daily-brief-form select, .fyt-daily-brief-form textarea { min-width: 0; border: 1px solid var(--fyt-border); border-radius: var(--fyt-radius-control); color: var(--fyt-text); background: var(--fyt-surface); font-size: var(--fyt-type-caption); }
 .fyt-daily-attendance-list select, .fyt-daily-attendance-list input { height: 38px; padding: 0 var(--fyt-space-3); }
 .fyt-daily-attendance-list select:disabled, .fyt-daily-attendance-list input:disabled { color: var(--fyt-text-muted); background: var(--fyt-surface-subtle); }
@@ -546,13 +563,21 @@
 .fyt-daily-production-attendance-group-card em[data-difference="shortage"], .fyt-daily-production-attendance-list > footer em[data-difference="shortage"] { color: var(--fyt-danger); background: var(--fyt-danger-soft); }
 .fyt-daily-production-attendance-group-card em[data-difference="over"], .fyt-daily-production-attendance-list > footer em[data-difference="over"] { color: var(--fyt-primary-strong); background: var(--fyt-primary-soft); }
 .fyt-daily-production-attendance-group-card > div { display: grid; }
-.fyt-daily-production-attendance-group-card section { display: grid; grid-template-columns: minmax(150px, .72fr) minmax(112px, .42fr) minmax(190px, 1.25fr); align-items: end; gap: var(--fyt-space-3); min-height: 82px; padding: var(--fyt-space-3) var(--fyt-space-5); border-top: 1px solid var(--fyt-border); }
-.fyt-daily-production-shift-name { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 4px var(--fyt-space-2); }
+.fyt-daily-production-attendance-group-card section { display: grid; grid-template-areas: "name progress attendance action" "note note note note"; grid-template-columns: minmax(120px, .65fr) minmax(180px, 1.15fr) 110px auto; align-items: center; gap: var(--fyt-space-3); min-height: 76px; padding: var(--fyt-space-3) var(--fyt-space-5); border-top: 1px solid var(--fyt-border); }
+.fyt-daily-production-shift-name { display: grid; grid-area: name; grid-template-columns: 1fr auto; align-items: center; gap: 4px var(--fyt-space-2); }
 .fyt-daily-production-shift-name strong { color: var(--fyt-text); font-size: var(--fyt-type-caption); }
 .fyt-daily-production-shift-name span { color: var(--fyt-text-muted); font-size: 10px; }
 .fyt-daily-production-shift-name em { grid-column: 1 / -1; justify-self: start; }
+.fyt-daily-production-shift-progress { display: grid; min-width: 0; grid-area: progress; gap: 7px; }
+.fyt-daily-production-shift-progress > div { display: flex; align-items: center; justify-content: space-between; gap: var(--fyt-space-2); color: var(--fyt-text-muted); font-size: 10px; }
+.fyt-daily-production-shift-progress > div strong { color: var(--fyt-text-secondary); font-family: var(--fyt-type-font-mono); }
+.fyt-daily-production-shift-progress > i { display: block; height: 8px; overflow: hidden; border-radius: var(--fyt-radius-pill); background: var(--fyt-border); }
+.fyt-daily-production-shift-progress > i b { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--fyt-primary), var(--fyt-success)); transition: width var(--fyt-motion-base) var(--fyt-motion-ease); }
 .fyt-daily-production-attendance-list label { display: grid; gap: 5px; min-width: 0; color: var(--fyt-text-muted); font-size: 10px; font-weight: 700; }
+.fyt-daily-production-attendance-group-card section > label:not(.fyt-daily-production-note) { grid-area: attendance; }
 .fyt-daily-production-attendance-list input { width: 100%; min-width: 0; height: 40px; padding: 0 var(--fyt-space-3); border: 1px solid var(--fyt-border); border-radius: var(--fyt-radius-control); color: var(--fyt-text); background: var(--fyt-surface); font-size: var(--fyt-type-caption); }
+.fyt-daily-note-toggle { min-height: 36px; grid-area: action; padding: 0 var(--fyt-space-3); border: 1px solid var(--fyt-border); border-radius: var(--fyt-radius-control); color: var(--fyt-primary-strong); background: var(--fyt-surface); font-size: 11px; font-weight: 700; white-space: nowrap; }
+.fyt-daily-production-attendance-group-card section > .fyt-daily-production-note { grid-area: note; }
 .fyt-daily-production-attendance-list > footer { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: var(--fyt-space-3); padding: var(--fyt-space-4) var(--fyt-space-5); border-top: 1px solid var(--fyt-border); background: var(--fyt-surface-subtle); }
 .fyt-daily-production-attendance-list > footer span, .fyt-daily-production-attendance-list > footer strong { color: var(--fyt-text-secondary); font-size: var(--fyt-type-caption); }
 
@@ -589,9 +614,52 @@
 .fyt-daily-roster-list button, .fyt-daily-row-actions button { min-height: 34px; padding: 0 var(--fyt-space-3); border: 1px solid var(--fyt-border); border-radius: var(--fyt-radius-control); color: var(--fyt-primary-strong); background: var(--fyt-surface); font-size: var(--fyt-type-caption); }
 .fyt-daily-roster-list button.danger, .fyt-daily-row-actions button.danger { color: var(--fyt-danger); }
 
+.fyt-daily-master-data-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--fyt-space-5); align-items: start; }
+.fyt-daily-master-card > header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--fyt-space-4); margin-bottom: 0; }
+.fyt-daily-master-card > header h2 { margin: 4px 0 0; color: var(--fyt-text); font-size: var(--fyt-type-card); }
+.fyt-daily-master-card > header span { color: var(--fyt-primary-strong); font-size: 10px; font-weight: 750; }
+.fyt-daily-master-list { display: grid; margin: var(--fyt-space-4) calc(var(--fyt-space-5) * -1) calc(var(--fyt-space-5) * -1); border-top: 1px solid var(--fyt-border); }
+.fyt-daily-master-list article { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: var(--fyt-space-3); min-height: 68px; padding: var(--fyt-space-3) var(--fyt-space-5); border-bottom: 1px solid var(--fyt-border); }
+.fyt-daily-master-list article:last-child { border-bottom: 0; }
+.fyt-daily-master-list article[data-active="false"] { opacity: .62; }
+.fyt-daily-master-list article > div { min-width: 0; }
+.fyt-daily-master-list article strong, .fyt-daily-master-list article span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fyt-daily-master-list article strong { color: var(--fyt-text); font-size: var(--fyt-type-body); }
+.fyt-daily-master-list article span { margin-top: 4px; color: var(--fyt-text-muted); font-size: 11px; }
+.fyt-daily-master-list article em { color: var(--fyt-text-secondary); font-size: 11px; font-style: normal; font-weight: 700; white-space: nowrap; }
+.fyt-daily-editor-form { display: grid; gap: var(--fyt-space-4); }
+.fyt-daily-editor-form > div, .fyt-daily-group-editor-main { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--fyt-space-3); }
+.fyt-daily-editor-form label { display: grid; min-width: 0; gap: var(--fyt-space-2); color: var(--fyt-text-secondary); font-size: var(--fyt-type-caption); font-weight: 700; }
+.fyt-daily-editor-form input { min-width: 0; height: 42px; padding: 0 var(--fyt-space-3); border: 1px solid var(--fyt-border); border-radius: var(--fyt-radius-control); color: var(--fyt-text); background: var(--fyt-surface); font-size: var(--fyt-type-caption); }
+.fyt-daily-editor-form .fyt-daily-editor-check { display: flex; min-height: 42px; align-items: center; align-self: end; gap: var(--fyt-space-2); }
+.fyt-daily-editor-form .fyt-daily-editor-check input { width: 18px; height: 18px; padding: 0; }
+.fyt-daily-editor-form > footer { display: flex; align-items: center; justify-content: space-between; gap: var(--fyt-space-3); padding-top: var(--fyt-space-3); border-top: 1px solid var(--fyt-border); }
+.fyt-daily-editor-form > footer > div { display: flex; gap: var(--fyt-space-2); }
+.fyt-daily-group-editor-main { grid-template-columns: minmax(220px, 1fr) 100px 150px; }
+.fyt-daily-group-editor-shifts { display: grid; overflow: hidden; border: 1px solid var(--fyt-border); border-radius: var(--fyt-radius-card); }
+.fyt-daily-group-editor-shifts > header { display: flex; align-items: center; justify-content: space-between; gap: var(--fyt-space-3); padding: var(--fyt-space-3) var(--fyt-space-4); background: var(--fyt-surface-subtle); }
+.fyt-daily-group-editor-shifts > header > div { display: grid; gap: 3px; }
+.fyt-daily-group-editor-shifts > header strong { color: var(--fyt-text); font-size: var(--fyt-type-caption); }
+.fyt-daily-group-editor-shifts > header span { color: var(--fyt-text-muted); font-size: 10px; }
+.fyt-daily-group-editor-shifts article { display: grid; grid-template-columns: minmax(150px, 1fr) 140px 90px 90px auto; align-items: end; gap: var(--fyt-space-3); padding: var(--fyt-space-3) var(--fyt-space-4); border-top: 1px solid var(--fyt-border); }
+.fyt-daily-group-editor-shifts article[data-active="false"] { opacity: .62; }
+.fyt-daily-attendance-drawer { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--fyt-space-3); }
+.fyt-daily-attendance-drawer > section { display: grid; gap: 4px; padding: var(--fyt-space-4); border: 1px solid var(--fyt-border); border-radius: var(--fyt-radius-card); background: var(--fyt-surface-subtle); }
+.fyt-daily-attendance-drawer > section span, .fyt-daily-attendance-drawer > section small { color: var(--fyt-text-muted); font-size: 11px; }
+.fyt-daily-attendance-drawer > section strong { color: var(--fyt-text); font: 700 22px/1.2 var(--fyt-type-font-mono); }
+.fyt-daily-attendance-drawer-list { display: grid; grid-column: 1 / -1; gap: var(--fyt-space-2); }
+.fyt-daily-attendance-drawer-list article { padding: var(--fyt-space-3); border: 1px solid var(--fyt-border); border-radius: var(--fyt-radius-control); }
+.fyt-daily-attendance-drawer-list article header { display: flex; align-items: center; justify-content: space-between; gap: var(--fyt-space-3); }
+.fyt-daily-attendance-drawer-list article header > div { display: grid; gap: 3px; }
+.fyt-daily-attendance-drawer-list article strong { color: var(--fyt-text); font-size: var(--fyt-type-caption); }
+.fyt-daily-attendance-drawer-list article span, .fyt-daily-attendance-drawer-list article p { color: var(--fyt-text-muted); font-size: 11px; }
+.fyt-daily-attendance-drawer-list article em { color: var(--fyt-primary-strong); font: 700 14px/1 var(--fyt-type-font-mono); font-style: normal; }
+.fyt-daily-attendance-drawer-list article p { margin: var(--fyt-space-2) 0 0; line-height: 1.6; }
+
 .fyt-daily-brief-layout { grid-template-columns: minmax(320px, .75fr) minmax(0, 1.25fr); align-items: start; }
-/* 桌面端事项录入卡在主滚动区内吸附，右侧当天事项可持续向下浏览。 */
-.fyt-daily-brief-form { position: sticky; top: var(--fyt-space-4); display: grid; gap: var(--fyt-space-4); padding: var(--fyt-space-5); }
+/* 桌面端事项录入卡与现场问题表单保持一致：卡片吸附于视口，超长字段在卡片内部滚动。 */
+.fyt-daily-brief-form { position: sticky; top: var(--fyt-space-4); display: grid; gap: var(--fyt-space-4); max-height: calc(100dvh - var(--fyt-layout-web-topbar) - 64px - var(--fyt-space-12)); overflow-y: auto; overscroll-behavior: contain; padding: var(--fyt-space-5); scrollbar-width: none; }
+.fyt-daily-brief-form::-webkit-scrollbar { display: none; width: 0; height: 0; }
 .fyt-daily-brief-form label { display: grid; gap: var(--fyt-space-2); color: var(--fyt-text-secondary); font-size: var(--fyt-type-caption); font-weight: 700; }
 .fyt-daily-brief-form input, .fyt-daily-brief-form select { height: 42px; padding: 0 var(--fyt-space-3); }
 .fyt-daily-brief-form textarea { padding: var(--fyt-space-3); resize: vertical; }
@@ -622,6 +690,8 @@
 
 .fyt-daily-upload-button { display: flex; min-height: 44px; align-items: center; justify-content: center; gap: var(--fyt-space-2); padding: 0 var(--fyt-space-4); border-radius: var(--fyt-radius-control); color: var(--fyt-surface); background: var(--fyt-primary); font-size: var(--fyt-type-caption); font-weight: 700; cursor: pointer; }
 .fyt-daily-upload-button input { display: none; }
+.fyt-daily-production-empty { overflow: hidden; }
+.fyt-daily-production-empty .fyt-empty-state { min-height: 240px; align-content: center; }
 .fyt-daily-plan-layout { display: grid; grid-template-columns: minmax(240px, .35fr) minmax(0, 1fr); gap: var(--fyt-space-5); align-items: start; }
 .fyt-daily-plan-layout > nav { display: grid; gap: var(--fyt-space-2); }
 .fyt-daily-plan-layout > nav button { display: grid; min-width: 0; gap: 5px; padding: var(--fyt-space-4); border: 1px solid var(--fyt-border); border-radius: var(--fyt-radius-control); color: var(--fyt-text-secondary); background: var(--fyt-surface); text-align: left; }
@@ -688,7 +758,11 @@
   .fyt-daily-workshop-summary { min-height: 0; }
   .fyt-daily-issue-list article { grid-template-columns: 84px minmax(0, 1fr) minmax(180px, 240px); }
   .fyt-daily-attendance-layout, .fyt-daily-brief-layout { grid-template-columns: 1fr; }
-  .fyt-daily-brief-form { position: static; }
+  .fyt-daily-attendance-summary-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .fyt-daily-attendance-summary-strip article:nth-child(odd) { border-left: 0; }
+  .fyt-daily-attendance-summary-strip article:nth-child(n + 3) { border-top: 1px solid var(--fyt-border); }
+  .fyt-daily-master-data-grid { grid-template-columns: 1fr; }
+  .fyt-daily-brief-form { position: static; max-height: none; overflow: visible; }
   .fyt-daily-roster-create { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .fyt-daily-roster-create .fyt-button { grid-column: 1 / -1; }
   .fyt-daily-roster-list article { grid-template-columns: repeat(2, minmax(0, 1fr)) 72px 110px; }
@@ -723,12 +797,26 @@
   .fyt-daily-issue-images::-webkit-scrollbar { display: none; }
   .fyt-daily-issue-images > span { min-width: 180px; }
   .fyt-daily-issue-images > small { display: none; }
+  .fyt-daily-tab-page:has(.fyt-daily-attendance-toolbar-actions) { padding-bottom: 82px; }
+  .fyt-daily-attendance-toolbar { align-items: stretch; flex-direction: column; }
+  .fyt-daily-attendance-toolbar .fyt-segmented-control { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; }
+  .fyt-daily-attendance-toolbar-actions { position: fixed; z-index: 850; right: var(--fyt-space-3); bottom: calc(var(--fyt-layout-web-mobile-bar) + env(safe-area-inset-bottom) + var(--fyt-space-2)); left: var(--fyt-space-3); justify-content: stretch; padding: var(--fyt-space-2); border: 1px solid var(--fyt-border-strong); border-radius: var(--fyt-radius-card); background: color-mix(in srgb, var(--fyt-surface) 96%, transparent); box-shadow: var(--fyt-elevation-overlay); backdrop-filter: blur(18px); }
+  .fyt-daily-attendance-toolbar-actions .fyt-button { flex: 1; }
+  .fyt-daily-attendance-section-head { align-items: flex-start !important; flex-direction: column; }
+  .fyt-daily-attendance-section-actions { width: 100%; flex-wrap: wrap; }
+  .fyt-daily-attendance-section-actions > strong { margin-left: auto; }
   .fyt-daily-attendance-list article { grid-template-columns: minmax(130px, 1fr) 104px; }
-  .fyt-daily-attendance-list article > select, .fyt-daily-attendance-list article > input { grid-column: span 1; }
-  .fyt-daily-production-attendance-group-card section { grid-template-columns: minmax(150px, .7fr) minmax(120px, .45fr); }
+  .fyt-daily-attendance-normal, .fyt-daily-attendance-exception { grid-column: 1 / -1; }
+  .fyt-daily-attendance-normal { justify-content: flex-start; }
+  .fyt-daily-production-attendance-group-card section { grid-template-areas: "name attendance" "progress progress" "action action" "note note"; grid-template-columns: minmax(0, 1fr) 120px; align-items: end; }
+  .fyt-daily-note-toggle { justify-self: stretch; }
   .fyt-daily-attendance-bars article { grid-template-columns: 1fr; gap: var(--fyt-space-2); }
   .fyt-daily-attendance-summary-row { grid-template-columns: 1fr; align-items: stretch; }
-  .fyt-daily-production-attendance-group-card section > label:last-child { grid-column: 1 / -1; }
+  .fyt-daily-master-card > header { align-items: flex-start; }
+  .fyt-daily-group-editor-main { grid-template-columns: minmax(0, 1fr) 100px; }
+  .fyt-daily-group-editor-main .fyt-daily-editor-check { grid-column: 1 / -1; }
+  .fyt-daily-group-editor-shifts article { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .fyt-daily-group-editor-shifts article > .fyt-button { align-self: end; }
   .fyt-daily-production-group-main { grid-template-columns: minmax(160px, 1fr) 90px 72px minmax(90px, auto); }
   .fyt-daily-production-group-actions { grid-column: 1 / -1; justify-content: stretch; }
   .fyt-daily-production-group-actions button { flex: 1; }
@@ -778,14 +866,26 @@
   .fyt-daily-issue-index { display: flex; align-items: center; justify-content: space-between; }
   .fyt-daily-issue-index span { font-size: 18px; }
   .fyt-daily-issue-images { grid-column: auto; }
+  .fyt-daily-attendance-summary-strip { grid-template-columns: 1fr; }
+  .fyt-daily-attendance-summary-strip article, .fyt-daily-attendance-summary-strip article:nth-child(odd) { border-top: 1px solid var(--fyt-border); border-left: 0; }
+  .fyt-daily-attendance-summary-strip article:first-child { border-top: 0; }
   .fyt-daily-attendance-list article { grid-template-columns: 1fr; align-items: stretch; }
-  .fyt-daily-attendance-list article > select, .fyt-daily-attendance-list article > input { grid-column: auto; }
-  .fyt-daily-attendance-list article > input { min-height: 42px; }
+  .fyt-daily-attendance-list article > * { grid-column: auto; }
+  .fyt-daily-attendance-exception { grid-template-columns: 1fr; }
   .fyt-daily-attendance-progress { grid-template-columns: minmax(0, 1fr) auto; }
-  .fyt-daily-production-attendance-group-card section { grid-template-columns: 1fr; align-items: stretch; }
-  .fyt-daily-production-attendance-group-card section > label:last-child { grid-column: auto; }
+  .fyt-daily-production-attendance-group-card section { grid-template-areas: "name" "progress" "attendance" "action" "note"; grid-template-columns: 1fr; align-items: stretch; }
   .fyt-daily-production-attendance-group-card > header, .fyt-daily-production-shift-editor > header { align-items: flex-start; flex-direction: column; }
   .fyt-daily-production-attendance-list > footer { align-items: flex-start; flex-direction: column; }
+  .fyt-daily-master-card > header { flex-direction: column; }
+  .fyt-daily-master-card > header .fyt-button { width: 100%; }
+  .fyt-daily-master-list article { grid-template-columns: minmax(0, 1fr) auto; }
+  .fyt-daily-master-list article .fyt-button { grid-column: 1 / -1; }
+  .fyt-daily-editor-form > div, .fyt-daily-group-editor-main, .fyt-daily-group-editor-shifts article { grid-template-columns: 1fr; }
+  .fyt-daily-editor-form > footer { align-items: stretch; flex-direction: column-reverse; }
+  .fyt-daily-editor-form > footer > div { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .fyt-daily-editor-form > footer > .fyt-button { width: 100%; }
+  .fyt-daily-attendance-drawer { grid-template-columns: 1fr; }
+  .fyt-daily-attendance-drawer-list { grid-column: auto; }
   .fyt-daily-production-group-main, .fyt-daily-production-group-create > .fyt-daily-production-group-main, .fyt-daily-production-shift-editor-row { grid-template-columns: 1fr; }
   .fyt-daily-production-group-actions { grid-column: auto; }
   .fyt-daily-roster-create, .fyt-daily-roster-list article, .fyt-daily-form-grid { grid-template-columns: 1fr; }

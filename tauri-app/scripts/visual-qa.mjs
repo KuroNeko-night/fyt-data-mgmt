@@ -43,7 +43,6 @@ const navigationPages = [
   ["tasks", "任务中心", "任务中心"],
   ["mappings", "字段映射中心", "字段映射中心"],
   ["catalog", "主数据档案", "主数据档案"],
-  ["batch_track", "批次跟踪", "批次跟踪"],
   ["report_center", "报表中心", "报表中心"],
   ["templates", "模板中心", "模板中心"],
   ["invoice", "增值税发票统计", "增值税发票统计"],

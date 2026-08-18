@@ -15,7 +15,7 @@ import type { AppSettings, HealthInfo, LibrarySummary, TaskResult } from "../lib
 import { AboutPage, CurrencyPage, HomePage, SettingsPage, TaskCenterPage } from "../pages/pages";
 import { ArrivalPage, AttendancePage, AttendanceArchivePage, DeliveryPage, InvoicePage, PivotPage, PurchasePage, PurchasePlanPage, ReconcilePage, ReconcileStatementPage, ShippingReviewPage, SupplierBatchPage } from "../pages/business-pages";
 import { ComparePage, ExcelToolsPage, PdfPage, RenamePage, TextPage } from "../pages/tool-pages";
-import { DataLibraryPage, CatalogPage, BatchTrackPage, ReportPage, MappingPage, TemplatePage } from "../pages/data-pages";
+import { DataLibraryPage, CatalogPage, ReportPage, MappingPage, TemplatePage } from "../pages/data-pages";
 import AppSidebar from "./AppSidebar";
 import AppTopbar from "./AppTopbar";
 import ContextPanel from "./ContextPanel";
@@ -37,7 +37,6 @@ const SIMPLE_PAGES: Readonly<Record<string, ComponentType>> = {
   tasks: TaskCenterPage,
   mappings: MappingPage,
   catalog: CatalogPage,
-  batch_track: BatchTrackPage,
   report_center: ReportPage,
   templates: TemplatePage,
   invoice: InvoicePage,

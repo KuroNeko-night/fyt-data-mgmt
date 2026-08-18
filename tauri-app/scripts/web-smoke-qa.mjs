@@ -3,7 +3,7 @@
  * Web 前端构建产物冒烟测试。
  *
  * 脚本先执行正式构建，再启动 Vite preview，并用 Playwright 拦截同源 API 请求。
- * 合成响应覆盖登录、角色权限、工作台、批次跟踪、日清批次弹窗和业务结果投影，
+ * 合成响应覆盖登录、角色权限、工作台、日清批次弹窗和业务结果投影，
  * 因而可以在不读写真实 web-data、不依赖后端服务的前提下验证前端发布产物。
  * 这里验证的是页面协议和响应式布局，不替代服务端接口与 core 业务回归测试。
  */
@@ -42,7 +42,7 @@ async function waitForServer(url, timeoutMs = 30000) {
   throw new Error(`服务未在 ${timeoutMs}ms 内启动：${url}`);
 }
 
-let smokeRole = "team_leader"; // 同一页面先验收班组长可见的数据库与批次跟踪，再切换管理员。
+let smokeRole = "team_leader"; // 同一页面先验收班组长可见的团队数据库，再切换管理员。
 
 /** 按当前冒烟角色构造认证用户，角色切换后所有相关接口自动保持一致。 */
 function currentUser() {
@@ -258,10 +258,6 @@ const apiResponseHandlers = [
   { match: (pathname) => pathname === "/api/templates", body: () => ({ templates: [] }) },
   { match: (pathname) => pathname === "/api/notifications", body: () => ({ notifications: dashboard.notifications, unread_count: 4 }) },
   {
-    match: (pathname) => pathname === "/api/batch-track",
-    body: (url) => ({ keyword: url.searchParams.get("q") || "", items: [{ job_id: "smoke-batch-1", action: "delivery.run", title: "批次 26036-02 送货计划", status: "completed", created_at: "2026-08-04T09:10:00+08:00", files: ["送货结果.xlsx"] }] }),
-  },
-  {
     match: (pathname) => pathname === "/api/library/files",
     body: () => ({ files: [], pagination: { page: 1, page_size: 20, total: 0, pages: 1 }, summary: { visible_count: 0, team_count: 0, own_count: 0, own_bytes: 0, quota_bytes: 1, category_counts: {} }, categories: [] }),
   },
@@ -343,14 +339,7 @@ async function verifyLoginAndWorkbench(page, failures) {
 /** 验收普通业务路由、主题状态以及平板和手机响应式布局。 */
 async function verifyResponsiveRoutes(page, failures) {
   console.log("[4/4] 路由、主题、平板和移动端 ...");
-  await page.getByRole("button", { name: "批次跟踪", exact: true }).click();
-  await page.locator(".fyt-batch-page").waitFor();
-  recordCheck(failures, "批次跟踪实际页面", Boolean(await page.getByRole("heading", { name: "批次跟踪", exact: true }).count()));
-  await page.locator(".fyt-batch-search input").fill("26036-02");
-  await page.locator(".fyt-batch-search").getByRole("button", { name: "搜索", exact: true }).click();
-  await page.getByText("送货计划", { exact: true }).waitFor();
-
-  await page.getByRole("button", { name: "工作台", exact: true }).click();
+  recordCheck(failures, "已下线入口不可见", (await page.getByRole("button", { name: "批次跟踪", exact: true }).count()) === 0);
   await page.locator(".dsp-board").waitFor();
   await page.getByRole("button", { name: "切换为深色", exact: true }).click();
   const darkTheme = await page.evaluate(() => document.documentElement.dataset.theme === "dark");

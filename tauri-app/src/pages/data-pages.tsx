@@ -1,10 +1,10 @@
 /**
- * 桌面端数据治理页面集合：主数据、报表、批次跟踪、文件数据库、字段映射和模板版本。
+ * 桌面端数据治理页面集合：主数据、报表、文件数据库、字段映射和模板版本。
  *
  * 页面只维护筛选、选择和编辑草稿；正式数据读写、自动分类、模板规则和删除范围
  * 均由桥接白名单后的核心模块决定，前端不直接修改索引文件或归档副本。
  */
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { FilePickerField, ResultSummary, TaskPanel } from "../components/FeatureUi";
 import { useBridgeTask } from "../hooks/useBridgeTask";
 import { bridgeRequest, type LibraryItem, type LibrarySummary } from "../lib/bridge";
@@ -164,57 +164,6 @@ function humanSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-}
-
-/** 批次跟踪结果中的功能键到中文标题的展示映射。 */
-const TRACK_FEATURE_TITLES: Record<string, string> = {
-  attendance: "考勤填报", reconcile: "工时对账", arrival: "到料明细", pivot: "销售透视",
-  purchase: "采购对账", shipping_review: "发运评审对比", delivery: "送货计划", supplier_batch: "供应商批次表",
-  purchase_plan: "采购计划导入", invoice: "发票统计", rename: "批量重命名",
-  text: "文本工具", pdf: "PDF 工具", excel: "Excel 工具", compare: "表格比对", currency: "金额大写",
-};
-
-/** 将批次跟踪中的任务状态映射为用户语言，未知值原样显示以保留诊断信息。 */
-function trackStatusLabel(status: string) {
-  const labels: Record<string, string> = { ok: "已完成", running: "处理中", failed: "处理失败", interrupted: "已中断", queued: "等待处理" };
-  return labels[status] || status;
-}
-
-/**
- * 按批次关键字跨业务任务历史检索处理轨迹。
- * 搜索由核心层统一匹配任务消息和输出信息，页面不读取结果文件内容。
- */
-export function BatchTrackPage() {
-  const [keyword, setKeyword] = useState("");
-  const [items, setItems] = useState<Array<{ feature: string; title: string; status: string; started_at: string; message: string; out_dir: string; files: string[] }>>([]);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  /** 提交去除首尾空白的批次关键字，并用本次响应整体替换旧搜索结果。 */
-  async function search(event: FormEvent) {
-    event.preventDefault();
-    if (!keyword.trim()) return;
-    setBusy(true); setError("");
-    try {
-      const result = await bridgeRequest<{ items: typeof items }>("batch_track.search", { keyword: keyword.trim() });
-      setItems(result.items || []);
-    } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
-    finally { setBusy(false); }
-  }
-  return <div className="fyt-page-flow fyt-wide-flow">
-    <section className="fyt-workspace-card">
-      <div className="fyt-workspace-intro"><div className="fyt-workspace-icon"><Icon name="search" size={22} /></div><div><h3>批次全流程跟踪</h3><p>输入批次号（如 26036-02、26178A），查看该批次在送货、到料、对账、批次表与采购计划各环节的处理记录。</p></div></div>
-      <form className="fyt-input-row" onSubmit={(event) => void search(event)}>
-        <input value={keyword} placeholder="例如：26036-02" onChange={(event) => setKeyword(event.target.value)} />
-        <button className="fyt-primary-button" disabled={busy || !keyword.trim()}>{busy ? "搜索中…" : "搜索批次"}</button>
-      </form>
-      {error ? <div className="fyt-page-notice error">{error}</div> : null}
-      {items.length ? <div className="fyt-review-stack fyt-batch-track-results">{items.map((item, index) => (
-        <div className="fyt-batch-track-item" key={`${item.feature}-${index}`}><div className="fyt-batch-track-item-head"><span className={`fyt-task-status ${item.status}`}>{trackStatusLabel(item.status)}</span><strong>{TRACK_FEATURE_TITLES[item.feature] || item.feature}</strong><span>{item.title}</span></div>
-          <div className="fyt-batch-track-item-meta"><span>{item.started_at}</span>{item.files.length ? <span>结果：{item.files.join("、")}</span> : null}</div>
-        </div>))}</div> : null}
-      {!busy && !error && items.length === 0 && keyword.trim() ? <p className="fyt-empty-message fyt-batch-track-empty">没有找到与「{keyword.trim()}」相关的任务记录。</p> : null}
-    </section>
-  </div>;
 }
 
 /** 使用“分类＋空字符分隔符＋文件名”生成列表选择键，避免不同分类同名文件互相覆盖。 */

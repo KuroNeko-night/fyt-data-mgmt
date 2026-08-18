@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import shutil
 import stat
+import subprocess
 import tempfile
 import unittest
 import zipfile
@@ -54,6 +56,23 @@ class LinuxPackagingTests(unittest.TestCase):
         self.assertIn('(root / "web_backend").rglob("*.py")', install)  # Python 源码校验
         self.assertNotIn('WorkingDirectory=__DIR__', install)  # 不得使用相对工作目录
         self.assertIn("SOURCE_COMMIT SOURCE_REF", install)  # Git 部署元数据随正式程序保留
+        self.assertIn('bash "$APP_DIR/caddy-setup.sh" "$PORT"', install)  # 应用健康后自动尝试配置 Caddy
+
+        caddy_setup = (LINUX_DIR / "caddy-setup.sh").read_text(encoding="utf-8")
+        self.assertIn('FYT_CADDY_CERT_SEARCH_DIR:-/root', caddy_setup)  # 默认只扫描 root 上传目录
+        self.assertIn("-maxdepth 1 -type f -size -2M", caddy_setup)  # 不递归扫描或读取大型业务文件
+        self.assertIn("certificate_fingerprint", caddy_setup)  # 证书和私钥必须按公钥配对
+        self.assertIn("openssl x509 -in \"$certificate\" -checkend 0", caddy_setup)  # 拒绝过期证书
+        self.assertIn("subjectAltName", caddy_setup)  # 域名来自证书 SAN，不要求重复填写
+        self.assertIn("caddyserver.com/api/download", caddy_setup)  # 软件源失败时只使用官方下载接口
+        self.assertIn('systemctl enable "$CADDY_SERVICE"', caddy_setup)  # 注册开机启动服务
+        self.assertIn("未在 $SEARCH_DIR 识别到完整的证书和私钥", caddy_setup)  # 缺少文件时安全跳过
+        self.assertNotIn("BEGIN PRIVATE KEY-----\nMII", caddy_setup)  # 脚本不得内置真实私钥
+
+        caddy_service = (LINUX_DIR / "fyt-caddy.service").read_text(encoding="utf-8")
+        self.assertIn("User=caddy", caddy_service)  # 静态下载回退仍使用低权限账号
+        self.assertIn("NoNewPrivileges=true", caddy_service)
+        self.assertIn("CAP_NET_BIND_SERVICE", caddy_service)  # 只授予监听 80/443 所需能力
 
         git_deploy = (LINUX_DIR / "deploy-from-git.sh").read_text(encoding="utf-8")
         self.assertIn(
@@ -102,6 +121,88 @@ class LinuxPackagingTests(unittest.TestCase):
                 mode = archive.getinfo("fyt-server-linux-v1.3.0/install.sh").external_attr >> 16
                 self.assertTrue(mode & stat.S_IXUSR)  # 脚本保留执行位
                 self.assertFalse(mode & stat.S_IWOTH)  # 禁止他人写权限
+
+    def test_caddy_discovery_matches_real_certificate_key_and_san(self) -> None:
+        """使用临时自签名材料验证真实公钥配对和 SAN 域名提取，不触碰系统 Caddy。"""
+
+        bash = shutil.which("bash")
+        openssl = shutil.which("openssl")
+        if os.name == "nt":
+            program_files = Path(os.environ.get("ProgramFiles", r"C:\Program Files"))
+            git_bash = program_files / "Git" / "bin" / "bash.exe"
+            if git_bash.is_file():
+                bash = os.fspath(git_bash)
+            git_openssl = program_files / "Git" / "usr" / "bin" / "openssl.exe"
+            if git_openssl.is_file():
+                openssl = os.fspath(git_openssl)
+        if not bash or not openssl:
+            self.skipTest("当前环境没有 Bash 或 openssl")
+
+        with tempfile.TemporaryDirectory() as temp:
+            cert_dir = Path(temp)
+            command = [
+                openssl, "req", "-x509", "-newkey", "rsa:2048", "-nodes",
+                "-keyout", os.fspath(cert_dir / "uploaded-private.key"),
+                "-out", os.fspath(cert_dir / "uploaded-certificate.pem"),
+                "-days", "1", "-subj", "/CN=fyt.example.com",
+                "-addext", "subjectAltName=DNS:fyt.example.com,DNS:*.example.com",
+            ]
+            generated = subprocess.run(command, capture_output=True, text=True, check=False)
+            if generated.returncode != 0:
+                self.skipTest(f"当前 openssl 无法生成测试证书：{generated.stderr.strip()}")
+
+            environment = os.environ.copy()
+            search_dir = os.fspath(cert_dir)
+            if os.name == "nt":
+                drive, tail = os.path.splitdrive(search_dir)
+                search_dir = f"/{drive[0].lower()}{tail.replace(os.sep, '/')}"
+            environment["FYT_CADDY_CERT_SEARCH_DIR"] = search_dir
+            environment["FYT_CADDY_VALIDATE_ONLY"] = "1"
+            checked = subprocess.run(
+                [bash, "packaging/linux/caddy-setup.sh", "8787"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                env=environment,
+                cwd=ROOT,
+                check=False,
+            )
+            self.assertEqual(checked.returncode, 0, checked.stderr)
+            self.assertIn("识别测试通过", checked.stdout)
+            self.assertIn("fyt.example.com", checked.stdout)
+            self.assertIn("*.example.com", checked.stdout)
+
+            # 用另一把私钥覆盖上传文件后必须安全跳过，不能把两个解析失败产生的空摘要误判为配对。
+            replaced = subprocess.run(
+                [
+                    openssl,
+                    "genpkey",
+                    "-algorithm",
+                    "RSA",
+                    "-pkeyopt",
+                    "rsa_keygen_bits:2048",
+                    "-out",
+                    os.fspath(cert_dir / "uploaded-private.key"),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(replaced.returncode, 0, replaced.stderr)
+            mismatched = subprocess.run(
+                [bash, "packaging/linux/caddy-setup.sh", "8787"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                env=environment,
+                cwd=ROOT,
+                check=False,
+            )
+            self.assertEqual(mismatched.returncode, 0, mismatched.stderr)
+            self.assertNotIn("识别测试通过", mismatched.stdout)
+            self.assertIn("没有识别到有效且相互匹配", mismatched.stderr)
 
 
 if __name__ == "__main__":

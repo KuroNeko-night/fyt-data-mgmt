@@ -63,6 +63,8 @@ sudo bash install.sh
 
 安装器会自动创建独立虚拟环境、安装依赖、创建 `fyt-web` 低权限账号、初始化数据库、注册开机自启动服务并执行健康检查。初始管理员密码只在首次建库时显示一次。
 
+如需同时启用公网 HTTPS，可在执行安装前把 Cloudflare Origin CA 证书和对应的未加密私钥文件上传到 `/root` 顶层。安装器会自动验证配对关系、从证书读取域名、安装 Caddy、配置到 `127.0.0.1:8787` 的反向代理并注册 `caddy.service`；没有识别到完整配对时只跳过 Caddy，不影响应用安装。证书和私钥文件名可以自定义，私钥不得加密或提交到 Git。
+
 ## 固定目录
 - 程序：`/opt/fyt/server`
 - 配置：`/etc/fyt-web/fyt-web.env`
@@ -109,7 +111,7 @@ sudo env FYT_WEB_PORT=8787 PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
 ```
 
 ## 公网访问
-临时测试可在阿里云安全组和系统防火墙放行 TCP 8787；正式服务建议使用 Caddy/Nginx 监听 80/443 并反向代理到 `127.0.0.1:8787`，不长期暴露 8787。Cloudflare Tunnel 脚本仍随包提供，但需要单独授权与配置。
+上传配套证书和私钥到 `/root` 后重新运行安装器，即可自动配置 Caddy 监听 80/443。未使用 Caddy 时，临时测试可在阿里云安全组和系统防火墙放行 TCP 8787；不要长期将 8787 暴露公网。Cloudflare Tunnel 脚本仍随包提供，但需要单独授权与配置。
 
 ## 安全
 程序使用专用低权限账号运行，配置文件为 root:fyt-web，运行数据为 fyt-web:fyt-web 且目录权限为700。不要将 `web-data`、管理员密码、证书私钥或日志加入发布包。

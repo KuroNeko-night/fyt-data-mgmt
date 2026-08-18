@@ -660,7 +660,7 @@ def _master_data_dependencies() -> master_data_service.MasterDataDependencies:
 
 
 def _report_dependencies() -> report_service.ReportDependencies:
-    """组装报表中心、批次跟踪与周期报表服务依赖。
+    """组装报表中心与周期报表服务依赖。
 
     报表文件路径由 ``path_is_within`` 校验，防止越权读取任务输出目录之外的报告。
     """

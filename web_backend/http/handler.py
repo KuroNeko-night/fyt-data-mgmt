@@ -455,8 +455,7 @@ _DELEGATE_GROUPS: tuple[
         ("restore_trash", trash_service.restore_trash),
         ("delete_trash", trash_service.delete_trash),
     )),
-    ("报表与批次跟踪", "report_dependencies", (
-        ("batch_track", report_service.batch_track),
+    ("报表中心", "report_dependencies", (
         ("build_report_endpoint", report_service.build_report_endpoint),
         ("list_report_files", report_service.list_report_files),
         ("download_report_file", report_service.download_report_file),

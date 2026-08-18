@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import urllib.parse
 import urllib.request
 from datetime import datetime
 
@@ -312,9 +311,6 @@ class WebServerAuthTests(WebServerTestBase):
         self.assertEqual(self.call("/api/auth/me", token=leader)[1]["user"]["role"], "team_leader")
         self.assertEqual(self.call("/api/daily-report?date=2026-08-08", token=leader)[0], 403)
         self.assertEqual(self.call("/api/daily-report?date=2026-08-08", token=member)[0], 403)
-        query = urllib.parse.quote("不存在的批次")
-        self.assertEqual(self.call(f"/api/batch-track?q={query}", token=leader)[0], 200)
-        self.assertEqual(self.call(f"/api/batch-track?q={query}", token=member)[0], 403)
         self.assertEqual(self.call("/api/reports?range=7d", token=leader)[0], 403)
         self.assertEqual(self.call("/api/reports?range=7d", token=member)[0], 403)
         self.assertEqual(self.call("/api/reports/list", token=leader)[0], 403)

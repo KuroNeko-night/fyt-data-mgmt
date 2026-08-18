@@ -125,7 +125,6 @@ def get_routes(handler) -> tuple[dict[str, Callable[[], None]], tuple[PatternRou
             "/api/dashboard": handler.dashboard,
             "/api/daily-report/export": handler.export_daily_report,
             "/api/daily-report": handler.daily_report,
-            "/api/batch-track": handler.batch_track,
             "/api/reports/list": handler.list_report_files,
             "/api/reports": handler.build_report_endpoint,
             "/api/reports/download": handler.download_report_file,

@@ -321,7 +321,7 @@ export function AdminPage({ currentUserId, onChanged }: { currentUserId: number;
       </> : null}
       {user.status === "rejected" ? <button className="fyt-action-success" disabled={Boolean(busy)} onClick={() => void run(`review-${user.id}`, () => reviewUser(user.id, "approve"))}>重新通过</button> : null}
       {user.status === "approved" ? <>
-        <button className="fyt-action-success" disabled={Boolean(busy)} onClick={() => confirmRun(`确定授予“${user.display_name}”班组长权限吗？该账号可以维护自己发布的现场问题，并使用数据库和批次跟踪。`, `fyt-role-${user.id}-leader`, () => updateUserRole(user.id, "team_leader"))}>设为班组长</button>
+        <button className="fyt-action-success" disabled={Boolean(busy)} onClick={() => confirmRun(`确定授予“${user.display_name}”班组长权限吗？该账号可以维护自己发布的现场问题，并使用团队数据库。`, `fyt-role-${user.id}-leader`, () => updateUserRole(user.id, "team_leader"))}>设为班组长</button>
         <button className="fyt-action-info" disabled={Boolean(busy)} onClick={() => confirmRun(`确定授予“${user.display_name}”管理员权限吗？该账号将可以管理成员和系统数据。`, `fyt-role-${user.id}`, () => updateUserRole(user.id, "admin"))}>设为管理员</button>
         {user.session_count > 0 ? <button className="fyt-action-neutral" disabled={Boolean(busy)} onClick={() => confirmRun(`确定让“${user.display_name}”退出所有设备吗？`, `sessions-${user.id}`, () => revokeUserSessions(user.id))}>强制退出</button> : null}
         <button className="fyt-action-warning" disabled={Boolean(busy)} onClick={() => confirmRun(`确定暂停“${user.display_name}”的账号吗？该账号会立即退出所有设备。`, `access-${user.id}`, () => updateUserAccess(user.id, false))}>暂停使用</button>

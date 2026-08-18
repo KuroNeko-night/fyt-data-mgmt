@@ -7,7 +7,7 @@ import type { TaskFilter } from "../TaskCenterPage";
 import type { UserRole } from "../api";
 
 /** 稳定路由键；`feature:` 前缀的业务工作区路由不在壳层导航中定义。 */
-export type WebRouteKey = "overview" | "daily-report" | "workshop" | "features" | "library" | "batch-track" | "reports" | "tasks" | "notifications" | "security" | "users";
+export type WebRouteKey = "overview" | "daily-report" | "workshop" | "features" | "library" | "reports" | "tasks" | "notifications" | "security" | "users";
 
 /** 导航入口元数据：路由键、文案、图标、移动端主入口标记与可见角色。 */
 export type NavigationItem = {
@@ -22,7 +22,7 @@ export type NavigationItem = {
 /**
  * 壳层导航唯一事实源。
  * 角色矩阵与 web_backend/config.py 保持一致：日清看板、报表中心、系统管理仅管理员；
- * 数据库、批次跟踪对班组长和管理员开放；其余入口所有正常账号可见。
+ * 数据库对班组长和管理员开放；其余入口所有正常账号可见。
  */
 export const NAVIGATION_ITEMS: readonly NavigationItem[] = [
   { key: "overview", label: "工作台", description: "查看当前待办、任务状态和近期变化", icon: "grid", mobilePrimary: true },
@@ -30,7 +30,6 @@ export const NAVIGATION_ITEMS: readonly NavigationItem[] = [
   { key: "workshop", label: "现场问题", description: "记录和查看车间现场问题", icon: "camera", mobilePrimary: true },
   { key: "features", label: "业务模块", description: "选择业务并开始处理文件", icon: "database", mobilePrimary: true },
   { key: "library", label: "数据库", description: "管理团队共享和个人资料", icon: "file", allowedRoles: ["admin", "team_leader"] },
-  { key: "batch-track", label: "批次跟踪", description: "按批次查看业务处理记录", icon: "search", allowedRoles: ["admin", "team_leader"] },
   { key: "reports", label: "报表中心", description: "生成业务统计报表", icon: "pie", allowedRoles: ["admin"] },
   { key: "tasks", label: "任务中心", description: "查看任务进度、结果和异常", icon: "activity", mobilePrimary: true },
   { key: "notifications", label: "消息中心", description: "查看公告和定向消息", icon: "bell" },
@@ -39,7 +38,7 @@ export const NAVIGATION_ITEMS: readonly NavigationItem[] = [
 ];
 
 /** 移动端“更多”抽屉按此固定顺序取导航项，保证入口位置稳定。 */
-export const MOBILE_MORE_KEYS: readonly WebRouteKey[] = ["daily-report", "library", "batch-track", "reports", "notifications", "security", "users"];
+export const MOBILE_MORE_KEYS: readonly WebRouteKey[] = ["daily-report", "library", "reports", "notifications", "security", "users"];
 
 /**
  * 按稳定路由键查找导航元数据，业务功能的 `feature:` 子路由不在此表中。

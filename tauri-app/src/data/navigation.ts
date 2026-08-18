@@ -36,7 +36,6 @@ export const NAV_ITEMS: NavItem[] = [  // 数组顺序即侧栏顺序，新增�
   { key: "tasks", group: "数据", title: "任务中心", description: "查看处理历史与结果文件", icon: "tasks" },
   { key: "mappings", group: "数据", title: "字段映射中心", description: "调整自动识别的字段对应关系", icon: "mapping" },
   { key: "catalog", group: "数据", title: "主数据档案", description: "维护供应商代码与材料档案", icon: "database" },
-  { key: "batch_track", group: "数据", title: "批次跟踪", description: "按批次号查看全流程处理记录", icon: "search" },
   { key: "report_center", group: "数据", title: "报表中心", description: "按时间范围生成业务汇总报表", icon: "pie" },
   { key: "templates", group: "数据", title: "模板中心", description: "管理文件模板与版本", icon: "template" },
   { key: "invoice", group: "财务", title: "增值税发票统计", description: "上传 PDF 发票，自动识别并按月汇总", icon: "invoice" },

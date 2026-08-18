@@ -36,6 +36,19 @@ class DeployScriptTests(unittest.TestCase):
         source = (ROOT / "packaging" / "linux" / "install.sh").read_text(encoding="utf-8")
         self.assertIn('usermod --home "$DATA_DIR" --shell "$NOLOGIN" fyt-web', source)  # 服务账号 home 迁移
 
+    def test_linux_installer_only_configures_caddy_for_a_valid_uploaded_pair(self):
+        """Caddy 自动化必须先配验证书和私钥，缺少上传文件时不得修改现有代理。"""
+
+        source = (ROOT / "packaging" / "linux" / "caddy-setup.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("has_certificate_marker", source)  # 先做无副作用的 PEM 标记预检
+        self.assertIn("has_private_key_marker", source)
+        self.assertIn('if [ -z "$SELECTED_CERT" ] || [ -z "$SELECTED_KEY" ]', source)  # 未配对即退出
+        self.assertIn('restore_file "$CADDYFILE"', source)  # 配置失败恢复旧 Caddyfile
+        self.assertIn('"$CADDY_BIN" validate', source)  # 重载服务前先校验完整配置
+        self.assertIn('reverse_proxy $UPSTREAM_HOST:$UPSTREAM_PORT', source)  # 只代理本机应用端口
+
     def test_management_scripts_only_use_systemd(self):
         """启停脚本只能管理明确的 systemd 单元，不能按进程名误杀其他服务。"""
 
