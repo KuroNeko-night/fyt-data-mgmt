@@ -731,6 +731,12 @@ class WebServerTaskTests(WebServerTestBase):
         status, report = self.call("/api/reports?range=7d", token=self.admin)
         self.assertEqual(status, 200)
         self.assertTrue(report["name"].startswith("业务报表_近7天_"))
+        status, report_list = self.call("/api/reports/list", token=self.admin)
+        self.assertEqual(status, 200)
+        listed = next(item for item in report_list["reports"] if item["name"] == report["name"])
+        self.assertEqual(listed["scope"], "self")
+        self.assertEqual(listed["scope_label"], "当前账号")
+        self.assertGreater(listed["size"], 0)
         status, content = self.call(report["url"], token=self.admin)
         self.assertEqual(status, 200)
         exported = load_workbook(BytesIO(content), data_only=True)
@@ -754,6 +760,9 @@ class WebServerTaskTests(WebServerTestBase):
                 "SELECT COUNT(*) FROM messages WHERE title = '本周业务报表已生成'",
             ).fetchone()[0]
         self.assertEqual(notification_count, 1)
+        status, report_list = self.call("/api/reports/list", token=self.admin)
+        self.assertEqual(status, 200)
+        self.assertTrue(any(item["scope"] == "all" for item in report_list["reports"]))
 
         self.assertEqual(
             self.call("/api/reports?range=unknown", token=self.admin)[0],

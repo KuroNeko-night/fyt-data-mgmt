@@ -45,6 +45,15 @@ export type DashboardData = {
 export type NotificationItem = { id: number; kind: "announcement" | "message"; title: string; content: string; created_at: string; expires_at: string | null; read_at: string | null };
 export type NotificationResponse = { notifications: NotificationItem[]; unread_count: number };
 export type PreviewData = { name: string; sheet: string; sheets: string[]; rows: string[][]; truncated: boolean };
+/** 报表中心历史文件；下载地址由服务端按管理员权限和报表目录生成。 */
+export type ReportFile = {
+  name: string;
+  url: string;
+  size: number;
+  generated_at: string;
+  scope: "all" | "self";
+  scope_label: string;
+};
 /** 管理员中心一次性返回的账号、任务与上传汇总快照。 */
 export type AdminData = {
   summary: { users: number; approved_users: number; admins: number; team_leaders: number; pending_users: number; disabled_users: number; jobs: number; uploads: number; job_files: number; job_bytes: number; upload_bytes: number };

@@ -277,6 +277,49 @@ def build_report_endpoint(handler: Any, deps: ReportDependencies) -> None:
     })
 
 
+def list_report_files(handler: Any, deps: ReportDependencies) -> None:
+    """列出报表中心可下载的历史 Excel 文件。
+
+    自动周报/月报和管理员手动生成的全量报表都保存在 ``reports/all``，当前账号范围的
+    手动报表保存在 ``reports/self``。这里只返回文件名、大小、时间和受控下载地址，绝不
+    暴露服务器绝对路径；每个候选文件再次经过真实路径边界检查，避免符号链接或异常目录
+    逃逸报表根目录。最多返回最近 100 份，防止历史文件无限增长拖慢页面。
+    """
+    handler.require_user(admin=True)
+    reports_root = (deps.data_root / "reports").resolve()
+    if not reports_root.is_dir():
+        handler.send_json({"reports": []})
+        return
+
+    entries: list[dict[str, object]] = []
+    for candidate in reports_root.rglob("*.xlsx"):
+        try:
+            target = candidate.resolve()
+            if not deps.path_is_within(reports_root, target) or not target.is_file():
+                continue
+            relative = target.relative_to(deps.data_root).as_posix()
+            parts = target.relative_to(reports_root).parts
+            scope = parts[0] if parts and parts[0] in {"all", "self"} else ""
+            if not scope:
+                continue
+            stat = target.stat()
+        except (OSError, ValueError):
+            # 单个文件在扫描期间被清理或替换时跳过，不影响其他历史报表展示。
+            continue
+        generated_at = datetime.fromtimestamp(stat.st_mtime, BUSINESS_TZ).isoformat(timespec="seconds")
+        entries.append({
+            "name": target.name,
+            "url": f"/api/reports/download?path={quote(relative)}",
+            "size": stat.st_size,
+            "generated_at": generated_at,
+            "scope": scope,
+            "scope_label": "全量统计" if scope == "all" else "当前账号",
+        })
+
+    entries.sort(key=lambda item: str(item["generated_at"]), reverse=True)
+    handler.send_json({"reports": entries[:100]})
+
+
 def download_report_file(handler: Any, deps: ReportDependencies) -> None:
     """下载报表目录内的文件，并阻止路径越界。"""
     handler.require_user(admin=True)

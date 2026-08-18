@@ -4,6 +4,7 @@
  * 供 Dialog 与 Drawer 复用，保证弹层交互和可访问性行为一致。
  */
 import { useEffect, useId, useRef, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 
 /** Dialog 组件属性。 */
 export interface DialogProps {
@@ -82,7 +83,9 @@ export function Dialog({ open, title, description, children, footer, size = "def
   useOverlayFocus(open, onClose, dialogRef);
   if (!open) return null; // 关闭时不保留隐藏 DOM，避免隐藏控件仍参与焦点顺序。
   // 只有按下事件直接落在遮罩层本身才关闭，弹层内部的点击冒泡不会误触发关闭。
-  return <div className="fyt-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><div className="fyt-dialog" data-size={size} ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={description ? descriptionId : undefined}><div className="fyt-dialog-head"><div><h2 id={titleId}>{title}</h2>{description ? <p id={descriptionId}>{description}</p> : null}</div><button className="fyt-icon-button" type="button" onClick={onClose} aria-label="关闭弹窗" data-tooltip="关闭弹窗">×</button></div><div className="fyt-dialog-body">{children}</div>{footer ? <div className="fyt-dialog-foot">{footer}</div> : null}</div></div>;
+  const overlay = <div className="fyt-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><div className="fyt-dialog" data-size={size} ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={description ? descriptionId : undefined}><div className="fyt-dialog-head"><div><h2 id={titleId}>{title}</h2>{description ? <p id={descriptionId}>{description}</p> : null}</div><button className="fyt-icon-button" type="button" onClick={onClose} aria-label="关闭弹窗" data-tooltip="关闭弹窗">×</button></div><div className="fyt-dialog-body">{children}</div>{footer ? <div className="fyt-dialog-foot">{footer}</div> : null}</div></div>;
+  // 毛玻璃、transform 或 overflow 祖先可能改变 fixed 的包含块；Portal 让所有弹窗脱离业务卡片层叠上下文。
+  return typeof document === "undefined" ? overlay : createPortal(overlay, document.body);
 }
 
 export default Dialog;

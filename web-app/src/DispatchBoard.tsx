@@ -8,7 +8,6 @@ import { useEffect, useMemo, useState } from "react";
 import { downloadJobFile, type DashboardData, type Feature, type JobFile, type User } from "./api";
 import type { TaskFilter } from "./TaskCenterPage";
 import { Icon } from "./icons";
-import ArtAsset from "./ui/ArtAsset";
 
 /** 调度板入参：服务端聚合数据、当前用户、可用业务功能以及页面跳转回调。 */
 type Props = {
@@ -93,7 +92,6 @@ function Board({ data, user, onRefresh, onOpenReviews, onOpenTaskFilter }: Props
 
   return <section className="dsp-board" aria-label="任务调度板">
     <header className="dsp-board-head">
-      <div className="dsp-board-art"><ArtAsset name="workbench-data-ribbon.webp" loading="eager" /></div>
       <div className="dsp-board-id"><span className="dsp-eyebrow">今日工作台</span><h2>{user.display_name}，{abnormal > 0 ? "有异常任务需要处理" : (statusBreakdown.review || 0) > 0 ? "有任务等你确认" : "当前没有紧急待办"}</h2></div>
       <div className="dsp-board-meta"><span className="dsp-stamp">更新于 <time className="dsp-num" dateTime={data.generated_at}>{clockLabel(data.generated_at)}</time></span><button className="dsp-icon-btn" type="button" onClick={onRefresh} title="刷新调度板" aria-label="刷新调度板"><Icon name="refresh" size={16} /></button></div>
     </header>

@@ -3,6 +3,7 @@
  * 背景滚动锁定和 Esc/遮罩关闭行为，只额外提供左右滑出方向。
  */
 import { useId, useRef, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { useOverlayFocus } from "./Dialog";
 
 /** Drawer 组件属性。 */
@@ -37,7 +38,9 @@ export function Drawer({ open, title, description, side = "right", children, foo
   const titleId = useId(); const descriptionId = useId(); const drawerRef = useRef<HTMLDivElement>(null);
   useOverlayFocus(open, onClose, drawerRef);
   if (!open) return null; // 不渲染关闭抽屉，避免移动端隐藏导航仍可被键盘聚焦。
-  return <div className="fyt-overlay" data-side={side} role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><div className="fyt-drawer" ref={drawerRef} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={description ? descriptionId : undefined}><div className="fyt-drawer-head"><div><h2 id={titleId}>{title}</h2>{description ? <p id={descriptionId}>{description}</p> : null}</div><button className="fyt-icon-button" type="button" onClick={onClose} aria-label="关闭抽屉" data-tooltip="关闭抽屉">×</button></div><div className="fyt-drawer-body">{children}</div>{footer ? <div className="fyt-drawer-foot">{footer}</div> : null}</div></div>;
+  const overlay = <div className="fyt-overlay" data-side={side} role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><div className="fyt-drawer" ref={drawerRef} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={description ? descriptionId : undefined}><div className="fyt-drawer-head"><div><h2 id={titleId}>{title}</h2>{description ? <p id={descriptionId}>{description}</p> : null}</div><button className="fyt-icon-button" type="button" onClick={onClose} aria-label="关闭抽屉" data-tooltip="关闭抽屉">×</button></div><div className="fyt-drawer-body">{children}</div>{footer ? <div className="fyt-drawer-foot">{footer}</div> : null}</div></div>;
+  // 与 Dialog 一样挂到 body，避免被页面卡片的 backdrop-filter 或 overflow 限制定位与层级。
+  return typeof document === "undefined" ? overlay : createPortal(overlay, document.body);
 }
 
 export default Drawer;

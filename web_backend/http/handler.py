@@ -458,6 +458,7 @@ _DELEGATE_GROUPS: tuple[
     ("报表与批次跟踪", "report_dependencies", (
         ("batch_track", report_service.batch_track),
         ("build_report_endpoint", report_service.build_report_endpoint),
+        ("list_report_files", report_service.list_report_files),
         ("download_report_file", report_service.download_report_file),
     )),
     ("消息与公告", "notification_dependencies", (

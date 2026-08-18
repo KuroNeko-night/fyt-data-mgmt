@@ -261,6 +261,7 @@ export type ArrivalScanRow = { path: string; name: string; batch_no: string; tot
 export function scanReconcile(paths: string[]) { return request<{ files: ReconcileScanFile[] }>("/api/reconcile/scan", { method: "POST", body: JSON.stringify({ paths }) }); }
 export function scanArrival(paths: string[]) { return request<{ rows: ArrivalScanRow[] }>("/api/arrival/scan", { method: "POST", body: JSON.stringify({ paths }) }); }
 export function buildReport(range: "7d" | "30d" | "month" | "all", scopeAll: boolean) { return request<{ url: string; name: string }>(`/api/reports?range=${range}&scope=${scopeAll ? "all" : "self"}`); }
+export function listReports() { return request<{ reports: import("./api/types").ReportFile[] }>("/api/reports/list"); }
 export type ShareLink = { token: string; url: string; name: string; expires_at: string };
 export function createShare(jobId: string, fileIndex: number, expiresInDays = 7) { return request<ShareLink>("/api/shares", { method: "POST", body: JSON.stringify({ job_id: jobId, file_index: fileIndex, expires_in_days: expiresInDays }) }); }
 export function revokeShare(token: string) { return request<{ message: string }>(`/api/shares/${token}`, { method: "DELETE" }); }

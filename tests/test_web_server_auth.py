@@ -317,6 +317,8 @@ class WebServerAuthTests(WebServerTestBase):
         self.assertEqual(self.call(f"/api/batch-track?q={query}", token=member)[0], 403)
         self.assertEqual(self.call("/api/reports?range=7d", token=leader)[0], 403)
         self.assertEqual(self.call("/api/reports?range=7d", token=member)[0], 403)
+        self.assertEqual(self.call("/api/reports/list", token=leader)[0], 403)
+        self.assertEqual(self.call("/api/reports/list", token=member)[0], 403)
         self.assertEqual(self.call("/api/library/files", token=leader)[0], 200)
         self.assertEqual(self.call("/api/library/files", token=member)[0], 403)
 

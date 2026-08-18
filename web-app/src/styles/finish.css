@@ -130,26 +130,6 @@
   box-shadow: inset 3px 0 0 color-mix(in srgb, var(--fyt-primary) 60%, transparent);
 }
 
-/* 美术资源使用完整构图，放大只消耗原图透明安全边距，不再裁掉主体。 */
-.dsp-board-head {
-  min-height: 144px;
-}
-
-.dsp-board-art {
-  top: -8px;
-  right: clamp(150px, 16%, 204px);
-  bottom: -8px;
-  width: clamp(310px, 36%, 460px);
-  opacity: .82;
-}
-
-.dsp-board-art .fyt-art-asset,
-.dsp-board-art .fyt-art-fallback {
-  object-fit: contain;
-  object-position: center;
-  transform: scale(1.08);
-}
-
 .fyt-empty-illustration-frame {
   width: min(240px, 72vw);
   height: 184px;
