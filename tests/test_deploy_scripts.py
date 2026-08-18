@@ -48,6 +48,12 @@ class DeployScriptTests(unittest.TestCase):
         self.assertIn('restore_file "$CADDYFILE"', source)  # 配置失败恢复旧 Caddyfile
         self.assertIn('"$CADDY_BIN" validate', source)  # 重载服务前先校验完整配置
         self.assertIn('reverse_proxy $UPSTREAM_HOST:$UPSTREAM_PORT', source)  # 只代理本机应用端口
+        self.assertIn("FYT_CADDY_RECONFIGURE", source)  # 旧配置冲突时允许显式选择跳过或覆盖
+        self.assertIn("find_redundant_forward_headers", source)  # 识别 Caddy 重复转发头警告
+        self.assertIn("跳过 Caddy 重配置", source)  # 交互终端必须能保留现有配置
+        self.assertIn("清理重复转发头", source)  # 覆盖选项应移除已由 Caddy 默认处理的规则
+        self.assertNotIn("header_up X-Forwarded-For", source)  # 新生成的峰运通片段不再写入冗余规则
+        self.assertNotIn("header_up X-Forwarded-Proto", source)
 
     def test_management_scripts_only_use_systemd(self):
         """启停脚本只能管理明确的 systemd 单元，不能按进程名误杀其他服务。"""

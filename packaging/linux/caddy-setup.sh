@@ -31,6 +31,8 @@ CADDY_WAS_ACTIVE=0
 CONFIG_TOUCHED=0
 CONFIGURED=0
 VALIDATE_ONLY="${FYT_CADDY_VALIDATE_ONLY:-0}"
+RECONFIGURE_POLICY="${FYT_CADDY_RECONFIGURE:-ask}"
+OVERWRITE_REDUNDANT_HEADERS=0
 
 say() { printf '[%s] [Caddy] %s\n' "$(date +%H:%M:%S)" "$*"; }
 warn() { printf '[警告] [Caddy] %s\n' "$*" >&2; }
@@ -74,6 +76,10 @@ trap cleanup EXIT
 [[ "$UPSTREAM_PORT" =~ ^[0-9]+$ ]] && [ "$UPSTREAM_PORT" -ge 1 ] && [ "$UPSTREAM_PORT" -le 65535 ] \
     || die "反向代理端口必须是 1 至 65535 的整数"
 [[ "$UPSTREAM_HOST" =~ ^[A-Za-z0-9:.-]+$ ]] || die "反向代理主机格式不正确"
+case "$RECONFIGURE_POLICY" in
+    ask|skip|overwrite) ;;
+    *) die "FYT_CADDY_RECONFIGURE 只能是 ask、skip 或 overwrite" ;;
+esac
 
 if [ "${FYT_CADDY_SKIP:-0}" = "1" ]; then
     say "已按 FYT_CADDY_SKIP=1 跳过自动配置"
@@ -252,6 +258,54 @@ if [ "$VALIDATE_ONLY" = "1" ]; then
     exit 0
 fi
 
+# 旧版手工配置或早期部署脚本可能显式设置下列转发头。新版 Caddy 的 reverse_proxy
+# 已自动维护这些请求头，重复声明会在每次启动和重载时产生 Unnecessary header_up 警告。
+# 这里只检查安装器会接触的主配置和峰运通片段，不递归修改其他站点的独立配置文件。
+find_redundant_forward_headers() {
+    local target
+    for target in "$CADDYFILE" "$CADDY_SNIPPET"; do
+        [ -f "$target" ] || continue
+        grep -HnEi \
+            '^[[:space:]]*header_up[[:space:]]+X-Forwarded-(For|Proto)([[:space:]]|$)' \
+            "$target" || true
+    done
+}
+
+ask_reconfigure_choice() {
+    local answer
+    if [ ! -r /dev/tty ] || [ ! -w /dev/tty ]; then
+        warn "当前没有可交互终端，已默认跳过 Caddy 重配置"
+        warn "无人值守部署如需覆盖，可设置 FYT_CADDY_RECONFIGURE=overwrite"
+        printf 'skip\n'
+        return 0
+    fi
+    while true; do
+        printf '请选择：[s] 跳过 Caddy 配置并保留原文件；[o] 备份后覆盖峰运通配置并清理重复规则：' \
+            > /dev/tty
+        IFS= read -r answer < /dev/tty || answer="s"
+        case "${answer,,}" in
+            s|skip|跳过) printf 'skip\n'; return 0 ;;
+            o|overwrite|覆盖) printf 'overwrite\n'; return 0 ;;
+            *) printf '请输入 s 或 o。\n' > /dev/tty ;;
+        esac
+    done
+}
+
+redundant_forward_headers="$(find_redundant_forward_headers)"
+if [ -n "$redundant_forward_headers" ]; then
+    warn "检测到已有 Caddy 配置包含重复的转发头规则："
+    printf '%s\n' "$redundant_forward_headers" >&2
+    warn "Caddy 已默认处理 X-Forwarded-For 与 X-Forwarded-Proto，保留这些行会产生启动警告"
+    reconfigure_choice="$RECONFIGURE_POLICY"
+    [ "$reconfigure_choice" != "ask" ] || reconfigure_choice="$(ask_reconfigure_choice)"
+    if [ "$reconfigure_choice" = "skip" ]; then
+        say "已按用户选择跳过 Caddy 重配置；应用服务安装不受影响"
+        exit 0
+    fi
+    OVERWRITE_REDUNDANT_HEADERS=1
+    say "将先备份现有 Caddy 配置，再覆盖峰运通配置并清理重复转发头"
+fi
+
 install_caddy_package() {
     if command -v apt-get >/dev/null 2>&1; then
         say "通过 Caddy 官方 Debian/Ubuntu 软件源安装..."
@@ -368,6 +422,24 @@ if [ "$CADDYFILE_EXISTED" -eq 0 ]; then
     printf '%s\n' "$IMPORT_LINE" > "$CADDYFILE"
 elif ! grep -Fqx "$IMPORT_LINE" "$CADDYFILE"; then
     printf '\n# 峰运通反向代理（由安装器维护）\n%s\n' "$IMPORT_LINE" >> "$CADDYFILE"
+fi
+
+# 用户选择覆盖时，仅删除 Caddy 已明确判定为冗余的两个 header_up 指令；其余配置内容
+# 原样保留。文件已经在上方完成备份，后续校验失败仍会自动恢复。
+if [ "$OVERWRITE_REDUNDANT_HEADERS" -eq 1 ]; then
+    cleaned_caddyfile="$(mktemp "$CADDY_CONFIG_DIR/.fyt-caddy-clean.XXXXXX")"
+    awk '
+        {
+            first = tolower($1)
+            second = tolower($2)
+            if (first == "header_up" && (second == "x-forwarded-for" || second == "x-forwarded-proto")) {
+                next
+            }
+            print
+        }
+    ' "$CADDYFILE" > "$cleaned_caddyfile"
+    install -o root -g caddy -m 640 "$cleaned_caddyfile" "$CADDYFILE"
+    rm -f -- "$cleaned_caddyfile"
 fi
 chown root:caddy "$CADDYFILE"
 chmod 640 "$CADDYFILE"
