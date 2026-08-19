@@ -1,21 +1,20 @@
 # -*- coding: utf-8 -*-
-"""销售采购表的结构识别、分类、清洗与人工复核计划。
+"""采购汇总的结构识别、字段提取、清洗与人工复核计划。
 
 本模块只读源工作簿，产出第一阶段复核计划：哪些页签默认纳入、哪些被清洗规则删除的
 疑似真实行需要人工勾选、哪些规格和单位存在冲突。真正的归并与写出由
-:mod:`core.pivot_core` 在第二阶段执行。与 :mod:`core.pivot_ooxml`、
-:mod:`core.pivot_reporting` 的分层一致，本模块不依赖 ``pivot_core``，避免主业务
-入口与底层实现循环导入。
+:mod:`core.pivot_core` 在第二阶段执行。源表中的多个横向子表会按各自边界直接提取为同一
+六字段记录流，不再模拟“先并排复制、再二次拼接”的人工过程。本模块不依赖
+``pivot_core``，避免主业务入口与底层实现循环导入。
 """
 import os
 from collections import defaultdict, OrderedDict
 
 from . import common_core
 from . import material_catalog
-from .pivot_ooxml import _is_blank
 from .pivot_clustering import (
-    F_VER, F_CODE, F_NAME, F_SPEC, F_QTY, F_UNIT, F_FINAL,
-    _compute_unit_best,
+    F_VER, F_CODE, F_NAME, F_SPEC, F_UNIT, F_FINAL,
+    _compute_unit_best, _is_blank,
     compute_spec_canon,
 )
 
@@ -25,7 +24,6 @@ L_NAME  = "材料名称"
 L_SPEC  = "规格"
 L_UNIT  = "单位"
 L_FINAL = "最终采购数量"
-L_QTY   = "数量"
 KEEP_TOKEN = "原厂"            # 名称含此 token 的行, 步骤2不删
 
 # 表头别名: 不同表格用词不一, 识别时任一匹配即可
@@ -36,7 +34,6 @@ FINAL_ALIASES = ("最终采购数量", "需求数量", "采购数量", "需求�
                  "计划数量", "计划采购数量")
 UNIT_ALIASES  = ("使用单位", "计量单位", "单位")
 VER_ALIASES   = ("版本序号", "版本")
-QTY_EXACT     = ("数量", "单套数量", "单车数量")
 
 SUM_PREFIX = "求和项:"
 HEADER_SCAN_ROWS = 30
@@ -160,9 +157,9 @@ def _header_anchor_columns(ws, row, last_col):
 def _assign_block_column(columns, text, column):
     """按业务优先级把一个表头单元格分配给区块字段。
 
-    “最终采购数量”同时包含“数量”，因此必须先判断最终数量，再判断普通数量；名称、
-    规格和单位同样只接受首次命中，避免备注区或后续重复标题覆盖靠近编码锚点的列。
-    使用早退而非 ``elif`` 链，让每个字段的匹配条件与副作用一目了然。
+    这里只识别最终结果真正需要的名称、规格、单位和最终采购数量；旧流程为了构造透视
+    缓存读取的普通“数量”列并不参与清洗或聚合，现已从数据模型移除。每个字段只接受
+    首次命中，避免备注区或后续重复标题覆盖靠近编码锚点的列。
     """
     if not text:
         return
@@ -175,22 +172,17 @@ def _assign_block_column(columns, text, column):
     if columns["final"] == 0 and _contains_any(text, FINAL_ALIASES):
         columns["final"] = column
         return
-    if columns["qty"] == 0 and (text in QTY_EXACT or "数量" in text):
-        # 放宽的“含数量”匹配兼容“二级包装规格\n数量”等合并导出表头。
-        columns["qty"] = column
-        return
     if columns["unit"] == 0 and _contains_any(text, UNIT_ALIASES):
         columns["unit"] = column
 
 
-def _block_from_anchor(ws, row, anchor, last_col):
+def _block_from_anchor(ws, row, anchor, block_end):
     """从一个材料编码锚点解析字段列；缺少最终采购数量时返回 ``None``。"""
     columns = {
         "version": 0,
         "code": anchor,
         "name": 0,
         "spec": 0,
-        "qty": 0,
         "unit": 0,
         "final": 0,
     }
@@ -199,8 +191,8 @@ def _block_from_anchor(ws, row, anchor, last_col):
         if _contains_any(previous, VER_ALIASES):
             columns["version"] = anchor - 1
 
-    # 与旧逻辑一致扫描到本行末尾；字段仅记录首次命中，因此并排模板仍由各自锚点解析。
-    for column in range(anchor, last_col + 1):
+    # 每个横向子表只扫描到下一个材料编码锚点之前，防止前一块缺列时误借用后一块字段。
+    for column in range(anchor, block_end + 1):
         _assign_block_column(columns, _norm(_cell(ws, row, column)), column)
     if columns["final"] == 0:
         return None
@@ -208,7 +200,7 @@ def _block_from_anchor(ws, row, anchor, last_col):
         "hdr": row,
         "cols": [
             columns["version"], columns["code"], columns["name"],
-            columns["spec"], columns["qty"], columns["unit"], columns["final"],
+            columns["spec"], columns["unit"], columns["final"],
         ],
     }
 
@@ -216,16 +208,19 @@ def _block_from_anchor(ws, row, anchor, last_col):
 def find_all_blocks(ws):
     """识别工作表中所有可能并排的数据区块。
 
-    每个区块以材料编码表头为锚点，从该列向右解析版本、编码、名称、规格、数量、单位和
-    最终采购数量七个字段。返回项包含表头行和列号数组，列号零表示可选字段缺失。只有
-    编码与最终采购数量同时存在才构成有效区块，并限制最多十二块防止异常表头组合爆炸。
+    每个区块以材料编码表头为锚点，只在当前锚点与下一个锚点之间解析版本、编码、名称、
+    规格、单位和最终采购数量六个字段。这样同一页的两个子表会直接形成两段记录流，不会
+    先复制成中间并排表，也不会跨子表误配字段。只有编码与最终采购数量同时存在才构成
+    有效区块，并限制最多十二块防止异常表头组合爆炸。
     """
     blocks = []
     scan = min(HEADER_SCAN_ROWS, ws.max_row or 1)
     for row in range(1, scan + 1):
         last_col = _last_col(ws, row)
-        for anchor in _header_anchor_columns(ws, row, last_col):
-            block = _block_from_anchor(ws, row, anchor, last_col)
+        anchors = _header_anchor_columns(ws, row, last_col)
+        for index, anchor in enumerate(anchors):
+            block_end = anchors[index + 1] - 1 if index + 1 < len(anchors) else last_col
+            block = _block_from_anchor(ws, row, anchor, block_end)
             if block is None:
                 continue
             blocks.append(block)
@@ -274,9 +269,9 @@ def is_data_sheet(ws):
 # ==================== 表类型分类层(泛用性识别 + 可信度依据) ====================
 # 在结构探测之上叠加"这张表到底是什么"的判定, 输出识别依据与置信度,
 # 供可信度报告使用。判定顺序: 排除类 -> 组托辅材 -> 包装方案汇总 -> 通用数据表。
-FIELD_CN = ["版本序号", "材料编号", "材料名称", "规格", "数量", "单位", "最终采购数量"]
-KEY_FIELDS = [1, 6]                       # 编码、最终采购数量为关键字段(缺失严重)
-INFO_FIELDS = [2, 3, 5]                   # 名称/规格/单位为信息字段(缺失影响分组)
+FIELD_CN = ["版本序号", "材料编号", "材料名称", "规格", "单位", "最终采购数量"]
+KEY_FIELDS = [F_CODE, F_FINAL]             # 编码、最终采购数量为关键字段（缺失严重）。
+INFO_FIELDS = [F_NAME, F_SPEC, F_UNIT]     # 名称、规格、单位缺失会影响最终聚合。
 
 # 各类源表的表名关键词
 NAME_PACKAGING = ("包装方案汇总", "包材用量计算", "PFEP及采购", "采购量核算")
@@ -337,8 +332,8 @@ def classify_sheet(ws):
         info.update(kind="排除:参考或已汇总表", reason="表名含'%s', 非采购透视源" % hit)
         return info
     if _looks_like_pivot_output(ws):
-        info.update(kind="排除:疑似已生成透视表",
-                    reason="表内出现'求和项:'或'(全部)'页字段, 判为已有透视结果")
+        info.update(kind="排除:疑似已生成汇总表",
+                    reason="表内出现'求和项:'或'(全部)'页字段, 判为历史透视输出")
         return info
     if not blocks:
         info.update(kind="排除:无数据区",
@@ -346,7 +341,7 @@ def classify_sheet(ws):
         return info
 
     # 同一页的并排区块共享模板结构，分类依据取首个区块，实际读取仍处理全部区块。
-    cols = blocks[0]["cols"]     # [ver,code,name,spec,qty,unit,final]
+    cols = blocks[0]["cols"]     # [version, code, name, spec, unit, final]
     info["cols"] = cols
     missing = [FIELD_CN[i] for i in (KEY_FIELDS + INFO_FIELDS) if cols[i] == 0]
     info["missing"] = missing
@@ -387,9 +382,9 @@ def _classify_by_name_and_cols(ws, name, cols, blocks, info):
 
 
 def normalize_rows(ws):
-    """把普通工作表全部并排区块读成统一七字段列表。
+    """把普通工作表中的全部横向子表直接读成统一六字段列表。
 
-    缺失可选列填 ``None``，整条七字段均为空的行跳过。区块按表头扫描顺序、行按工作表
+    缺失可选列填 ``None``，整条六字段均为空的行跳过。区块按表头扫描顺序、行按工作表
     顺序追加，使后续“首次出现”平局规则具有确定性。
     """
     blocks = find_all_blocks(ws)
@@ -401,7 +396,7 @@ def normalize_rows(ws):
         cols = b['cols']
         for r in range(b['hdr'] + 1, last + 1):
             rec = []
-            for i in range(7):
+            for i in range(6):
                 sc = cols[i]
                 rec.append(_cell(ws, r, sc) if sc > 0 else None)
             # 跳过整行全空
@@ -412,7 +407,7 @@ def normalize_rows(ws):
 
 
 def normalize_stream_rows(ws, blocks):
-    """从只读工作表按已识别区块流式提取七个业务字段。
+    """从只读工作表按已识别区块流式提取六个业务字段。
 
     ``values_only`` 避免创建大量 Cell 对象，列号从一基转换为元组零基索引。输出行序与
     :func:`normalize_rows` 一致，因此人工复核编号和聚类平局结果不会因读取模式改变。

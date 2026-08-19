@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""销售透视可信度评分规则回归测试。"""
+"""采购汇总可信度评分规则回归测试。"""
 import unittest
 
 from core import pivot_core
@@ -57,7 +57,7 @@ class PivotConfidenceTests(unittest.TestCase):
         self.assertIn("未识别.xlsx", messages[2])  # 未采用文件
         self.assertIn("缺失字段", messages[3])  # 字段缺失
         self.assertIn("低置信识别", messages[4])  # 低置信来源
-        self.assertIn("透视总计为 0", messages[5])  # 异常总计
+        self.assertIn("采购数量总计为 0", messages[5])  # 异常总计
         self.assertIn("分组数(3)大于清洗行数(2)", messages[6])  # 分组数异常
 
     def test_no_rows_is_zero_but_keeps_explanatory_issues(self):

@@ -37,7 +37,7 @@ class TestTaskHistory(unittest.TestCase):
         self.assertIsNotNone(rows[0]["duration_ms"])  # 持续时间必须记录
 
     def test_interrupted_recovery_and_clear(self):
-        task_history.start_task("pivot", "销售表透视", db_path=self.db)
+        task_history.start_task("pivot", "采购汇总", db_path=self.db)
         self.assertEqual(task_history.mark_interrupted(self.db), 1)  # 中断标记生效
         rows = task_history.list_recent(db_path=self.db)
         self.assertEqual(rows[0]["status"], "interrupted")

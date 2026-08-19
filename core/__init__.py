@@ -5,7 +5,7 @@
   · attendance_core.run —— 考勤数据填报
   · reconcile_core.run  —— 工时对账
   · arrival_core.run    —— 到料明细表
-  · pivot_core.run      —— 销售表透视
+  · pivot_core.run      —— 采购汇总
   · purchase_core.run   —— 采购数对账
   · delivery_core.run   —— 送货计划表
 

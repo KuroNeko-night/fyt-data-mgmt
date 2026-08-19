@@ -27,7 +27,7 @@ from . import common_core
 FEATURE_TITLES = {
     # 报表中的客户可读模块名；未知 feature 会回退原值而不是丢弃记录。
     "attendance": "考勤填报", "reconcile": "工时对账", "arrival": "到料明细",
-    "pivot": "销售透视", "purchase": "采购对账", "shipping_review": "发运评审对比",
+    "pivot": "采购汇总", "purchase": "采购对账", "shipping_review": "发运评审对比",
     "delivery": "送货计划",
     "supplier_batch": "供应商批次表", "purchase_plan": "采购计划导入",
     "invoice": "发票统计", "rename": "批量重命名", "text": "文本工具",

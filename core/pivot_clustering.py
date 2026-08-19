@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""销售采购表的规格/单位归并与静态聚合层。
+"""采购汇总的规格、单位归并与物料聚合层。
 
-本模块集中维护七字段行 ``[版本,编码,名称,规格,数量,单位,最终采购数量]`` 的聚类与
-聚合规则，供 :mod:`core.pivot_analysis` 的冲突检测和 :mod:`core.pivot_core` 的第二
-阶段应用共用。模块不依赖工作表或界面，只从 :mod:`core.pivot_ooxml` 导入固定索引、
-空值判断和排序键，避免与 OOXML 注入层产生循环依赖。
+本模块集中维护六字段行 ``[版本,编码,名称,规格,单位,最终采购数量]`` 的清洗辅助、
+聚类和聚合规则，供 :mod:`core.pivot_analysis` 的冲突检测和 :mod:`core.pivot_core` 的
+第二阶段应用共用。旧流程为生成原生 Excel 透视表额外保留了“数量”字段、透视缓存和
+OOXML 排序约束；当前输出是静态采购汇总，因此这里只保留业务真正使用的字段与规则。
 
 归并原则是“只改分组判断、不改展示优先值”：归一化键只用于判断两个写法是否同组，
 最终显示值取出现次数最多、文本最短且首次出现最早的原始写法；这使 46A 等标准表
@@ -13,10 +13,40 @@
 import re
 from collections import defaultdict, OrderedDict
 
-from .pivot_ooxml import _code_order_key, _is_blank
+from . import common_core
 
-# 归一化后字段索引: 0版本 1编码 2名称 3规格 4数量 5单位 6最终采购数量。
-F_VER, F_CODE, F_NAME, F_SPEC, F_QTY, F_UNIT, F_FINAL = 0, 1, 2, 3, 4, 5, 6
+# 归一化后字段索引：0版本、1编码、2名称、3规格、4单位、5最终采购数量。
+# 版本只参与清洗，最终写出的“清洗数据”页只保留后五个业务字段。
+F_VER, F_CODE, F_NAME, F_SPEC, F_UNIT, F_FINAL = 0, 1, 2, 3, 4, 5
+
+
+def _is_blank(value):
+    """判断业务字段是否为空或只包含空白。"""
+    return value is None or str(value).strip() == ""
+
+
+def _num(value):
+    """解析可参与采购数量汇总的数值，排除布尔值和说明文本。
+
+    文本数值先复用公共数字规范化，兼容全角数字、小数点、千分位和零宽字符；无法解析
+    的内容返回 ``None``，由聚合层按零处理并继续通过可信度提示暴露源数据风险。
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, str):
+        value = common_core._num_str(value)
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return int(number) if number == int(number) else number
+
+
+def _code_order_key(code):
+    """生成稳定的物料编号排序键，使纯数字编号排在字母前缀编号之前。"""
+    text = "" if code is None else str(code)
+    has_letter_prefix = bool(text) and text[0].isascii() and text[0].isalpha()
+    return (1 if has_letter_prefix else 0, text)
 
 # ==================== 聚类归一化(提高跨表泛用性) ====================
 # 目标: 同一物料在不同表里因"排版差异"(空格/全角半角/分隔符写法)被拆成多组的问题。
@@ -269,8 +299,8 @@ def drop_blank_code_rows(rows):
 def aggregate(rows):
     """按编码、名称、规格和单位分组并汇总最终采购数量。
 
-    非数字度量按零参与，与透视缓存的空值策略保持一致。排序使用统一编码规则，确保静态
-    A 至 E 列、OOXML ``items`` 和 ``rowItems`` 三处行序完全对齐。
+    非数字数量按零参与；同一物料号如果经名称、规格或单位复核后仍不同，继续分为不同
+    行，避免把真实不同物料属性强行覆盖。结果按稳定编码键排序，便于人工检索与跨次比较。
     """
     groups = OrderedDict()
     for rec in rows:
@@ -278,14 +308,11 @@ def aggregate(rows):
         nm   = "" if rec[F_NAME] is None else str(rec[F_NAME]).strip()
         sp   = "" if rec[F_SPEC] is None else str(rec[F_SPEC]).strip()
         un   = "" if rec[F_UNIT] is None else str(rec[F_UNIT]).strip()
-        try:
-            q = float(rec[F_FINAL]) if not _is_blank(rec[F_FINAL]) else 0.0
-        except (ValueError, TypeError):
-            q = 0.0
+        parsed = _num(rec[F_FINAL])
+        q = float(parsed) if parsed is not None else 0.0
         key = (code, nm, sp, un)
         groups[key] = groups.get(key, 0.0) + q
-    # 排序: 编码优先按“无字母前缀在前”分组(见 _code_order_key), 再按 名称/规格/单位
-    # 字符串升序。与透视 <items>/pos_map 用同一编码键, 保证 A-E 行序与静态列对齐。
+    # 编码优先按“无字母前缀在前”排序，再按名称、规格、单位稳定排序。
     items = sorted(groups.items(),
                    key=lambda kv: (_code_order_key(kv[0][0]), kv[0][1], kv[0][2], kv[0][3]))
     result = []

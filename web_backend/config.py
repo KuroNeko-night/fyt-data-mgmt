@@ -108,7 +108,7 @@ FEATURES = [
     {"key": "attendance_archive", "title": "考勤月度归档", "group": "人事", "description": "上传考勤填报表，汇总月度出勤统计"},
     {"key": "reconcile", "title": "工时对账", "group": "人事", "description": "上传工时表，自动核对多方差异并汇总"},
     {"key": "arrival", "title": "到料明细", "group": "业务", "description": "上传送货计划，自动统计到料与未收料"},
-    {"key": "pivot", "title": "销售透视", "group": "业务", "description": "上传采购明细，自动清洗汇总成透视表"},
+    {"key": "pivot", "title": "采购汇总", "group": "业务", "description": "上传采购明细，直接清洗、归并并汇总物料数量"},
     {"key": "purchase", "title": "采购对账", "group": "业务", "description": "上传双方采购表，逐行比对数量差异"},
     {"key": "shipping_review", "title": "发运评审对比", "group": "业务", "description": "过滤作废 BOX，汇总包装数量并与发运评审表逐项核对"},
     {"key": "delivery", "title": "送货计划", "group": "业务", "description": "上传物料与供应商清单，自动生成送货计划"},

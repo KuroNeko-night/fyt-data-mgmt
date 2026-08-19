@@ -424,10 +424,10 @@ def _arrival_run(payload):
 
 
 def _pivot_analyze(payload):
-    """只读分析销售表透视结构，返回工作表、暂存行和字段覆盖计划。"""
+    """只读分析采购汇总结构，返回工作表、暂存行和字段覆盖计划。"""
     from . import pivot_core
     paths = _payload_list(payload, "paths")
-    return _task("pivot", "销售表透视分析",
+    return _task("pivot", "采购汇总分析",
                  lambda log, progress: pivot_core.analyze(
                      paths, log=log, progress=progress))
 
@@ -485,11 +485,11 @@ def _pivot_choices(raw):
 
 
 def _pivot_run(payload):
-    """把复核选择还原后执行销售表透视输出。"""
+    """把复核选择还原后执行采购汇总输出。"""
     from . import pivot_core
     paths = _payload_list(payload, "paths")
     choices = _pivot_choices((payload or {}).get("choices"))
-    return _task("pivot", "销售表透视",
+    return _task("pivot", "采购汇总",
                  lambda log, progress: pivot_core.run(
                      paths, choices=choices, log=log, progress=progress))
 

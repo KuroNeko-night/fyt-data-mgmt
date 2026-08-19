@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""对账、销售透视、采购、送货与供应商批次等业务结果投影。
+"""对账、采购汇总、采购、送货与供应商批次等业务结果投影。
 
 本模块覆盖运营类任务的统一结果展示。各投影函数只读取任务输出的结构化统计、明细和
 可信度信息，并按列白名单裁剪前端可见字段；完整明细和正式报告仍由输出文件承载。
@@ -135,7 +135,7 @@ def _present_reconcile(value: object, limit: int) -> dict[str, object] | None:
 
 
 def _pivot_quality_checks(issues):
-    """把销售透视的结构风险转换为前端可信度检查。"""
+    """把采购汇总的结构风险转换为前端可信度检查。"""
     checks = []
     for item in issues:
         values = _sequence(item)
@@ -153,18 +153,32 @@ def _pivot_quality_checks(issues):
 
 
 def _pivot_metrics(result, used, audit, groups, total, review):
-    """组装销售透视的五个核心指标。"""
-    return [
+    """组装采购汇总指标，并把来源数量勾稽作为独立状态展示。"""
+    metrics = [
         _metric("files", "源文件", result.get("files", 0), tone="info"),
         _metric("sheets", "纳入工作表", len(used), note=f"共识别 {len(audit)} 张", tone="success"),
         _metric("groups", "物料分组", groups, tone="success"),
         _metric("total", "采购数量合计", total, tone="neutral"),
         _metric("held", "人工恢复行", review.get("held_kept_n", 0), tone="info"),
     ]
+    source_check = _mapping(result.get("source_check"))
+    if source_check:
+        passed = bool(source_check.get("passed"))
+        metrics.append(_metric(
+            "source_check",
+            "来源数量自检",
+            _text(source_check.get("status")) or ("通过" if passed else "异常"),
+            note=(
+                f"源数据 {_text(source_check.get('source_total'))}，"
+                f"最终表 {_text(source_check.get('output_total'))}"
+            ),
+            tone="success" if passed else "danger",
+        ))
+    return metrics
 
 
 def _present_pivot(value: object, limit: int) -> dict[str, object] | None:
-    """生成销售透视投影，展示工作表识别、人工恢复行和动态透视提示。"""
+    """生成采购汇总投影，展示工作表识别、人工恢复行和可信度提示。"""
     result = unwrap_result(value)
     audit = [item for item in _sequence(result.get("audit")) if isinstance(item, Mapping)]
     if not audit and "groups" not in result and "score" not in result:
@@ -186,16 +200,17 @@ def _present_pivot(value: object, limit: int) -> dict[str, object] | None:
     } for item in audit]
     review = _mapping(result.get("review"))
     notices = []
-    if _text(result.get("pivot_error")):
+    source_check = _mapping(result.get("source_check"))
+    if source_check and not bool(source_check.get("passed")):
         notices.append({
-            "tone": "warning",
-            "title": "动态透视表未写入",
-            "message": "静态汇总值已正常保留；如需 Excel 内可刷新透视表，请查看正式结果文件中的说明。",
+            "tone": "danger",
+            "title": "最终采购数汇总自检未通过",
+            "message": _text(source_check.get("message")) or "源数据与最终表的最终采购数汇总不一致，请复核。",
         })
     return {
         "kind": "pivot",
-        "title": "销售透视结果",
-        "summary": f"已从 {len(used)} 张工作表汇总 {groups} 个物料分组，采购数量合计 {_text(total)}。",
+        "title": "采购汇总结果",
+        "summary": f"已从 {len(used)} 张工作表清洗并汇总 {groups} 个物料分组，采购数量合计 {_text(total)}。",
         "metrics": _pivot_metrics(result, used, audit, groups, total, review),
         "quality": _quality(score, "评分依据逐表类型识别、关键字段完整度、采购数量勾稽和人工复核结果。", checks, level=level),
         "parameters": [],

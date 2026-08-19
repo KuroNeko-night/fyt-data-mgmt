@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""销售透视结果的可信度评估与兼容文本报告。
+"""采购汇总结果的可信度评估与兼容文本报告。
 
 本模块只处理已经形成的审计记录、人工复核选择和汇总指标，不读取工作簿，也不执行
 规格/单位归并。结构化评分供双端前端直接展示；文本报告仅保留给旧版离线接口。
@@ -13,12 +13,12 @@ import os
 from openpyxl.utils import get_column_letter
 
 
-# 七字段规范行中的固定位置。这里不导入 pivot_core，避免报告层与业务层循环依赖。
+# 六字段规范行中的固定位置。这里不导入 pivot_core，避免报告层与业务层循环依赖。
 F_CODE = 1
 F_NAME = 2
 F_SPEC = 3
-F_UNIT = 5
-F_FINAL = 6
+F_UNIT = 4
+F_FINAL = 5
 
 
 def _source_findings(used_kinds):
@@ -73,13 +73,32 @@ def _result_findings(result):
     findings = []
     clean_rows = result["clean_rows"]
     if clean_rows > 0 and result["total"] == 0:
-        findings.append((30, "严重", "透视总计为 0, 数据虽有行但最终采购数量全为空/0, 请核对源列"))
+        findings.append((30, "严重", "采购数量总计为 0, 数据虽有行但最终采购数量全为空/0, 请核对源列"))
     if clean_rows > 0 and result["groups"] > clean_rows:
         findings.append((
             20,
             "严重",
             "分组数(%d)大于清洗行数(%d), 逻辑异常" % (result["groups"], clean_rows),
         ))
+    source_check = result.get("source_check")
+    if isinstance(source_check, dict) and not source_check.get("passed", False):
+        source_total = _fmt_number(source_check.get("source_total", 0))
+        output_total = _fmt_number(source_check.get("output_total", result.get("total", 0)))
+        difference = _fmt_number(source_check.get("difference", 0))
+        if source_check.get("source_unparsed", 0):
+            findings.append((
+                30,
+                "严重",
+                "最终采购数汇总自检无法确认: 源数据有%d个非空数量无法解析"
+                % source_check["source_unparsed"],
+            ))
+        else:
+            findings.append((
+                35,
+                "严重",
+                "最终采购数汇总自检异常: 源数据=%s, 最终表=%s, 差异(最终表-源数据)=%s"
+                % (source_total, output_total, difference),
+            ))
     return findings
 
 
@@ -93,13 +112,13 @@ def _confidence_level(score):
 
 
 def assess_confidence(result):
-    """用可解释扣分规则评估透视结果，返回结构化风险提示。"""
+    """用可解释扣分规则评估采购汇总结果，返回结构化风险提示。"""
     score = 100
     issues = []
     used_audits = [audit for audit in result["audit"] if audit["use"]]
     if result["processed"] == 0 or result["clean_rows"] == 0:
         score = 0
-        issues.append(("严重", "未识别到任何有效数据表, 无法生成可信透视表"))
+        issues.append(("严重", "未识别到任何有效数据表, 无法生成可信采购汇总"))
 
     findings = []
     findings.extend(_source_findings([audit["kind"] for audit in used_audits]))
@@ -126,7 +145,7 @@ def _fmt_cols(columns):
     """把字段列映射渲染为“编码=K列”一类可读文本。"""
     if not columns:
         return "(无)"
-    names = ["版本", "编码", "名称", "规格", "数量", "单位", "最终采购数量"]
+    names = ["版本", "编码", "名称", "规格", "单位", "最终采购数量"]
     parts = [
         "%s=%s列" % (names[index], get_column_letter(column))
         for index, column in enumerate(columns)
@@ -204,6 +223,24 @@ def _append_conflict_section(lines, title, conflicts, overrides, distribution_ke
     lines.append("")
 
 
+def _source_check_lines(result, fallback_total):
+    """把来源与最终表的数量自检转换为兼容文本报告行。"""
+    source_check = result.get("source_check")
+    if not isinstance(source_check, dict):
+        return [
+            "  来源最终采购数   : %s" % _fmt_number(fallback_total),
+            "  最终表采购数     : %s" % _fmt_number(fallback_total),
+            "  数量差异         : 0",
+            "  来源与最终表自检 : 未执行",
+        ]
+    return [
+        "  来源最终采购数   : %s" % _fmt_number(source_check.get("source_total", fallback_total)),
+        "  最终表采购数     : %s" % _fmt_number(source_check.get("output_total", fallback_total)),
+        "  数量差异         : %s" % _fmt_number(source_check.get("difference", 0)),
+        "  来源与最终表自检 : %s" % source_check.get("status", "未执行"),
+    ]
+
+
 def _append_report_body(lines, result, separator):
     """追加风险、来源审计、人工复核与勾稽校验主体。"""
     lines.append("【风险清单】")
@@ -217,7 +254,7 @@ def _append_report_body(lines, result, separator):
     lines.extend(("", separator, "【数据来源识别明细】(共扫描 %d 个文件)" % result["files"], separator))
     used = [audit for audit in result["audit"] if audit["use"]]
     skipped = [audit for audit in result["audit"] if not audit["use"]]
-    lines.append("● 已纳入透视的数据表 (%d 张):" % len(used))
+    lines.append("● 已纳入采购汇总的数据表 (%d 张):" % len(used))
     if not used:
         lines.append("    (无)")
     for audit in used:
@@ -248,10 +285,13 @@ def _append_report_body(lines, result, separator):
         "【汇总与勾稽校验】",
         separator,
         "  清洗后合并数据行 : %d 行" % result["clean_rows"],
-        "  透视分组(去重后) : %d 组" % result["groups"],
+        "  物料分组(去重后) : %d 组" % result["groups"],
         "  最终采购数量总计 : %s" % total,
         "  清洗删除小计     : 版本序号 %d 行 / 最终采购量为空或0 %d 行" % (result["d1"], result["d2"]),
         "  勾稽(分组数<=行数): %s" % check,
+    ))
+    lines.extend(_source_check_lines(result, total))
+    lines.extend((
         "",
         separator,
         "说明: 本报告由程序按规则自动生成, 仅供复核参考。评分为扣分制,",
@@ -267,12 +307,12 @@ def write_confidence_report(out_path, in_paths, result):
     separator = "=" * 66
     lines = [
         separator,
-        "           销售表透视 · 可信度分析报告",
+        "           采购汇总 · 可信度分析报告",
         separator,
         "生成时间   : %s" % (
             datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=8)
         ).strftime("%Y-%m-%d %H:%M:%S"),
-        "透视结果   : %s" % os.path.basename(out_path),
+        "采购汇总   : %s" % os.path.basename(out_path),
         "",
         "【总体结论】  可信度: %s   评分: %d/100" % (result["level"], result["score"]),
     ]

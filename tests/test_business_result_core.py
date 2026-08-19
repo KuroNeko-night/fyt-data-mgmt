@@ -122,7 +122,7 @@ class BusinessResultCoreTests(unittest.TestCase):
         self.assertTrue(presentation["quality"]["checks"])  # 质量检查存在
 
     def test_pivot_projection_embeds_quality_and_sheet_audit(self):
-        """销售表结果应内嵌可信度和工作表识别审计，不再依赖独立分析文件。"""
+        """采购汇总结果应内嵌可信度、来源数量自检和工作表识别审计。"""
 
         presentation = business_result_core.present("pivot.run", {
             "files": 1,
@@ -131,6 +131,14 @@ class BusinessResultCoreTests(unittest.TestCase):
             "score": 82,
             "level": "需复核",
             "issues": [["警告", "采购数量存在一处勾稽提示"]],
+            "source_check": {
+                "passed": False,
+                "status": "异常",
+                "source_total": 20,
+                "output_total": 18,
+                "difference": -2,
+                "message": "源数据与最终表的最终采购数汇总不一致。",
+            },
             "audit": [{
                 "file": r"C:\input\销售数据.xlsx",
                 "sheet": "明细",
@@ -145,6 +153,9 @@ class BusinessResultCoreTests(unittest.TestCase):
         self.assertEqual(presentation["quality"]["checks"][0]["title"], "警告")  # 检查级别
         self.assertEqual(presentation["sections"][0]["title"], "工作表识别明细")
         self.assertEqual(presentation["sections"][0]["rows"][0]["file"], "销售数据.xlsx")  # 文件名脱敏
+        self.assertEqual(presentation["metrics"][-1]["key"], "source_check")
+        self.assertEqual(presentation["metrics"][-1]["value"], "异常")
+        self.assertEqual(presentation["notices"][0]["tone"], "danger")
 
     def test_delivery_projection_lists_missing_supplier_materials(self):
         """送货计划投影必须列出未匹配供应商物料并呈现关键业务参数。"""

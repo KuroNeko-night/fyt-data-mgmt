@@ -495,7 +495,7 @@ class TestPivotVariants(unittest.TestCase):
         try:
             blocks = pc.find_all_blocks(ws)
             self.assertTrue(blocks, "未锚定到数据块:%r" % (hdr,))
-            return blocks[0]["cols"][6]        # cols[6]=final 列(1-based),0=缺失
+            return blocks[0]["cols"][5]        # cols[5]=最终采购数量列(1-based),0=缺失
         finally:
             wb.close()
 
