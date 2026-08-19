@@ -62,7 +62,7 @@ const features = [
   { key: "attendance", title: "考勤填报", group: "人事", description: "整理考勤记录并生成填报结果。" },
   { key: "reconcile", title: "工时对账", group: "财务", description: "核对工时与劳务对账资料。" },
   { key: "arrival", title: "到料明细", group: "业务", description: "上传送货计划，自动统计到料与未收料。" },
-  { key: "pivot", title: "销售透视", group: "销售", description: "按业务字段汇总销售数据。" },
+  { key: "pivot", title: "采购汇总", group: "业务", description: "按物料号清洗并汇总采购数据。" },
 ];
 
 // 结构化业务结果直接模拟 business_result_core 的投影协议，前端不重新解析表格。

@@ -34,7 +34,7 @@ const navigationPages = [
   ["reconcile", "工时对账", "工时对账"],
   ["reconcile_statement", "对账单制作", "对账单制作"],
   ["arrival", "到料明细表", "到料明细表"],
-  ["pivot", "销售表透视", "销售表透视"],
+  ["pivot", "采购汇总", "采购汇总"],
   ["purchase", "采购数对账", "采购数对账"],
   ["delivery", "送货计划表", "送货计划表"],
   ["supplier_batch", "供应商批次表", "供应商批次表"],

@@ -472,6 +472,59 @@
 .fyt-daily-absence-list p em { overflow: hidden; color: var(--fyt-text-secondary); font-size: 11px; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
 .fyt-daily-clear-note { margin: var(--fyt-space-5) 0 0; padding: var(--fyt-space-3); border-left: 3px solid var(--fyt-success); color: var(--fyt-text-secondary); background: var(--fyt-success-soft); font-size: var(--fyt-type-caption); }
 
+/* 总览考勤采用“摘要优先、明细按需展开”的信息层级，避免班组列表把其他管理信息推到首屏之外。 */
+.fyt-daily-attendance-overview { display: grid; gap: var(--fyt-space-4); overflow: hidden; padding: 0; }
+.fyt-daily-attendance-overview-head { display: flex; align-items: center; justify-content: space-between; gap: var(--fyt-space-5); padding: var(--fyt-space-5); border-bottom: 1px solid var(--fyt-border); background: linear-gradient(110deg, color-mix(in srgb, var(--fyt-primary-soft) 64%, var(--fyt-surface)), var(--fyt-surface)); }
+.fyt-daily-attendance-overview-head > div:first-child { min-width: 0; }
+.fyt-daily-attendance-overview-head span { color: var(--fyt-primary-strong); font-size: var(--fyt-type-caption); font-weight: 700; }
+.fyt-daily-attendance-overview-head h2 { margin: 4px 0 0; color: var(--fyt-text); font-size: var(--fyt-type-section); }
+.fyt-daily-attendance-overview-head p { margin: 4px 0 0; color: var(--fyt-text-secondary); font-size: var(--fyt-type-caption); }
+.fyt-daily-attendance-total { display: grid; grid-template-columns: auto auto; grid-template-areas: "value label" "value status"; align-items: center; column-gap: 10px; min-width: 156px; padding: 10px 14px; border: 1px solid var(--fyt-border); border-radius: var(--fyt-radius-control); background: color-mix(in srgb, var(--fyt-surface) 86%, transparent); }
+.fyt-daily-attendance-total > strong { grid-area: value; color: var(--fyt-text); font: 700 28px/1 var(--fyt-type-font-mono); letter-spacing: -.04em; }
+.fyt-daily-attendance-total > strong small { color: var(--fyt-text-muted); font-size: 14px; letter-spacing: 0; }
+.fyt-daily-attendance-total > span { grid-area: label; color: var(--fyt-text-muted); font-size: 11px; }
+.fyt-daily-attendance-total > em { grid-area: status; color: var(--fyt-success); font: normal 700 11px/1.2 var(--fyt-type-font-mono); white-space: nowrap; }
+.fyt-daily-attendance-total[data-state="shortage"] > em { color: var(--fyt-danger); }
+.fyt-daily-attendance-total[data-state="over"] > em { color: var(--fyt-primary-strong); }
+.fyt-daily-attendance-quick-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--fyt-space-3); padding: 0 var(--fyt-space-5); }
+.fyt-daily-attendance-quick-grid article { display: grid; grid-template-columns: minmax(118px, .64fr) minmax(0, 1.36fr); align-items: center; gap: var(--fyt-space-3); min-width: 0; padding: 12px 14px; border: 1px solid var(--fyt-border); border-radius: var(--fyt-radius-control); background: var(--fyt-surface-subtle); }
+.fyt-daily-attendance-quick-grid article > div { display: grid; min-width: 0; gap: 3px; }
+.fyt-daily-attendance-quick-grid span { color: var(--fyt-text-muted); font-size: 11px; }
+.fyt-daily-attendance-quick-grid strong { color: var(--fyt-text); font: 700 17px/1.1 var(--fyt-type-font-mono); }
+.fyt-daily-attendance-quick-grid small { overflow: hidden; color: var(--fyt-text-secondary); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.fyt-daily-attendance-alert { display: flex; align-items: center; gap: var(--fyt-space-2); margin: 0 var(--fyt-space-5); padding: 9px 12px; border-left: 3px solid var(--fyt-warning); border-radius: 0 var(--fyt-radius-control) var(--fyt-radius-control) 0; color: var(--fyt-text-secondary); background: var(--fyt-warning-soft); font-size: 11px; }
+.fyt-daily-attendance-alert span { color: var(--fyt-warning-strong, var(--fyt-warning)); font-weight: 700; }
+.fyt-daily-attendance-alert strong { color: var(--fyt-text); font-family: var(--fyt-type-font-mono); }
+.fyt-daily-attendance-alert small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fyt-daily-attendance-overview > .fyt-daily-clear-note { margin: 0 var(--fyt-space-5); }
+.fyt-daily-attendance-details { margin: 0 var(--fyt-space-5) var(--fyt-space-5); border: 1px solid var(--fyt-border); border-radius: var(--fyt-radius-control); background: var(--fyt-surface-subtle); }
+.fyt-daily-attendance-details > header { display: flex; align-items: center; justify-content: space-between; gap: var(--fyt-space-3); padding: 11px 13px; }
+.fyt-daily-attendance-details > header > div { display: grid; min-width: 0; gap: 2px; }
+.fyt-daily-attendance-details > header span, .fyt-daily-attendance-secondary > span { color: var(--fyt-primary-strong); font-size: 10px; font-weight: 700; }
+.fyt-daily-attendance-details > header strong { color: var(--fyt-text); font-size: var(--fyt-type-caption); }
+.fyt-daily-attendance-details > header small { color: var(--fyt-text-muted); font-size: 10px; }
+.fyt-daily-attendance-details > header button, .fyt-daily-attendance-more { min-height: 30px; padding: 0 10px; border: 1px solid var(--fyt-border-strong); border-radius: var(--fyt-radius-control); color: var(--fyt-primary-strong); background: var(--fyt-surface); font-size: 10px; font-weight: 700; cursor: pointer; }
+.fyt-daily-attendance-details > header button:hover, .fyt-daily-attendance-more:hover { border-color: var(--fyt-primary); background: var(--fyt-primary-soft); }
+.fyt-daily-attendance-group-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; padding: 0 11px 11px; }
+.fyt-daily-attendance-group-row { display: grid; grid-template-columns: minmax(112px, .72fr) minmax(0, 1.28fr); align-items: center; gap: 10px; min-width: 0; padding: 8px 10px; border: 1px solid color-mix(in srgb, var(--fyt-border) 82%, transparent); border-radius: var(--fyt-radius-control); background: var(--fyt-surface); }
+.fyt-daily-attendance-group-row > div:first-child { display: grid; min-width: 0; gap: 2px; }
+.fyt-daily-attendance-group-row strong { overflow: hidden; color: var(--fyt-text); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.fyt-daily-attendance-group-row small { overflow: hidden; color: var(--fyt-text-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.fyt-daily-attendance-more { width: calc(100% - 22px); margin: 0 11px 11px; }
+.fyt-daily-attendance-secondary { display: grid; gap: 7px; padding: 11px; border-top: 1px solid var(--fyt-border); }
+.fyt-daily-attendance-reason-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.fyt-daily-attendance-reason-list p { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; min-width: 0; margin: 0; padding: 7px 9px; border-radius: var(--fyt-radius-control); background: var(--fyt-surface); }
+.fyt-daily-attendance-reason-list p strong { color: var(--fyt-text); font-size: 11px; }
+.fyt-daily-attendance-reason-list p em { overflow: hidden; color: var(--fyt-text-secondary); font-size: 10px; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
+.fyt-daily-attendance-dialog { display: grid; gap: var(--fyt-space-5); }
+.fyt-daily-attendance-dialog > section { display: grid; gap: var(--fyt-space-3); min-width: 0; padding: var(--fyt-space-4); border: 1px solid var(--fyt-border); border-radius: var(--fyt-radius-card); background: var(--fyt-surface-subtle); }
+.fyt-daily-attendance-dialog > section > header { display: flex; align-items: center; justify-content: space-between; gap: var(--fyt-space-3); }
+.fyt-daily-attendance-dialog > section > header > div { display: grid; gap: 2px; }
+.fyt-daily-attendance-dialog > section > header span { color: var(--fyt-primary-strong); font-size: 11px; font-weight: 700; }
+.fyt-daily-attendance-dialog > section > header strong { color: var(--fyt-text); font-size: var(--fyt-type-card); }
+.fyt-daily-attendance-dialog > section > header b { color: var(--fyt-text-muted); font: 700 11px/1 var(--fyt-type-font-mono); }
+.fyt-daily-attendance-dialog-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--fyt-space-2); }
+
 .fyt-daily-brief-overview { min-width: 0; overflow: hidden; border: 1px solid var(--fyt-border); border-radius: var(--fyt-radius-card); background: var(--fyt-surface); }
 .fyt-daily-brief-overview > header { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--fyt-space-5); padding: var(--fyt-space-5); border-bottom: 1px solid var(--fyt-border); }
 .fyt-daily-brief-overview > header span, .fyt-daily-tab-heading span, .fyt-daily-roster header span, .fyt-daily-brief-form header span, .fyt-daily-brief-list > header span, .fyt-daily-plan-detail header span, .fyt-daily-category-summary header span { color: var(--fyt-primary-strong); font-size: var(--fyt-type-caption); font-weight: 700; }
@@ -1062,4 +1115,18 @@
   .fyt-daily-supplier-grid { grid-template-columns: 1fr; }
   .fyt-daily-attendance-summary p { align-items: flex-start; flex-direction: column; }
   .fyt-daily-attendance-summary p em { text-align: left; }
+}
+
+@media (max-width: 840px) {
+  .fyt-daily-attendance-quick-grid { grid-template-columns: 1fr; }
+  .fyt-daily-attendance-group-list { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 600px) {
+  .fyt-daily-attendance-overview-head { align-items: flex-start; flex-direction: column; gap: var(--fyt-space-3); }
+  .fyt-daily-attendance-total { width: 100%; }
+  .fyt-daily-attendance-quick-grid article { grid-template-columns: 1fr; gap: 8px; }
+  .fyt-daily-attendance-group-row { grid-template-columns: 1fr; gap: 7px; }
+  .fyt-daily-attendance-reason-list { grid-template-columns: 1fr; }
+  .fyt-daily-attendance-dialog-grid { grid-template-columns: 1fr; }
 }

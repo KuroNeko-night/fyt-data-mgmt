@@ -130,9 +130,9 @@ async function previewResponse<T>(action: string, payload: BridgePayload): Promi
     "tasks.list": {
       summary: { total: 3, running: 0, ok: 2, failed: 1, interrupted: 0 },
       items: [
-        { id: "preview-1", feature: "pivot", title: "销售表透视", status: "ok",
+        { id: "preview-1", feature: "pivot", title: "采购汇总", status: "ok",
           started_at: "2026-07-22T12:08:00", finished_at: "2026-07-22T12:08:18",
-          duration_ms: 18420, message: "分组 126 项", output_dir: "文档/峰运通数据管理系统/输出/销售表透视" },
+          duration_ms: 18420, message: "分组 126 项", output_dir: "文档/峰运通数据管理系统/输出/采购汇总" },
         { id: "preview-2", feature: "attendance", title: "考勤数据填报", status: "ok",
           started_at: "2026-07-22T11:42:00", finished_at: "2026-07-22T11:42:07",
           duration_ms: 7310, message: "已处理 4 个文件", output_dir: "文档/峰运通数据管理系统/输出/考勤数据填报" },

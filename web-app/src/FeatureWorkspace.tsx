@@ -73,8 +73,8 @@ const SPECS: Record<string, FeatureSpec> = {
   arrival: { action: "web.arrival", runLabel: "生成到料明细", files: [
     { key: "paths", label: "送货计划", description: "上传一个或多个批次计划表。", multiple: true, accept: ".xlsx,.xlsm,.xls" },
   ], options: [{ key: "top_label", label: "报表抬头（可选）", kind: "text", value: "", placeholder: "例如：截止 16 点" }] },
-  pivot: { action: "pivot.run", reviewAction: "web.pivot.review", reviewLabel: "确认后生成透视表", runLabel: "生成透视表", files: [
-    { key: "paths", label: "销售数据源", description: "可合并处理多份采购或销售明细。", multiple: true, accept: ".xlsx,.xlsm,.xls" },
+  pivot: { action: "pivot.run", reviewAction: "web.pivot.review", reviewLabel: "确认后生成采购汇总", runLabel: "生成采购汇总", files: [
+    { key: "paths", label: "采购数据源", description: "可合并处理多份采购明细，直接清洗并按物料号汇总。", multiple: true, accept: ".xlsx,.xlsm,.xls" },
   ], options: [] },
   purchase: { action: "purchase.run", runLabel: "开始采购对账", files: [
     { key: "file1", label: "我方采购表", description: "上传本公司自己的采购表。", accept: ".xlsx,.xlsm,.xls" },

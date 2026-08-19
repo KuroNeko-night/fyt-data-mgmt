@@ -25,7 +25,7 @@ export const NAV_ITEMS: NavItem[] = [  // 数组顺序即侧栏顺序，新增�
   { key: "attendance_archive", group: "人事", title: "考勤月度归档", description: "上传考勤填报表，汇总月度出勤统计", icon: "chart" },
   { key: "reconcile", group: "人事", title: "工时对账", description: "上传工时表，核对多方差异并汇总", icon: "check" },
   { key: "arrival", group: "销售", title: "到料明细表", description: "上传送货计划，统计到料与未收料", icon: "truck" },
-  { key: "pivot", group: "销售", title: "销售表透视", description: "上传采购明细，汇总成透视表", icon: "chart" },
+  { key: "pivot", group: "业务", title: "采购汇总", description: "上传采购明细，清洗并按物料号汇总", icon: "chart" },
   { key: "purchase", group: "销售", title: "采购数对账", description: "上传双方采购表，逐行比对数量差异", icon: "compare" },
   { key: "shipping_review", group: "销售", title: "发运评审对比", description: "过滤作废 BOX，汇总包装数量并与评审表核对", icon: "compare" },
   { key: "delivery", group: "销售", title: "送货计划表", description: "上传物料与供应商清单，生成送货计划", icon: "route" },

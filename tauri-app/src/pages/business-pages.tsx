@@ -195,9 +195,9 @@ interface PivotSheet { id: string; file: string; sheet: string; use: boolean; ki
 interface PivotHeld { sid: string; ridx: number; sheet?: string; summary?: string; rec?: unknown; }
 /** 单位冲突或规格归并复核项。 */
 interface PivotConflict { gk: unknown; default: string; dist?: Record<string, number>; variants?: Record<string, number>; name?: string; code?: string; spec?: string; }
-/** 采购透视分析计划：汇总待确认的工作表、误删行、单位冲突与规格归并。 */
+/** 采购汇总分析计划：汇总待确认的工作表、误删行、单位冲突与规格归并。 */
 interface PivotPlan { sheets: PivotSheet[]; held_index: PivotHeld[]; unit_conflicts: PivotConflict[]; spec_merges: PivotConflict[]; }
-/** 采购透视执行结果：输出文件、分组统计与可信度。 */
+/** 采购汇总执行结果：输出文件、分组统计与可信度。 */
 interface PivotResult { out: string; out_dir: string; report: string; groups: number; total: number; level: string; score: number; }
 
 /**
@@ -237,7 +237,7 @@ export function PivotPage() {
         {plan.held_index.length ? <div className="fyt-review-list"><strong>疑似误删行 · {plan.held_index.length}</strong>{plan.held_index.map((item) => { const key = `${item.sid}:${item.ridx}`; return <label key={key}><input type="checkbox" checked={Boolean(held[key])} onChange={(event) => setHeld({ ...held, [key]: event.target.checked })} /><span>{item.sheet || item.sid} · {item.summary || reviewValue(item.rec)}</span></label>; })}</div> : null}
         {[{ title: "单位冲突", items: plan.unit_conflicts, prefix: "u", values: unitValues, setValues: setUnitValues }, { title: "规格归并", items: plan.spec_merges, prefix: "s", values: specValues, setValues: setSpecValues }].map((group) => group.items.length ? <div className="fyt-review-list" key={group.title}><strong>{group.title} · {group.items.length}</strong>{group.items.map((item, index) => { const key = `${group.prefix}-${index}`; const candidates = Object.keys(item.dist || item.variants || {}); return <label key={key}><span>{item.name || item.code || "未命名物料"}</span><select value={group.values[key] || ""} onChange={(event) => group.setValues({ ...group.values, [key]: event.target.value })}>{Array.from(new Set([item.default || "", ...candidates])).map((value) => <option key={value} value={value}>{value || "（空）"}</option>)}</select></label>; })}</div> : null)}</div> : <p className="fyt-empty-message">可先分析后复核，也可直接按默认规则生成。</p>}
     </section>
-    <TaskPanel busy={task.busy} error={task.error} logs={task.logs} progress={task.progress} onCancel={() => void task.cancel()} canRun={paths.length > 0} runLabel="生成透视表" onRun={() => void task.run("pivot.run", { paths, choices })} outDir={task.outDir} outputPath={task.result?.out}>
+    <TaskPanel busy={task.busy} error={task.error} logs={task.logs} progress={task.progress} onCancel={() => void task.cancel()} canRun={paths.length > 0} runLabel="生成采购汇总" onRun={() => void task.run("pivot.run", { paths, choices })} outDir={task.outDir} outputPath={task.result?.out}>
       {task.presentation ? <BusinessResultView presentation={task.presentation} /> : task.result ? <ResultSummary><strong>分组 {task.result.groups} 项 · 合计 {task.result.total}</strong><span>可信度 {task.result.level} · {task.result.score}/100</span></ResultSummary> : null}
     </TaskPanel>
   </section></div>;

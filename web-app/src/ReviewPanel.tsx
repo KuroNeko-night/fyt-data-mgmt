@@ -74,10 +74,10 @@ function ReconcileReview({ plan, onConfirm, busy }: { plan: ReconcilePlan; onCon
   </ReviewShell>;
 }
 
-/** 销售透视只读分析计划：工作表纳入范围、疑似误删行和单位/规格归并候选。 */
+/** 采购汇总只读分析计划：工作表纳入范围、疑似误删行和单位/规格归并候选。 */
 type PivotPlan = { sheets?: Array<{ id: number | string; file: string; sheet: string; use: boolean; kind: string; confidence: number; reason?: string }>; held_index?: Array<{ sid: number | string; ridx: number; file?: string; sheet?: string; rec?: unknown }>; unit_conflicts?: Array<{ gk: unknown; default?: string; dist?: Record<string, number>; name?: string; code?: string; spec?: string }>; spec_merges?: Array<{ gk: unknown; default?: string; variants?: Record<string, number>; name?: string; code?: string }> };
 
-/** 复核透视表纳入范围、疑似误删行以及单位和规格冲突。 */
+/** 复核采购汇总的工作表纳入范围、疑似误删行以及单位和规格冲突。 */
 function PivotReview({ plan, onConfirm, busy }: { plan: PivotPlan; onConfirm: (choices: Record<string, unknown>) => void; busy?: boolean }) {
   const sheets = plan.sheets || [];
   const held = plan.held_index || [];
@@ -99,8 +99,8 @@ function PivotReview({ plan, onConfirm, busy }: { plan: PivotPlan; onConfirm: (c
       spec_overrides: specs.map((item, index) => ({ gk: item.gk, value: specValues[String(index)] || "" })).filter((item, index) => item.value !== (specs[index].default || "")),  // 仅提交与默认值不同的规格覆盖
     };
   }
-  return <ReviewShell kind="pivot" result={plan} onConfirm={() => onConfirm(choices())} busy={busy} title="销售透视确认" description="确认工作表、疑似误删行和单位/规格归并后再生成透视表。" actionLabel="按此生成">
-    <div className="fyt-review-block"><div className="fyt-review-block-title">工作表纳入 <span>{sheets.length} 张</span></div><div className="fyt-review-table-wrap"><table className="fyt-review-table"><thead><tr><th>纳入</th><th>文件</th><th>工作表</th><th>识别类型</th><th>可信度</th></tr></thead><tbody>{sheets.map((item) => <tr key={`${item.id}`}><td><input type="checkbox" checked={Boolean(sheetUse[String(item.id)])} onChange={(event) => setSheetUse((current) => ({ ...current, [String(item.id)]: event.target.checked }))} /></td><td>{item.file}</td><td title={item.reason}>{item.sheet}</td><td>{item.kind}</td><td>{item.confidence != null ? `${Math.round(item.confidence * 100)}%` : "—"}</td></tr>)}</tbody></table></div></div>
+  return <ReviewShell kind="pivot" result={plan} onConfirm={() => onConfirm(choices())} busy={busy} title="采购汇总确认" description="确认工作表、疑似误删行和单位/规格归并后再生成采购汇总。" actionLabel="按此生成">
+    <div className="fyt-review-block"><div className="fyt-review-block-title">工作表纳入 <span>{sheets.length} 张</span></div><div className="fyt-review-table-wrap"><table className="fyt-review-table"><thead><tr><th>纳入</th><th>文件</th><th>工作表</th><th>识别类型</th><th>可信度</th></tr></thead><tbody>{sheets.map((item) => <tr key={`${item.id}`}><td><input type="checkbox" checked={Boolean(sheetUse[String(item.id)])} onChange={(event) => setSheetUse((current) => ({ ...current, [String(item.id)]: event.target.checked }))} /></td><td>{item.file}</td><td title={item.reason}>{item.sheet}</td><td>{item.kind}</td><td>{item.confidence != null ? `${Math.round(item.confidence)}%` : "—"}</td></tr>)}</tbody></table></div></div>
     <div className="fyt-review-block"><div className="fyt-review-block-title">疑似误删行 <span>{held.length} 行</span></div>{held.length ? <div className="fyt-review-list">{held.map((item) => { const key = `${item.sid}:${item.ridx}`; return <label key={key}><input type="checkbox" checked={Boolean(heldKeep[key])} onChange={(event) => setHeldKeep((current) => ({ ...current, [key]: event.target.checked }))} /><span>{item.file || item.sheet || item.sid} · {reviewValue(item.rec)}</span></label>; })}</div> : <p className="fyt-review-empty">没有疑似误删行。</p>}</div>
     <div className="fyt-review-block"><div className="fyt-review-block-title">单位/规格归并 <span>{units.length + specs.length} 项</span></div>{units.concat(specs).length ? <div className="fyt-review-list">{units.map((item, index) => <label key={`unit-${index}`}><span>单位 · {item.name || item.code || "未命名物料"}</span><select value={unitValues[String(index)] || ""} onChange={(event) => setUnitValues((current) => ({ ...current, [String(index)]: event.target.value }))}>{options(item).map((value) => <option value={value} key={value}>{value || "（空）"}</option>)}</select></label>)}{specs.map((item, index) => <label key={`spec-${index}`}><span>规格 · {item.name || item.code || "未命名物料"}</span><select value={specValues[String(index)] || ""} onChange={(event) => setSpecValues((current) => ({ ...current, [String(index)]: event.target.value }))}>{options(item).map((value) => <option value={value} key={value}>{value || "（空）"}</option>)}</select></label>)}</div> : <p className="fyt-review-empty">没有单位冲突或规格归并提示。</p>}</div>
   </ReviewShell>;

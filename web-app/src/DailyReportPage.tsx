@@ -135,11 +135,54 @@ function AttendanceProgressBar({ present, total, difference, compact = false }: 
   </div>;
 }
 
-/** 汇总参会人员和生产班组出勤，并单列缺勤原因与班组备注。 */
+/**
+ * 汇总参会人员和生产班组出勤。
+ * 总览默认只展示关键数字和异常班组，完整班组、单位和缺勤原因通过一次展开查看，避免长列表挤占管理层首屏。
+ */
 function AttendanceOverview({ data }: { data: DailyReportData["attendance"] }) {
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const productionGroups = data.production_groups || [];
   const absences = data.people.filter((item) => !item.present);
-  return <section className="fyt-daily-panel fyt-daily-attendance-overview"><header className="fyt-daily-panel-head"><div><span>每日出勤</span><h2>人员到岗情况</h2><p>参会人员逐人统计，生产人员按班组、班次对照固定编制</p></div><div className="fyt-daily-issue-count"><strong>{data.present_count}</strong><span>人出勤</span></div></header><div className="fyt-daily-attendance-bars"><article><div><strong>参会人员</strong><span>固定编制 {data.participant_total}</span></div><AttendanceProgressBar present={data.participant_present_count} total={data.participant_total} /></article><article><div><strong>生产人员</strong><span>固定编制 {data.production_staffing_count}</span></div><AttendanceProgressBar present={data.production_present_count} total={data.production_staffing_count} difference={data.production_difference} /></article></div>{productionGroups.length ? <div className="fyt-daily-attendance-summary"><span>生产班组与班次</span>{productionGroups.slice(0, 12).map((item) => <article className="fyt-daily-attendance-summary-row" key={item.shift_id}><div><strong>{item.group_name} · {item.shift_name}</strong><span>固定编制 {item.staffing_count}</span></div><AttendanceProgressBar compact present={item.attendance_count} total={item.staffing_count} difference={item.difference} />{item.note ? <small>备注：{item.note}</small> : null}</article>)}</div> : null}{data.unit_summary?.length ? <div className="fyt-daily-attendance-summary"><span>参会人员单位/班次</span>{data.unit_summary.slice(0, 8).map((item) => <article className="fyt-daily-attendance-summary-row" key={`${item.unit}-${item.shift}`}><div><strong>{item.unit}</strong><span>{item.shift || "未填写班次"} · 固定编制 {item.total}</span></div><AttendanceProgressBar compact present={item.present} total={item.total} difference={item.difference} />{item.reasons.length ? <small>原因：{item.reasons.join("；")}</small> : null}</article>)}</div> : null}{absences.length ? <div className="fyt-daily-absence-list"><span>参会缺勤与异常</span>{absences.slice(0, 6).map((item) => <p key={item.person_id}><strong>{item.name}</strong><em>{item.reason || "未填写原因"}</em></p>)}</div> : <p className="fyt-daily-clear-note">已填写的参会人员全部出勤。</p>}</section>;
+  const totalStaffing = data.participant_total + data.production_staffing_count;
+  const totalPresent = data.participant_present_count + data.production_present_count;
+  const totalDifference = totalStaffing - totalPresent;
+  const shortageGroups = productionGroups.filter((item) => item.difference > 0);
+  const previewGroups = (shortageGroups.length ? shortageGroups : productionGroups).slice(0, 3);
+  const totalStatus = totalDifference > 0 ? `缺口 ${totalDifference}` : totalDifference < 0 ? `超编 ${Math.abs(totalDifference)}` : totalStaffing ? "编制持平" : "暂无编制";
+  const absentNames = absences.slice(0, 3).map((item) => item.name).filter(Boolean).join("、");
+
+  function renderGroup(item: DailyReportData["attendance"]["production_groups"][number]) {
+    return <article className="fyt-daily-attendance-group-row" key={item.shift_id}>
+      <div><strong>{item.group_name} · {item.shift_name}</strong><small>编制 {item.staffing_count}{item.note ? ` · ${item.note}` : ""}</small></div>
+      <AttendanceProgressBar compact present={item.attendance_count} total={item.staffing_count} difference={item.difference} />
+    </article>;
+  }
+
+  return <section className="fyt-daily-panel fyt-daily-attendance-overview">
+    <header className="fyt-daily-attendance-overview-head">
+      <div><span>每日出勤</span><h2>到岗概览</h2><p>先看整体到岗和缺口，班组明细按需展开</p></div>
+      <div className="fyt-daily-attendance-total" data-state={totalDifference > 0 ? "shortage" : totalDifference < 0 ? "over" : "complete"}>
+        <strong>{totalPresent}<small> / {totalStaffing}</small></strong><span>总出勤</span><em>{totalStatus}</em>
+      </div>
+    </header>
+    <div className="fyt-daily-attendance-quick-grid" aria-label="参会与生产人员出勤摘要">
+      <article><div><span>参会人员</span><strong>{data.participant_present_count} / {data.participant_total}</strong><small>{data.participant_absent_count ? `缺勤 ${data.participant_absent_count} 人` : "全部到岗"}</small></div><AttendanceProgressBar compact present={data.participant_present_count} total={data.participant_total} /></article>
+      <article><div><span>生产人员</span><strong>{data.production_present_count} / {data.production_staffing_count}</strong><small>{data.production_difference > 0 ? `缺口 ${data.production_difference} 人` : data.production_difference < 0 ? `超编 ${Math.abs(data.production_difference)} 人` : "编制持平"}</small></div><AttendanceProgressBar compact present={data.production_present_count} total={data.production_staffing_count} difference={data.production_difference} /></article>
+    </div>
+    {absences.length ? <div className="fyt-daily-attendance-alert"><span>参会缺勤</span><strong>{absences.length} 人</strong><small>{absentNames}{absences.length > 3 ? ` 等 ${absences.length} 人` : ""}</small></div> : <p className="fyt-daily-clear-note">参会人员已全部出勤。</p>}
+    {productionGroups.length ? <section className="fyt-daily-attendance-details" aria-label="生产班组出勤明细">
+      <header><div><span>生产编制</span><strong>班组到岗</strong><small>{productionGroups.length} 个班组 · {data.production_shift_count} 个班次</small></div><button type="button" onClick={() => setDetailsOpen(true)}>查看完整明细</button></header>
+      <div className="fyt-daily-attendance-group-list">{previewGroups.map(renderGroup)}</div>
+      {productionGroups.length > previewGroups.length ? <button className="fyt-daily-attendance-more" type="button" onClick={() => setDetailsOpen(true)}>还有 {productionGroups.length - previewGroups.length} 个班组，打开浮窗查看</button> : null}
+    </section> : null}
+    <Dialog open={detailsOpen} size="large" title="考勤完整明细" description={`生产班组 ${productionGroups.length} 个 · 参会单位 ${data.unit_summary?.length || 0} 个 · 缺勤 ${absences.length} 人`} onClose={() => setDetailsOpen(false)}>
+      <div className="fyt-daily-attendance-dialog">
+        <section><header><div><span>生产编制</span><strong>班组与班次</strong></div><b>{productionGroups.length} 个班组</b></header><div className="fyt-daily-attendance-dialog-grid">{productionGroups.map(renderGroup)}</div></section>
+        {data.unit_summary?.length ? <section><header><div><span>参会人员</span><strong>单位与班次</strong></div><b>{data.unit_summary.length} 个单位</b></header><div className="fyt-daily-attendance-dialog-grid">{data.unit_summary.map((item) => <article className="fyt-daily-attendance-group-row" key={`${item.unit}-${item.shift}`}><div><strong>{item.unit}</strong><small>{item.shift || "未填写班次"} · 编制 {item.total}{item.reasons.length ? ` · ${item.reasons.join("；")}` : ""}</small></div><AttendanceProgressBar compact present={item.present} total={item.total} difference={item.difference} /></article>)}</div></section> : null}
+        {absences.length ? <section><header><div><span>异常信息</span><strong>参会缺勤原因</strong></div><b>{absences.length} 人</b></header><div className="fyt-daily-attendance-reason-list">{absences.map((item) => <p key={item.person_id}><strong>{item.name}</strong><em>{item.reason || "未填写原因"}</em></p>)}</div></section> : null}
+      </div>
+    </Dialog>
+  </section>;
 }
 
 /** 按服务端规定的五类事项组织管理层重点，每类最多在总览展示四条。 */
