@@ -6,6 +6,7 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { dailyReport, downloadDailyReport, workshopImageUrl, type DailyArrivalBatch, type DailyReportData } from "./api";
+import type { DailyReportTabKey } from "./businessGuidance";
 import { AttendanceTab, BriefTab, ISSUE_CATEGORY_LABELS, ProductionInsightsPanel, ProductionLedgerPanel, ProductionPlanTab, WorkshopCategoryTab } from "./DailyReportManagement";
 import { Icon } from "./icons";
 import Button from "./ui/Button";
@@ -17,7 +18,7 @@ import PageHeader from "./ui/PageHeader";
 import { workshopIssueOwnerLabel } from "./workshopIssueSchema";
 
 /** 日清看板的五个栏目：总览、考勤、现场问题、资料与生产、事项与待办。 */
-type DailyTab = "overview" | "attendance" | "workshop" | "production" | "brief";
+type DailyTab = DailyReportTabKey;
 
 /** 按业务时区生成本地日历日期，避免浏览器所在时区改变“今天”的含义。 */
 function businessToday() {
@@ -225,7 +226,7 @@ function WorkshopLedger({ data, onPreview }: { data: DailyReportData["workshop"]
  * 管理日清业务日期、选项卡、刷新保留策略、报告导出和图片预览。
  * 普通换日期会清空旧数据并显示加载态；手动刷新保留上次成功结果，失败时仍可继续查看。
  */
-export function DailyReportPage() {
+export function DailyReportPage({ initialTab = "overview", onBackToWorkflow }: { initialTab?: DailyTab; onBackToWorkflow?: () => void }) {
   const today = useMemo(businessToday, []);
   const [date, setDate] = useState(today);
   const [data, setData] = useState<DailyReportData | null>(null);
@@ -234,7 +235,10 @@ export function DailyReportPage() {
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState("");
   const [preview, setPreview] = useState<{ url: string; title: string } | null>(null);
-  const [tab, setTab] = useState<DailyTab>("overview");
+  const [tab, setTab] = useState<DailyTab>(initialTab);
+
+  // 智能工作流可在进入看板时指定初始栏目；入口变化时同步切换，普通进入保持总览。
+  useEffect(() => { setTab(initialTab); }, [initialTab]);
 
   /** 读取指定日期；`preserve` 为真时保留已有看板，避免刷新期间整页闪空。 */
   async function load(nextDate: string, preserve = false) {
@@ -268,7 +272,7 @@ export function DailyReportPage() {
   </> : tab === "attendance" ? <AttendanceTab date={date} data={data} onRefresh={() => load(date, true)} /> : tab === "workshop" ? <WorkshopCategoryTab data={data.workshop} onPreview={(url, title) => setPreview({ url, title })} /> : tab === "production" ? <ProductionPlanTab date={date} data={data} onRefresh={() => load(date, true)} /> : <BriefTab date={date} data={data} onRefresh={() => load(date, true)} />) : null;
 
   return <div className="fyt-page fyt-content-container fyt-daily-page">
-    <PageHeader eyebrow="管理日清" title="日清数据看板" actions={<><Button variant="secondary" type="button" disabled={exporting || !data} loading={exporting} onClick={() => void exportReport()}><Icon name="download" size={16} />导出报告</Button><IconButton label="刷新日清数据" disabled={refreshing} onClick={() => void load(date, true)}><Icon name="refresh" size={17} /></IconButton></>} />
+    <PageHeader eyebrow="管理日清" title="日清数据看板" actions={<>{onBackToWorkflow ? <Button variant="ghost" size="sm" type="button" onClick={onBackToWorkflow}><Icon name="left" size={15} />返回智能工作流</Button> : null}<Button variant="secondary" type="button" disabled={exporting || !data} loading={exporting} onClick={() => void exportReport()}><Icon name="download" size={16} />导出报告</Button><IconButton label="刷新日清数据" disabled={refreshing} onClick={() => void load(date, true)}><Icon name="refresh" size={17} /></IconButton></>} />
     <section className="fyt-daily-command"><div className="fyt-daily-date-nav"><IconButton label="前一天" onClick={() => setDate((current) => shiftDate(current, -1))}><Icon name="left" size={17} /></IconButton><label><Icon name="calendar" size={17} /><span><strong>{dateTitle(date)}</strong><small>{date}</small></span><input type="date" max={today} value={date} onChange={(event) => setDate(event.target.value || today)} aria-label="选择日清报告日期" /></label><IconButton label="后一天" disabled={date >= today} onClick={() => setDate((current) => shiftDate(current, 1))}><Icon name="right" size={17} /></IconButton>{date !== today ? <Button variant="ghost" size="sm" type="button" onClick={() => setDate(today)}>回到今天</Button> : null}</div><div className="fyt-daily-status"><span data-live={data ? "true" : undefined} /><div><strong>{refreshing ? "正在更新" : data ? "数据已更新" : "等待数据"}</strong><small>{data ? `更新于 ${timeLabel(data.generated_at)}` : "选择日期查看当天数据"}</small></div></div></section>
     <nav className="fyt-daily-tabs" aria-label="日清看板栏目">{[
       ["overview", "总览"], ["attendance", "每日考勤"], ["workshop", "现场问题"], ["production", "资料与生产"], ["brief", "事项与待办"],

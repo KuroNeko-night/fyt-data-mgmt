@@ -502,7 +502,7 @@ function IssueCard({ issue, onEdit, onResolve, onReopen, onDelete, busy }: {
 }
 
 /** 现场问题主页面：负责按日读取、草稿发布、编辑、闭环、删除及报表导出。 */
-export function WorkshopIssuePage() {
+export function WorkshopIssuePage({ onBackToWorkflow }: { onBackToWorkflow?: () => void }) {
   const today = localDate();
   const [date, setDate] = useState(today);
   const [data, setData] = useState<WorkshopIssueResponse | null>(null);
@@ -789,6 +789,7 @@ export function WorkshopIssuePage() {
          <span><strong>{data?.summary.open_count ?? data?.summary.issue_count ?? 0}</strong> 项处理中</span>
          <span><strong>{data?.summary.resolved_count || 0}</strong> 项已解决</span>
          <span><strong>{data?.summary.image_count || 0}</strong> 张图片</span>
+        {onBackToWorkflow ? <button type="button" className="fyt-action-secondary" onClick={onBackToWorkflow}><Icon name="left" size={16} />返回智能工作流</button> : null}
         <button type="button" className="fyt-action-secondary" disabled={Boolean(busy)} onClick={() => { setError(""); setExportDialogOpen(true); }}><Icon name="download" size={16} />导出问题报表</button>
       </div>
     </header>
