@@ -19,6 +19,8 @@ import { WorkshopIssuePage } from "./WorkshopIssuePage";
 import { ReportPage } from "./ReportPage";
 import { DailyReportPage } from "./DailyReportPage";
 import { FeaturesPage } from "./pages/FeaturesPage";
+import { WorkflowCenterPage } from "./WorkflowCenterPage";
+import type { DailyReportTabKey, WorkflowStep } from "./businessGuidance";
 import AuthScreen from "./app/AuthScreen";
 import WebShell from "./app/WebShell";
 import { SectionErrorBoundary } from "./components/SectionErrorBoundary";
@@ -44,6 +46,9 @@ function Dashboard({ initialUser, onLogout }: { initialUser: User; onLogout: () 
   const [active, setActive] = useState<string>("overview");
   const [selectedJobId, setSelectedJobId] = useState("");
   const [taskFilter, setTaskFilter] = useState<TaskFilter>("all");
+  const [featureBackKey, setFeatureBackKey] = useState<WebRouteKey>("features");
+  const [dailyReportTab, setDailyReportTab] = useState<DailyReportTabKey>("overview");
+  const [workflowReturn, setWorkflowReturn] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [theme, setTheme] = useState<"light" | "dark">(() => localStorage.getItem("fyt-web-theme") === "dark" ? "dark" : "light");
   const [tourOpen, setTourOpen] = useState(false);
@@ -74,22 +79,42 @@ function Dashboard({ initialUser, onLogout }: { initialUser: User; onLogout: () 
   const pendingReviews = dashboardData?.status_breakdown.review ?? 0;
 
   /** 切换一级页面，并清除仅属于任务或业务工作区的临时定位状态。 */
-  function navigate(key: string) {
+  function navigate(key: string, reportTab: DailyReportTabKey = "overview") {
     if (!isNavigationAllowed(getNavigationItem(key), user.role)) {  // 越权入口直接回工作台，隐藏导航不能替代后端鉴权
       setMoreOpen(false);
+      setWorkflowReturn(false);
       setActive("overview");
       return;
     }
     setSelectedJobId("");
     setTaskFilter("all");
     setMoreOpen(false);
+    setWorkflowReturn(false);
+    // 只有从智能工作流进入日清看板时才携带指定栏目，普通导航一律回到总览。
+    setDailyReportTab(key === "daily-report" ? reportTab : "overview");
     setActive(key);
   }
 
-  /** 从业务模块列表进入指定功能的新任务工作区。 */
-  function openFeature(key: string) {
+  /** 从业务模块列表进入指定功能的新任务工作区；`backKey` 控制工作区返回按钮的去向。 */
+  function openFeature(key: string, backKey: WebRouteKey = "features") {
     setSelectedJobId("");
+    setFeatureBackKey(backKey);
     setActive(`feature:${key}`);
+  }
+
+  /** 从智能工作流进入步骤：通用模块打开业务工作区，专用页面切到各自路由或指定栏目。 */
+  function openWorkflowStep(step: WorkflowStep) {
+    if (step.route === "workshop") {
+      navigate("workshop");
+      setWorkflowReturn(true);  // 在 navigate 清空返回标记之后写入，保证只有本次工作流入口显示快速返回。
+      return;
+    }
+    if (step.route === "daily-report") {
+      navigate("daily-report", step.target || "overview");
+      setWorkflowReturn(true);
+      return;
+    }
+    openFeature(step.featureKey, "workflows");
   }
 
   /** 打开任务中心的待确认筛选，集中处理两阶段业务计划。 */
@@ -120,6 +145,7 @@ function Dashboard({ initialUser, onLogout }: { initialUser: User; onLogout: () 
     };
     const key = reviewFeatures[action] || (action.startsWith("web.") ? action.slice(4) : action.split(".")[0]);  // 复核动作名特殊，先查显式映射再退回前缀规则
     setSelectedJobId(jobId);
+    setFeatureBackKey("tasks");
     setActive(`feature:${key}`);
   }
 
@@ -142,16 +168,17 @@ function Dashboard({ initialUser, onLogout }: { initialUser: User; onLogout: () 
   function renderPage() {
     if (loading && !overviewData && !dashboardData) return <PageLoading />;
     if (!overviewData && !dashboardData) return <PageError title="工作台暂时无法显示" message="概览和任务数据都没有读取成功，请检查网络后重试。" onRetry={() => void refresh()} />;
-    if (feature) return <SectionErrorBoundary title="业务工作区" onRetry={() => void refresh()}><FeatureWorkspace feature={feature} initialJobId={selectedJobId || undefined} onBack={() => navigate("features")} onCompleted={() => void refresh()} /></SectionErrorBoundary>;
+    if (feature) return <SectionErrorBoundary title="业务工作区" onRetry={() => void refresh()}><FeatureWorkspace feature={feature} initialJobId={selectedJobId || undefined} onBack={() => navigate(featureBackKey)} backLabel={featureBackKey === "workflows" ? "返回智能工作流" : featureBackKey === "tasks" ? "返回任务中心" : "返回业务模块"} onCompleted={() => void refresh()} /></SectionErrorBoundary>;
     if (!isNavigationAllowed(getNavigationItem(active), user.role)) return <PageError title="暂时没有访问权限" message="当前账号不能使用这个入口，请返回工作台继续处理业务。" onRetry={() => navigate("overview")} />;
     if (active === "overview") {
       return dashboardData ? <SectionErrorBoundary title="任务调度板" onRetry={() => retrySection("dashboard")}><DispatchBoard data={dashboardData} user={user} features={features} onRefresh={() => void refresh()} setActive={navigate} onOpenReviews={openReviews} onOpenTaskFilter={openTaskFilter} /></SectionErrorBoundary> : <PageError title="任务调度板暂时无法显示" onRetry={() => retrySection("dashboard")} />;
     }
-    if (active === "workshop") return <SectionErrorBoundary title="现场问题" onRetry={() => void refresh()}><WorkshopIssuePage /></SectionErrorBoundary>;
-    if (active === "features") return <SectionErrorBoundary title="业务模块" onRetry={() => retrySection("overview")}><FeaturesPage features={features} onOpen={openFeature} /></SectionErrorBoundary>;
+    if (active === "workshop") return <SectionErrorBoundary title="现场问题" onRetry={() => void refresh()}><WorkshopIssuePage onBackToWorkflow={workflowReturn ? () => navigate("workflows") : undefined} /></SectionErrorBoundary>;
+    if (active === "features") return <SectionErrorBoundary title="业务模块" onRetry={() => retrySection("overview")}><FeaturesPage features={features} onOpen={openFeature} onOpenWorkflow={() => navigate("workflows")} /></SectionErrorBoundary>;
+    if (active === "workflows") return <SectionErrorBoundary title="智能工作流" onRetry={() => retrySection("overview")}><WorkflowCenterPage features={features} userId={user.id} userRole={user.role} onOpen={openWorkflowStep} /></SectionErrorBoundary>;
     if (active === "library") return <SectionErrorBoundary title="数据库" onRetry={() => void refresh()}><FileLibraryPage /></SectionErrorBoundary>;
     if (active === "reports") return <SectionErrorBoundary title="报表中心" onRetry={() => void refresh()}><ReportPage /></SectionErrorBoundary>;
-    if (active === "daily-report" && user.role === "admin") return <SectionErrorBoundary title="日清数据看板" onRetry={() => void refresh()}><DailyReportPage /></SectionErrorBoundary>;
+    if (active === "daily-report" && user.role === "admin") return <SectionErrorBoundary title="日清数据看板" onRetry={() => void refresh()}><DailyReportPage initialTab={dailyReportTab} onBackToWorkflow={workflowReturn ? () => navigate("workflows") : undefined} /></SectionErrorBoundary>;
     if (active === "tasks") return <SectionErrorBoundary title="任务中心" onRetry={() => void refresh()}><TaskCenterPage onOpenFeature={openAction} initialFilter={taskFilter} /></SectionErrorBoundary>;
     if (active === "notifications") return <SectionErrorBoundary title="消息中心" onRetry={() => retrySection("notifications")}><NotificationCenterPage onChanged={handleNotificationChanged} /></SectionErrorBoundary>;
     if (active === "security") return <AccountSecurityPage onLoggedOut={onLogout} />;

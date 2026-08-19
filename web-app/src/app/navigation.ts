@@ -7,7 +7,7 @@ import type { TaskFilter } from "../TaskCenterPage";
 import type { UserRole } from "../api";
 
 /** 稳定路由键；`feature:` 前缀的业务工作区路由不在壳层导航中定义。 */
-export type WebRouteKey = "overview" | "daily-report" | "workshop" | "features" | "library" | "reports" | "tasks" | "notifications" | "security" | "users";
+export type WebRouteKey = "overview" | "daily-report" | "workshop" | "features" | "workflows" | "library" | "reports" | "tasks" | "notifications" | "security" | "users";
 
 /** 导航入口元数据：路由键、文案、图标、移动端主入口标记与可见角色。 */
 export type NavigationItem = {
@@ -29,6 +29,7 @@ export const NAVIGATION_ITEMS: readonly NavigationItem[] = [
   { key: "daily-report", label: "日清看板", description: "查看当天到料、出勤、生产计划和重点事项", icon: "chart", allowedRoles: ["admin"] },
   { key: "workshop", label: "现场问题", description: "记录和查看车间现场问题", icon: "camera", mobilePrimary: true },
   { key: "features", label: "业务模块", description: "选择业务并开始处理文件", icon: "database", mobilePrimary: true },
+  { key: "workflows", label: "智能工作流", description: "按业务依赖顺序完成一组处理", icon: "route" },
   { key: "library", label: "数据库", description: "管理团队共享和个人资料", icon: "file", allowedRoles: ["admin", "team_leader"] },
   { key: "reports", label: "报表中心", description: "生成业务统计报表", icon: "pie", allowedRoles: ["admin"] },
   { key: "tasks", label: "任务中心", description: "查看任务进度、结果和异常", icon: "activity", mobilePrimary: true },

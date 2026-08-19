@@ -24,11 +24,11 @@ function groupFeatures(features: Feature[]) {
  * @param features 当前账号有权使用的业务模块；空列表时显示空态。
  * @param onOpen 点击“打开模块”后进入具体业务工作区。
  */
-export function FeaturesPage({ features, onOpen }: { features: Feature[]; onOpen: (key: string) => void }) {
+export function FeaturesPage({ features, onOpen, onOpenWorkflow }: { features: Feature[]; onOpen: (key: string) => void; onOpenWorkflow?: () => void }) {
   // 功能列表通常来自服务端配置，分组结果按列表引用缓存即可。
   const groups = useMemo(() => groupFeatures(features), [features]);  // 功能列表来自服务端配置，按引用缓存分组结果
   return <div className="fyt-feature-page">
-    <PageHeader eyebrow="业务能力" title="业务模块" description="选择要处理的资料，系统会依次完成检查、处理和结果生成。" />
+    <PageHeader eyebrow="业务能力" title="业务模块" description="选择要处理的资料，系统会依次完成检查、处理和结果生成。" actions={onOpenWorkflow ? <Button variant="primary" size="sm" type="button" onClick={onOpenWorkflow}><Icon name="route" size={15} />打开智能工作流</Button> : null} />
     {groups.length ? <div className="fyt-feature-groups">{groups.map(([group, items]) => <Surface as="section" variant="subtle" className="fyt-feature-group" key={group}>
       <header className="fyt-feature-group-head"><h2>{group}</h2><span>{items.length} 个模块</span></header>
       <div className="fyt-feature-list">{items.map((feature, index) => <article className="fyt-feature-card" key={feature.key}>
