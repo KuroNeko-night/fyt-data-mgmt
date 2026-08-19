@@ -17,6 +17,7 @@ import PageHeader from "./ui/PageHeader";
 import StatusBadge from "./ui/StatusBadge";
 import Notice from "./ui/Notice";
 import type { StatusKey } from "./ui/status";
+import TemplateGuide from "./TemplateGuide";
 import "./workflows.css";
 
 /** 业务参数支持的原生表单控件种类。 */
@@ -221,10 +222,10 @@ function PreviewPanel({ file, onClose }: { file: WebJob["files"][number]; onClos
  * 组织一个业务模块从输入到结果的完整生命周期。
  * `initialJobId` 用于从任务中心恢复历史任务；恢复任务不会重新上传或执行文件。
  */
-export function FeatureWorkspace({ feature, onBack, onCompleted, initialJobId }: { feature: Feature; onBack: () => void; onCompleted: () => void; initialJobId?: string }) {
+export function FeatureWorkspace({ feature, onBack, onCompleted, initialJobId, backLabel = "返回业务模块" }: { feature: Feature; onBack: () => void; onCompleted: () => void; initialJobId?: string; backLabel?: string }) {
   const spec = SPECS[feature.key];
   if (!spec) {
-    return <div className="fyt-feature-missing"><div><span className="fyt-eyebrow">提示</span><h3>「{feature.title}」使用独立页面</h3><p>该功能需要专用交互界面，请从左侧菜单进入「{feature.title}」。<button className="fyt-action-secondary" onClick={onBack} style={{ marginTop: 14 }}>返回业务模块</button></p></div></div>;
+    return <div className="fyt-feature-missing"><div><span className="fyt-eyebrow">提示</span><h3>「{feature.title}」使用独立页面</h3><p>该功能需要专用交互界面，请从左侧菜单进入「{feature.title}」。<button className="fyt-action-secondary" onClick={onBack} style={{ marginTop: 14 }}>{backLabel}</button></p></div></div>;
   }
   const [files, setFiles] = useState<Record<string, File[]>>({});
   const [options, setOptions] = useState<Record<string, string | boolean>>(() => initialOptions(spec));
@@ -504,8 +505,8 @@ export function FeatureWorkspace({ feature, onBack, onCompleted, initialJobId }:
   const workflowDone = finished ? 3 : running ? 2 : ready ? 1 : 0;
 
   return <div className="fyt-flow-page">
-    <div className="fyt-flow-back"><Button variant="ghost" size="sm" type="button" onClick={onBack}><Icon name="left" size={16} />返回业务模块</Button></div>
-    <div className="fyt-flow-header"><PageHeader eyebrow="在线业务处理" title={feature.title} description={feature.description} actions={<span className="fyt-flow-group">{feature.group}</span>} /></div>
+    <div className="fyt-flow-back"><Button variant="ghost" size="sm" type="button" onClick={onBack}><Icon name="left" size={16} />{backLabel}</Button></div>
+    <div className="fyt-flow-header"><PageHeader eyebrow="在线业务处理" title={feature.title} description={feature.description} actions={<div className="fyt-flow-header-tools"><TemplateGuide featureKey={feature.key} title={feature.title} /><span className="fyt-flow-group">{feature.group}</span></div>} /></div>
     <WorkflowSteps step={workflowStep} done={workflowDone} />
     <div className="fyt-flow-layout"><section className="fyt-flow-form">
       {spec.files.map((group) => <FileField key={group.key} config={group} files={files[group.key] || []} onChange={(next) => { setFiles((current) => ({ ...current, [group.key]: next })); if (isReconcile) { setScanResult(null); setSelected(new Set()); setReconcileHandles([]); setScanError(""); } if (isArrival) { setArrivalRows([]); setArrivalScanError(""); } }} />)}

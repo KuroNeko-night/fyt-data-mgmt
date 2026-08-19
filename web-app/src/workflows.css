@@ -19,6 +19,7 @@
 .fyt-flow-back { margin-bottom: var(--fyt-space-5); }
 .fyt-flow-header { margin-bottom: var(--fyt-space-6); }
 .fyt-flow-header .fyt-page-header-actions { align-items: flex-start; }
+.fyt-flow-header-tools { display: flex; align-items: center; justify-content: flex-end; gap: var(--fyt-space-2); }
 .fyt-flow-group { display: inline-flex; min-height: var(--fyt-control-height-sm); align-items: center; padding: 0 var(--fyt-space-3); border: 1px solid var(--fyt-border); border-radius: var(--fyt-radius-pill); color: var(--fyt-text-secondary); background: var(--fyt-surface-subtle); font-size: var(--fyt-type-caption); }
 .fyt-flow-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--fyt-space-3); margin-bottom: var(--fyt-space-6); padding: var(--fyt-space-4); border: 1px solid var(--fyt-border); border-radius: var(--fyt-radius-card); background: var(--fyt-surface); }
 .fyt-flow-step { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: var(--fyt-space-3); min-width: 0; color: var(--fyt-text-muted); }
@@ -121,6 +122,77 @@
 .fyt-flow-history-item > span:nth-child(2) { display: grid; min-width: 0; flex: 1; gap: 3px; }
 .fyt-flow-history-item strong { overflow: hidden; font-size: var(--fyt-type-caption); text-overflow: ellipsis; white-space: nowrap; }
 .fyt-flow-history-item small { color: var(--fyt-text-muted); font-size: var(--fyt-type-caption); }
+
+/* 模板参考只在业务工作区标题旁保留一个轻量入口；展开状态由 React 统一切换，避免 CSS 悬浮规则与关闭按钮互相打架。 */
+.fyt-template-guide { position: relative; display: inline-flex; }
+.fyt-template-guide-trigger { display: inline-flex; min-height: var(--fyt-control-height-sm); align-items: center; gap: var(--fyt-space-1); padding: 0 var(--fyt-space-3); border: 1px solid var(--fyt-border); border-radius: var(--fyt-radius-pill); color: var(--fyt-primary-strong); background: var(--fyt-surface); font-size: var(--fyt-type-caption); font-weight: 700; white-space: nowrap; }
+.fyt-template-guide-trigger:hover, .fyt-template-guide-trigger:focus-visible, .fyt-template-guide:focus-within .fyt-template-guide-trigger { border-color: var(--fyt-primary); background: var(--fyt-primary-soft); }
+.fyt-template-guide-popover { position: absolute; z-index: 40; top: calc(100% + var(--fyt-space-2)); right: 0; display: grid; width: min(680px, calc(100vw - 32px)); max-height: min(620px, calc(100vh - 140px)); gap: var(--fyt-space-4); overflow: auto; padding: var(--fyt-space-5); border: 1px solid var(--fyt-border-strong); border-radius: var(--fyt-radius-card); color: var(--fyt-text); background: var(--fyt-surface); box-shadow: var(--fyt-elevation-overlay); opacity: 0; pointer-events: none; transform: translateY(-4px); transition: opacity var(--fyt-motion-fast) var(--fyt-motion-ease), transform var(--fyt-motion-fast) var(--fyt-motion-ease); }
+.fyt-template-guide-popover[data-open="true"] { opacity: 1; pointer-events: auto; transform: translateY(0); }
+.fyt-template-guide-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--fyt-space-4); }
+.fyt-template-guide-head > div { min-width: 0; }
+.fyt-template-guide-kicker { color: var(--fyt-primary-strong); font-size: var(--fyt-type-caption); font-weight: 700; }
+.fyt-template-guide h2 { margin: var(--fyt-space-2) 0 var(--fyt-space-1); color: var(--fyt-text); font-size: var(--fyt-type-section); }
+.fyt-template-guide p { margin: 0; color: var(--fyt-text-secondary); font-size: var(--fyt-type-caption); }
+.fyt-template-guide-close { display: grid; width: 30px; height: 30px; flex: 0 0 30px; place-items: center; border: 1px solid var(--fyt-border); border-radius: var(--fyt-radius-control); color: var(--fyt-text-muted); background: var(--fyt-surface-subtle); }
+.fyt-template-guide-close:hover { color: var(--fyt-text); border-color: var(--fyt-border-strong); }
+.fyt-template-guide-table-wrap { overflow-x: auto; border: 1px solid var(--fyt-border); border-radius: var(--fyt-radius-control); background: var(--fyt-surface); }
+.fyt-template-guide-table { width: 100%; min-width: 520px; border-collapse: collapse; table-layout: fixed; }
+.fyt-template-guide-table th, .fyt-template-guide-table td { max-width: 220px; padding: var(--fyt-space-3); border-right: 1px solid var(--fyt-border); border-bottom: 1px solid var(--fyt-border); overflow: hidden; color: var(--fyt-text-secondary); font-size: var(--fyt-type-caption); text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+.fyt-template-guide-table th { color: var(--fyt-text); background: var(--fyt-surface-subtle); font-weight: 700; }
+.fyt-template-guide-table tr:last-child td { border-bottom: 0; }.fyt-template-guide-table th:last-child, .fyt-template-guide-table td:last-child { border-right: 0; }
+.fyt-template-guide-result { display: grid; gap: 3px; padding: var(--fyt-space-3); border-left: 3px solid var(--fyt-primary); color: var(--fyt-text-secondary); background: var(--fyt-primary-soft); font-size: var(--fyt-type-caption); line-height: var(--fyt-type-line-caption); }.fyt-template-guide-result strong { color: var(--fyt-primary-strong); }
+.fyt-template-guide-tips { display: grid; gap: var(--fyt-space-1); margin: 0; padding-left: 18px; color: var(--fyt-text-secondary); font-size: var(--fyt-type-caption); line-height: var(--fyt-type-line-caption); }
+
+/* 智能工作流中心：左侧选路径，右侧按依赖顺序推进，不把业务算法复制到前端。 */
+.fyt-workflow-page { width: min(var(--fyt-layout-content-max), calc(100% - (var(--fyt-layout-gutter-desktop) * 2))); margin: 0 auto; padding: var(--fyt-space-8) 0 var(--fyt-space-12); }
+.fyt-workflow-layout { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: var(--fyt-layout-gap-desktop); margin-top: var(--fyt-space-8); }
+.fyt-workflow-catalog { align-self: start; padding: var(--fyt-space-4); border: 1px solid var(--fyt-border); border-radius: var(--fyt-radius-card); background: var(--fyt-surface); }
+.fyt-workflow-catalog-head { display: flex; align-items: center; justify-content: space-between; padding: 0 var(--fyt-space-2) var(--fyt-space-3); color: var(--fyt-text-muted); font-size: var(--fyt-type-caption); }
+.fyt-workflow-catalog-head strong { color: var(--fyt-text); }
+.fyt-workflow-catalog-item { display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; align-items: start; gap: var(--fyt-space-2); width: 100%; padding: var(--fyt-space-3); border: 1px solid transparent; border-radius: var(--fyt-radius-control); color: var(--fyt-text-secondary); background: transparent; text-align: left; }
+.fyt-workflow-catalog-item:hover, .fyt-workflow-catalog-item[data-selected="true"] { border-color: var(--fyt-border); background: var(--fyt-primary-soft); }
+.fyt-workflow-catalog-icon { display: grid; width: 32px; height: 32px; place-items: center; border-radius: var(--fyt-radius-control); color: var(--fyt-primary-strong); background: var(--fyt-surface); }
+.fyt-workflow-catalog-item > span:nth-child(2) { display: grid; min-width: 0; gap: 3px; }
+.fyt-workflow-catalog-item strong { color: var(--fyt-text); font-size: var(--fyt-type-caption); }
+.fyt-workflow-catalog-item small { overflow: hidden; color: var(--fyt-text-muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.fyt-workflow-catalog-item em { color: var(--fyt-primary-strong); font: 11px var(--fyt-type-font-mono); font-style: normal; }
+.fyt-workflow-catalog-item i, .fyt-workflow-intro-progress i { display: block; height: 5px; margin-top: 5px; overflow: hidden; border-radius: var(--fyt-radius-pill); background: var(--fyt-border); }
+.fyt-workflow-catalog-item i b, .fyt-workflow-intro-progress i b { display: block; height: 100%; border-radius: inherit; background: var(--fyt-primary); transition: width var(--fyt-motion-base) var(--fyt-motion-ease); }
+.fyt-workflow-catalog-item[data-complete="true"] em { color: var(--fyt-success); }
+.fyt-workflow-catalog-item[data-complete="true"] i b { background: var(--fyt-success); }
+.fyt-workflow-main { min-width: 0; }
+.fyt-workflow-intro { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--fyt-space-5); padding: var(--fyt-space-5); }
+.fyt-workflow-kicker { color: var(--fyt-primary-strong); font-size: var(--fyt-type-caption); font-weight: 700; }
+.fyt-workflow-intro h2 { margin: var(--fyt-space-2) 0; color: var(--fyt-text); font-size: var(--fyt-type-section); }
+.fyt-workflow-intro p { margin: 0; color: var(--fyt-text-secondary); font-size: var(--fyt-type-caption); }
+.fyt-workflow-intro-progress { display: grid; min-width: 150px; gap: 2px; color: var(--fyt-text-muted); font-size: var(--fyt-type-caption); text-align: right; }
+.fyt-workflow-intro-progress strong { color: var(--fyt-primary-strong); font: 28px/1 var(--fyt-type-font-mono); }
+.fyt-workflow-steps { display: grid; gap: var(--fyt-space-3); margin-top: var(--fyt-space-5); }
+.fyt-workflow-step-card { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; align-items: center; gap: var(--fyt-space-4); padding: var(--fyt-space-4); border: 1px solid var(--fyt-border); border-radius: var(--fyt-radius-card); background: var(--fyt-surface); }
+.fyt-workflow-step-card[data-current="true"] { border-color: var(--fyt-primary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--fyt-primary) 10%, transparent); }
+.fyt-workflow-step-card[data-done="true"] { border-color: color-mix(in srgb, var(--fyt-success) 45%, var(--fyt-border)); background: color-mix(in srgb, var(--fyt-success-soft) 36%, var(--fyt-surface)); }
+.fyt-workflow-step-card[data-unavailable="true"] { border-style: dashed; background: var(--fyt-surface-subtle); }
+.fyt-workflow-step-card[data-unavailable="true"] .fyt-workflow-step-number { color: var(--fyt-text-muted); background: var(--fyt-border); }
+.fyt-workflow-step-card[data-unavailable="true"] .fyt-workflow-step-copy { opacity: .72; }
+.fyt-workflow-step-number { display: grid; width: 44px; height: 44px; place-items: center; border-radius: 50%; color: var(--fyt-primary-strong); background: var(--fyt-primary-soft); font: 13px var(--fyt-type-font-mono); }
+.fyt-workflow-step-card[data-done="true"] .fyt-workflow-step-number { color: var(--fyt-success); background: var(--fyt-success-soft); }
+.fyt-workflow-step-copy { min-width: 0; }
+.fyt-workflow-step-meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--fyt-space-2); color: var(--fyt-primary-strong); font-size: 11px; font-weight: 700; text-transform: uppercase; }
+.fyt-workflow-step-meta em { color: var(--fyt-warning); font-style: normal; }
+.fyt-workflow-step-copy h3 { margin: 4px 0; color: var(--fyt-text); font-size: var(--fyt-type-card); }
+.fyt-workflow-step-copy p { margin: 0; color: var(--fyt-text-secondary); font-size: var(--fyt-type-caption); }
+.fyt-workflow-step-copy small { display: flex; align-items: center; gap: 5px; margin-top: var(--fyt-space-2); color: var(--fyt-text-muted); font-size: 11px; }
+.fyt-workflow-step-actions { display: grid; justify-items: end; gap: var(--fyt-space-2); }
+.fyt-workflow-note { display: flex; align-items: flex-start; gap: var(--fyt-space-2); margin-top: var(--fyt-space-4); padding: var(--fyt-space-3); color: var(--fyt-text-secondary); background: var(--fyt-surface-subtle); font-size: var(--fyt-type-caption); line-height: var(--fyt-type-line-caption); }
+.fyt-workflow-note svg { flex: 0 0 auto; color: var(--fyt-success); }
+.fyt-workflow-auto-notice { display: flex; align-items: flex-start; gap: var(--fyt-space-2); margin-top: var(--fyt-space-4); padding: var(--fyt-space-3); border: 1px solid color-mix(in srgb, var(--fyt-success) 34%, var(--fyt-border)); border-left: 3px solid var(--fyt-success); border-radius: var(--fyt-radius-control); color: var(--fyt-text-secondary); background: var(--fyt-success-soft); font-size: var(--fyt-type-caption); line-height: var(--fyt-type-line-caption); }
+.fyt-workflow-auto-notice svg { flex: 0 0 auto; color: var(--fyt-success); }
+.fyt-workflow-complete { display: flex; align-items: center; gap: var(--fyt-space-3); margin-top: var(--fyt-space-4); padding: var(--fyt-space-4); border: 1px solid color-mix(in srgb, var(--fyt-success) 42%, var(--fyt-border)); border-radius: var(--fyt-radius-card); color: var(--fyt-text); background: color-mix(in srgb, var(--fyt-success-soft) 58%, var(--fyt-surface)); }
+.fyt-workflow-complete > svg { flex: 0 0 auto; color: var(--fyt-success); }
+.fyt-workflow-complete > div { display: grid; min-width: 0; flex: 1; gap: 3px; }
+.fyt-workflow-complete strong { color: var(--fyt-text); font-size: var(--fyt-type-body); }
+.fyt-workflow-complete span { color: var(--fyt-text-secondary); font-size: var(--fyt-type-caption); }
 
 .fyt-review-panel { position: relative; margin-top: var(--fyt-space-5); overflow: hidden; border: 1px solid var(--fyt-border-strong); border-radius: var(--fyt-radius-card); background: var(--fyt-surface); }
 .fyt-review-panel::before { position: absolute; z-index: 2; top: 0; right: 0; left: 0; height: 2px; background: var(--fyt-signal-gradient); content: ""; }
@@ -286,5 +358,27 @@
 }
 /* 流程状态仍通过文字、颜色和进度数值表达，关闭动画不会损失业务信息。 */
 @media (prefers-reduced-motion: reduce) {
-  .fyt-flow-file-field, .fyt-flow-progress i, .fyt-task-card, .fyt-task-card-progress i { transition: none; }
+  .fyt-flow-file-field, .fyt-flow-progress i, .fyt-task-card, .fyt-task-card-progress i, .fyt-workflow-catalog-item i b, .fyt-workflow-intro-progress i b { transition: none; }
+}
+
+@media (max-width: 960px) {
+  .fyt-workflow-page { width: calc(100% - (var(--fyt-layout-gutter-tablet) * 2)); }
+  .fyt-workflow-layout { grid-template-columns: 1fr; }
+  .fyt-workflow-catalog { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--fyt-space-2); }
+  .fyt-workflow-catalog-head { grid-column: 1 / -1; }
+}
+
+@media (max-width: 720px) {
+  .fyt-template-guide-popover { padding: var(--fyt-space-4); }
+  .fyt-template-guide-head { display: block; }
+  .fyt-template-guide-close { position: absolute; top: var(--fyt-space-4); right: var(--fyt-space-4); }
+  .fyt-workflow-page { width: calc(100% - (var(--fyt-layout-gutter-mobile) * 2)); padding-top: var(--fyt-space-6); }
+  .fyt-workflow-catalog { grid-template-columns: 1fr; }
+  .fyt-workflow-step-card { grid-template-columns: 36px minmax(0, 1fr); align-items: start; }
+  .fyt-workflow-step-number { width: 36px; height: 36px; }
+  .fyt-workflow-step-actions { grid-column: 2; display: flex; align-items: center; justify-content: flex-start; justify-items: start; flex-wrap: wrap; }
+  .fyt-workflow-intro { align-items: flex-start; flex-direction: column; }
+  .fyt-workflow-intro-progress { width: 100%; text-align: left; }
+  .fyt-workflow-complete { align-items: stretch; flex-direction: column; }
+  .fyt-workflow-complete .fyt-button { width: 100%; }
 }
