@@ -55,10 +55,9 @@
 │  ├─ purchase_plan_core.py            采购计划导入与差异清单
 │  ├─ purchase_reporting.py            采购类报告渲染
 │  ├─ reconcile_statement_core.py     对账单制作
-│  ├─ pivot_core.py                   销售透视主流程
+│  ├─ pivot_core.py                   采购汇总主流程（清洗、单位归并、静态主表与来源数量自检）
 │  ├─ pivot_analysis.py               透视结构识别与复核计划
 │  ├─ pivot_clustering.py             规格、单位归并与静态聚合
-│  ├─ pivot_ooxml.py                  原生透视缓存与 OOXML 写入
 │  ├─ pivot_reporting.py              透视可信度和兼容报告
 │  ├─ daily_report_core.py            日清兼容门面
 │  ├─ daily_report_snapshot.py        日清快照总装
