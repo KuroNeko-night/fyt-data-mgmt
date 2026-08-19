@@ -4730,6 +4730,109 @@
       .source-evidence-beacon,
       svg [data-node-id], svg [data-edge-from], svg [data-detail], svg [data-detail-anchor], svg [data-legend-hit], svg { transition: none !important; }
     }
+
+    /* ============================================================
+       Layer drill-down — 第二层内部架构（双击总览容器进入）
+       性能版：无 backdrop-filter，悬浮只用 opacity，避免连续滤镜合成
+       ============================================================ */
+    .diagram-container svg { will-change: transform; }
+    .archify-layer-bar,
+    .archify-overview-hint {
+      position: absolute;
+      z-index: 13;
+      display: flex;
+      align-items: center;
+      gap: 0.45rem;
+      padding: 0.32rem 0.6rem;
+      border: 1px solid color-mix(in srgb, var(--toolbar-border) 48%, transparent);
+      border-radius: 0.55rem;
+      background: color-mix(in srgb, var(--toolbar-bg) 92%, transparent);
+      color: var(--toolbar-text);
+      font-size: 0.72rem;
+    }
+    .archify-layer-bar { left: 0.9rem; top: 0.9rem; }
+    .archify-layer-bar[hidden],
+    .archify-overview-hint[hidden] { display: none; }
+    .archify-layer-bar button {
+      border: 0;
+      background: transparent;
+      color: var(--toolbar-text);
+      font: inherit;
+      font-weight: 650;
+      cursor: pointer;
+      padding: 0.12rem 0.35rem;
+      border-radius: 0.3rem;
+    }
+    .archify-layer-bar button:hover,
+    .archify-layer-bar button:focus-visible { background: var(--toolbar-hover); }
+    .archify-layer-bar button:focus-visible {
+      outline: 2px solid var(--frontend-stroke);
+      outline-offset: 1px;
+    }
+    .archify-layer-crumb { color: color-mix(in srgb, var(--toolbar-text) 62%, transparent); }
+    .archify-layer-sep { color: color-mix(in srgb, var(--toolbar-text) 40%, transparent); }
+    .archify-layer-current { font-weight: 700; }
+    .archify-layer-hint { color: color-mix(in srgb, var(--toolbar-text) 58%, transparent); font-size: 0.66rem; }
+    .archify-overview-hint {
+      right: 0.9rem;
+      top: 0.9rem;
+      color: color-mix(in srgb, var(--toolbar-text) 78%, transparent);
+      font-size: 0.66rem;
+      letter-spacing: 0.02em;
+      pointer-events: none;
+    }
+    .archify-overview-hint::before {
+      content: "";
+      width: 0.5rem;
+      height: 0.5rem;
+      border-radius: 50%;
+      background: var(--cloud-stroke);
+    }
+    /* 层级可见性 */
+    .diagram-container svg > [data-archify-layer] { display: none; }
+    .diagram-container[data-layer="detail-browser"] svg > [data-archify-layer][data-layer-target="browser"] { display: inline !important; }
+.diagram-container[data-layer="detail-web-react"] svg > [data-archify-layer][data-layer-target="web-react"] { display: inline !important; }
+.diagram-container[data-layer="detail-tauri-react"] svg > [data-archify-layer][data-layer-target="tauri-react"] { display: inline !important; }
+.diagram-container[data-layer="detail-rust-layer"] svg > [data-archify-layer][data-layer-target="rust-layer"] { display: inline !important; }
+.diagram-container[data-layer="detail-cloudflared"] svg > [data-archify-layer][data-layer-target="cloudflared"] { display: inline !important; }
+.diagram-container[data-layer="detail-http"] svg > [data-archify-layer][data-layer-target="http"] { display: inline !important; }
+.diagram-container[data-layer="detail-services"] svg > [data-archify-layer][data-layer-target="services"] { display: inline !important; }
+.diagram-container[data-layer="detail-task-runner"] svg > [data-archify-layer][data-layer-target="task-runner"] { display: inline !important; }
+.diagram-container[data-layer="detail-bridge"] svg > [data-archify-layer][data-layer-target="bridge"] { display: inline !important; }
+.diagram-container[data-layer="detail-core"] svg > [data-archify-layer][data-layer-target="core"] { display: inline !important; }
+.diagram-container[data-layer="detail-sqlite"] svg > [data-archify-layer][data-layer-target="sqlite"] { display: inline !important; }
+.diagram-container[data-layer="detail-data-root"] svg > [data-archify-layer][data-layer-target="data-root"] { display: inline !important; }
+    .diagram-container[data-layer^="detail"] svg > *:not([data-archify-layer]):not(defs):not(title):not(desc) {
+      display: none !important;
+    }
+    /* 可钻取容器 */
+    .diagram-container svg [data-drill-target] { cursor: zoom-in; }
+    .archify-drill-badge {
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.16s ease;
+    }
+    svg [data-drill-target]:hover .archify-drill-badge,
+    svg [data-drill-target]:focus-visible .archify-drill-badge { opacity: 0.95; }
+    .archify-drill-badge rect {
+      fill: color-mix(in srgb, var(--mask) 90%, var(--panel-border));
+      stroke: color-mix(in srgb, var(--cloud-stroke) 62%, var(--panel-border));
+      stroke-width: 1;
+    }
+    .archify-drill-badge text {
+      fill: var(--text-muted);
+      font-size: 7.5px;
+      font-weight: 700;
+    }
+    /* 第二层节点与边标签 */
+    .archify-layer-node { transition: opacity 0.14s ease; }
+    .archify-layer-node:hover { opacity: 0.9; }
+    .archify-layer-edge-label { pointer-events: none; }
+    @media (max-width: 720px) {
+      .archify-layer-hint { display: none; }
+      .archify-layer-current { max-width: 9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    }
+
   </style>
 </head>
 <body>
@@ -4882,7 +4985,14 @@
     </div>
 
     <!-- Main Diagram -->
-    <div class="diagram-container" data-detail-level="read">
+    <div class="diagram-container" data-detail-level="read" data-layer="overview">
+      <div class="archify-layer-bar no-print" id="archify-layer-bar" hidden>
+        <button id="archify-layer-back" type="button" aria-label="返回总览架构">&#8592; 返回总览</button>
+        <span class="archify-layer-crumb">运行时架构</span><span class="archify-layer-sep">/</span><strong class="archify-layer-current" id="archify-layer-current"></strong>
+        <span class="archify-layer-hint">双击空白处或按 Esc 返回</span>
+      </div>
+      <div class="archify-overview-hint no-print" id="archify-overview-hint">双击任意容器，进入第二层内部架构</div>
+
       <svg viewBox="0 0 1510 632" role="img" aria-labelledby="archify-diagram-title archify-diagram-description" data-preset="classic" data-quality-profile="showcase">
         <title id="archify-diagram-title">峰运通数据管理系统 · 运行时架构</title>
         <desc id="archify-diagram-description">A architecture diagram generated by Archify.</desc>
@@ -5143,6 +5253,1476 @@
             <text x="372" y="616" class="t-muted" font-size="10" font-weight="500">External</text>
           </g>
         </g>
+<g class="archify-layer" data-archify-layer="" data-layer-target="browser" data-layer-label="用户浏览器" hidden aria-hidden="true">
+<title>用户浏览器 · 内部架构</title>
+<rect width="100%" height="100%" fill="url(#grid)"/>
+<rect x="40" y="42" width="44" height="3.5" rx="1.75" class="c-external"/>
+<text x="40" y="62" class="t-muted" font-size="9" font-weight="600" letter-spacing="0.08em">第 2 层 · 容器内部架构</text>
+<text x="40" y="88" class="t-primary" font-size="16" font-weight="700">用户浏览器 · 内部架构</text>
+<text x="40" y="106" class="t-muted" font-size="9">双击空白区域或按 Esc 返回总览 · 滚轮缩放 · 拖动平移 · 导出沿用当前层</text>
+<path d="M 443 266 C 443 333.2, 443 390.8, 443 458" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/><g class="archify-layer-edge-label"><rect x="457" y="355" width="48" height="14" rx="3" class="c-mask"/><text x="481" y="365" class="t-muted" font-size="8" text-anchor="middle">业务请求</text></g>
+<path d="M 955 266 C 955 333.2, 443 390.8, 443 458" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="969" y="355" width="48" height="14" rx="3" class="c-mask"/><text x="993" y="365" class="t-muted" font-size="8" text-anchor="middle">自动附带</text></g>
+<path d="M 699 458 C 699 390.8, 443 333.2, 443 266" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="713" y="355" width="48" height="14" rx="3" class="c-mask"/><text x="737" y="365" class="t-muted" font-size="8" text-anchor="middle">资源加载</text></g>
+<path d="M 955 458 C 955 390.8, 443 333.2, 443 266" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="969" y="355" width="42" height="14" rx="3" class="c-mask"/><text x="990" y="365" class="t-muted" font-size="8" text-anchor="middle">HTTPS</text></g>
+<path d="M 443 518 L 443 520 Q 443 525 448 525 L 1206 525 Q 1211 525 1211 520 L 1211 518" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="798" y="518" width="58" height="14" rx="3" class="c-mask"/><text x="827" y="528" class="t-muted" font-size="8" text-anchor="middle">同源 /api</text></g>
+<rect x="40" y="118" width="1430" height="236" rx="10" class="c-region" stroke-width="1"/>
+<text x="54" y="142" class="t-cloud" font-size="10" font-weight="700">页面与会话状态</text>
+<g class="archify-layer-node" data-layer-node="r0_0" data-layer-kind="frontend">
+<rect x="323" y="206" width="240" height="60" rx="6" class="c-mask"/>
+<rect x="323" y="206" width="240" height="60" rx="6" class="c-frontend" stroke-width="1.4"/>
+<text x="443" y="231" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">应用页面</text>
+<text x="443" y="247" class="t-muted" font-size="8" text-anchor="middle">web-app 构建产物</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r0_1" data-layer-kind="frontend">
+<rect x="579" y="206" width="240" height="60" rx="6" class="c-mask"/>
+<rect x="579" y="206" width="240" height="60" rx="6" class="c-frontend" stroke-width="1.4"/>
+<text x="699" y="231" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">页面会话状态</text>
+<text x="699" y="247" class="t-muted" font-size="8" text-anchor="middle">React 状态 · 路由</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r0_2" data-layer-kind="database">
+<rect x="835" y="206" width="240" height="60" rx="6" class="c-mask"/>
+<rect x="835" y="206" width="240" height="60" rx="6" class="c-database" stroke-width="1.4"/>
+<text x="955" y="231" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">会话 Cookie</text>
+<text x="955" y="247" class="t-muted" font-size="8" text-anchor="middle">HttpOnly · SameSite=Strict</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r0_3" data-layer-kind="frontend">
+<rect x="1091" y="206" width="240" height="60" rx="6" class="c-mask"/>
+<rect x="1091" y="206" width="240" height="60" rx="6" class="c-frontend" stroke-width="1.4"/>
+<text x="1211" y="231" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">文件下载</text>
+<text x="1211" y="247" class="t-muted" font-size="8" text-anchor="middle">Blob · 流式响应</text>
+</g>
+<rect x="40" y="370" width="1430" height="236" rx="10" class="c-region" stroke-width="1"/>
+<text x="54" y="394" class="t-cloud" font-size="10" font-weight="700">网络与入口</text>
+<g class="archify-layer-node" data-layer-node="r1_0" data-layer-kind="frontend">
+<rect x="323" y="458" width="240" height="60" rx="6" class="c-mask"/>
+<rect x="323" y="458" width="240" height="60" rx="6" class="c-frontend" stroke-width="1.4"/>
+<text x="443" y="483" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">同源 /api 请求</text>
+<text x="443" y="499" class="t-muted" font-size="8" text-anchor="middle">fetch · 上传下载</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r1_1" data-layer-kind="external">
+<rect x="579" y="458" width="240" height="60" rx="6" class="c-mask"/>
+<rect x="579" y="458" width="240" height="60" rx="6" class="c-external" stroke-width="1.4"/>
+<text x="699" y="483" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">静态资源加载</text>
+<text x="699" y="499" class="t-muted" font-size="8" text-anchor="middle">JS / CSS / 图片</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r1_2" data-layer-kind="external">
+<rect x="835" y="458" width="240" height="60" rx="6" class="c-mask"/>
+<rect x="835" y="458" width="240" height="60" rx="6" class="c-external" stroke-width="1.4"/>
+<text x="955" y="483" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">Cloudflare 入口</text>
+<text x="955" y="499" class="t-muted" font-size="8" text-anchor="middle">HTTPS 域名访问</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r1_3" data-layer-kind="external">
+<rect x="1091" y="458" width="240" height="60" rx="6" class="c-mask"/>
+<rect x="1091" y="458" width="240" height="60" rx="6" class="c-external" stroke-width="1.4" stroke-dasharray="4 3"/>
+<text x="1211" y="483" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">Web 服务端 :8787</text>
+<text x="1211" y="499" class="t-muted" font-size="8" text-anchor="middle">上一层容器 · 出口</text>
+</g>
+</g>
+<g class="archify-layer" data-archify-layer="" data-layer-target="web-react" data-layer-label="Web React" hidden aria-hidden="true">
+<title>Web React · 内部架构</title>
+<rect width="100%" height="100%" fill="url(#grid)"/>
+<rect x="40" y="42" width="44" height="3.5" rx="1.75" class="c-frontend"/>
+<text x="40" y="62" class="t-muted" font-size="9" font-weight="600" letter-spacing="0.08em">第 2 层 · 容器内部架构</text>
+<text x="40" y="88" class="t-primary" font-size="16" font-weight="700">Web React · 内部架构</text>
+<text x="40" y="106" class="t-muted" font-size="9">双击空白区域或按 Esc 返回总览 · 滚轮缩放 · 拖动平移 · 导出沿用当前层</text>
+<path d="M 1152.5 521 L 1152.5 488 L 50 488 Q 44 488 44 482 L 44 242 Q 44 236 50 236 L 355 236 L 355 203" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="44" y="229" width="32" height="14" rx="3" class="c-mask"/><text x="60" y="239" class="t-muted" font-size="8" text-anchor="middle">挂载</text></g>
+<path d="M 1299 203 L 1299 205 Q 1299 210 1294 210 L 360 210 Q 355 210 355 205 L 355 203" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="803" y="203" width="48" height="14" rx="3" class="c-mask"/><text x="827" y="213" class="t-muted" font-size="8" text-anchor="middle">导航矩阵</text></g>
+<path d="M 355 203 C 355 226.1, 284.5 245.9, 284.5 269" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="369" y="229" width="56" height="14" rx="3" class="c-mask"/><text x="397" y="239" class="t-muted" font-size="8" text-anchor="middle">路由到业务</text></g>
+<path d="M 501.5 329 L 501.5 331 Q 501.5 336 506.5 336 L 713.5 336 Q 718.5 336 718.5 331 L 718.5 329" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="586" y="329" width="48" height="14" rx="3" class="c-mask"/><text x="610" y="339" class="t-muted" font-size="8" text-anchor="middle">复核结果</text></g>
+<path d="M 501.5 329 L 501.5 332 L 50 332 Q 44 332 44 338 L 44 482 Q 44 488 50 488 L 284.5 488 L 284.5 521" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/><g class="archify-layer-edge-label"><rect x="44" y="355" width="53" height="14" rx="3" class="c-mask"/><text x="70.5" y="365" class="t-muted" font-size="8" text-anchor="middle">API 调用</text></g>
+<path d="M 355 455 C 355 478.1, 284.5 497.9, 284.5 521" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="369" y="481" width="48" height="14" rx="3" class="c-mask"/><text x="393" y="491" class="t-muted" font-size="8" text-anchor="middle">数据读取</text></g>
+<path d="M 935.5 581 L 935.5 583 Q 935.5 588 930.5 588 L 723.5 588 Q 718.5 588 718.5 583 L 718.5 581" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="803" y="581" width="48" height="14" rx="3" class="c-mask"/><text x="827" y="591" class="t-muted" font-size="8" text-anchor="middle">设计令牌</text></g>
+<path d="M 284.5 581 L 284.5 583 Q 284.5 588 289.5 588 L 1364.5 588 Q 1369.5 588 1369.5 583 L 1369.5 581" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/><g class="archify-layer-edge-label"><rect x="798" y="581" width="58" height="14" rx="3" class="c-mask"/><text x="827" y="591" class="t-muted" font-size="8" text-anchor="middle">同源 /api</text></g>
+<rect x="40" y="118" width="1430" height="110" rx="10" class="c-region" stroke-width="1"/>
+<text x="54" y="142" class="t-cloud" font-size="10" font-weight="700">外壳与导航</text>
+<g class="archify-layer-node" data-layer-node="r0_0" data-layer-kind="frontend">
+<rect x="245" y="143" width="220" height="60" rx="6" class="c-mask"/>
+<rect x="245" y="143" width="220" height="60" rx="6" class="c-frontend" stroke-width="1.4"/>
+<text x="355" y="168" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">WebShell</text>
+<text x="355" y="184" class="t-muted" font-size="8" text-anchor="middle">页面外壳 · 路由舞台</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r0_1" data-layer-kind="frontend">
+<rect x="481" y="143" width="220" height="60" rx="6" class="c-mask"/>
+<rect x="481" y="143" width="220" height="60" rx="6" class="c-frontend" stroke-width="1.4"/>
+<text x="591" y="168" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">AppSidebar / AppTopbar</text>
+<text x="591" y="184" class="t-muted" font-size="8" text-anchor="middle">桌面侧栏与顶栏</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r0_2" data-layer-kind="frontend">
+<rect x="717" y="143" width="220" height="60" rx="6" class="c-mask"/>
+<rect x="717" y="143" width="220" height="60" rx="6" class="c-frontend" stroke-width="1.4"/>
+<text x="827" y="168" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">MobileNavigation / MoreDrawer</text>
+<text x="827" y="184" class="t-muted" font-size="8" text-anchor="middle">移动端底栏与抽屉</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r0_3" data-layer-kind="frontend">
+<rect x="953" y="143" width="220" height="60" rx="6" class="c-mask"/>
+<rect x="953" y="143" width="220" height="60" rx="6" class="c-frontend" stroke-width="1.4"/>
+<text x="1063" y="168" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">AuthScreen</text>
+<text x="1063" y="184" class="t-muted" font-size="8" text-anchor="middle">登录 · 注册 · 审核提示</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r0_4" data-layer-kind="frontend">
+<rect x="1189" y="143" width="220" height="60" rx="6" class="c-mask"/>
+<rect x="1189" y="143" width="220" height="60" rx="6" class="c-frontend" stroke-width="1.4"/>
+<text x="1299" y="168" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">navigation.ts</text>
+<text x="1299" y="184" class="t-muted" font-size="8" text-anchor="middle">导航 · 角色入口矩阵</text>
+</g>
+<rect x="40" y="244" width="1430" height="110" rx="10" class="c-region" stroke-width="1"/>
+<text x="54" y="268" class="t-cloud" font-size="10" font-weight="700">业务工作区</text>
+<g class="archify-layer-node" data-layer-node="r1_0" data-layer-kind="frontend">
+<rect x="184" y="269" width="201" height="60" rx="6" class="c-mask"/>
+<rect x="184" y="269" width="201" height="60" rx="6" class="c-frontend" stroke-width="1.4"/>
+<text x="284.5" y="294" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">FeaturesPage</text>
+<text x="284.5" y="310" class="t-muted" font-size="8" text-anchor="middle">业务模块目录</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r1_1" data-layer-kind="frontend">
+<rect x="401" y="269" width="201" height="60" rx="6" class="c-mask"/>
+<rect x="401" y="269" width="201" height="60" rx="6" class="c-frontend" stroke-width="1.4"/>
+<text x="501.5" y="294" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">FeatureWorkspace</text>
+<text x="501.5" y="310" class="t-muted" font-size="8" text-anchor="middle">上传 · 参数 · 复核 · 结果</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r1_2" data-layer-kind="frontend">
+<rect x="618" y="269" width="201" height="60" rx="6" class="c-mask"/>
+<rect x="618" y="269" width="201" height="60" rx="6" class="c-frontend" stroke-width="1.4"/>
+<text x="718.5" y="294" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">BusinessResultView</text>
+<text x="718.5" y="310" class="t-muted" font-size="8" text-anchor="middle">结构化结果 · 可信度</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r1_3" data-layer-kind="frontend">
+<rect x="835" y="269" width="201" height="60" rx="6" class="c-mask"/>
+<rect x="835" y="269" width="201" height="60" rx="6" class="c-frontend" stroke-width="1.4"/>
+<text x="935.5" y="294" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">DailyReportPage</text>
+<text x="935.5" y="310" class="t-muted" font-size="8" text-anchor="middle">日清看板</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r1_4" data-layer-kind="frontend">
+<rect x="1052" y="269" width="201" height="60" rx="6" class="c-mask"/>
+<rect x="1052" y="269" width="201" height="60" rx="6" class="c-frontend" stroke-width="1.4"/>
+<text x="1152.5" y="294" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">DailyReportManagement</text>
+<text x="1152.5" y="310" class="t-muted" font-size="8" text-anchor="middle">日清资料 · 人工维护</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r1_5" data-layer-kind="frontend">
+<rect x="1269" y="269" width="201" height="60" rx="6" class="c-mask"/>
+<rect x="1269" y="269" width="201" height="60" rx="6" class="c-frontend" stroke-width="1.4"/>
+<text x="1369.5" y="294" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">WorkshopIssuePage</text>
+<text x="1369.5" y="310" class="t-muted" font-size="8" text-anchor="middle">现场问题移动端</text>
+</g>
+<rect x="40" y="370" width="1430" height="110" rx="10" class="c-region" stroke-width="1"/>
+<text x="54" y="394" class="t-cloud" font-size="10" font-weight="700">协作与工作台页面</text>
+<g class="archify-layer-node" data-layer-node="r2_0" data-layer-kind="frontend">
+<rect x="245" y="395" width="220" height="60" rx="6" class="c-mask"/>
+<rect x="245" y="395" width="220" height="60" rx="6" class="c-frontend" stroke-width="1.4"/>
+<text x="355" y="420" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">FileLibraryPage</text>
+<text x="355" y="436" class="t-muted" font-size="8" text-anchor="middle">团队数据库</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r2_1" data-layer-kind="frontend">
+<rect x="481" y="395" width="220" height="60" rx="6" class="c-mask"/>
+<rect x="481" y="395" width="220" height="60" rx="6" class="c-frontend" stroke-width="1.4"/>
+<text x="591" y="420" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">TaskCenterPage</text>
+<text x="591" y="436" class="t-muted" font-size="8" text-anchor="middle">任务中心</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r2_2" data-layer-kind="frontend">
+<rect x="717" y="395" width="220" height="60" rx="6" class="c-mask"/>
+<rect x="717" y="395" width="220" height="60" rx="6" class="c-frontend" stroke-width="1.4"/>
+<text x="827" y="420" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">NotificationCenterPage</text>
+<text x="827" y="436" class="t-muted" font-size="8" text-anchor="middle">消息中心</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r2_3" data-layer-kind="frontend">
+<rect x="953" y="395" width="220" height="60" rx="6" class="c-mask"/>
+<rect x="953" y="395" width="220" height="60" rx="6" class="c-frontend" stroke-width="1.4"/>
+<text x="1063" y="420" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">AdminPage</text>
+<text x="1063" y="436" class="t-muted" font-size="8" text-anchor="middle">系统管理</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r2_4" data-layer-kind="frontend">
+<rect x="1189" y="395" width="220" height="60" rx="6" class="c-mask"/>
+<rect x="1189" y="395" width="220" height="60" rx="6" class="c-frontend" stroke-width="1.4"/>
+<text x="1299" y="420" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">AccountSecurityPage</text>
+<text x="1299" y="436" class="t-muted" font-size="8" text-anchor="middle">账号安全</text>
+</g>
+<rect x="40" y="496" width="1430" height="110" rx="10" class="c-region" stroke-width="1"/>
+<text x="54" y="520" class="t-cloud" font-size="10" font-weight="700">数据访问与样式</text>
+<g class="archify-layer-node" data-layer-node="r3_0" data-layer-kind="backend">
+<rect x="184" y="521" width="201" height="60" rx="6" class="c-mask"/>
+<rect x="184" y="521" width="201" height="60" rx="6" class="c-backend" stroke-width="1.4"/>
+<text x="284.5" y="546" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">src/api</text>
+<text x="284.5" y="562" class="t-muted" font-size="8" text-anchor="middle">client.ts · types.ts</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r3_1" data-layer-kind="frontend">
+<rect x="401" y="521" width="201" height="60" rx="6" class="c-mask"/>
+<rect x="401" y="521" width="201" height="60" rx="6" class="c-frontend" stroke-width="1.4"/>
+<text x="501.5" y="546" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">src/hooks</text>
+<text x="501.5" y="562" class="t-muted" font-size="8" text-anchor="middle">数据读取与交互 Hook</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r3_2" data-layer-kind="frontend">
+<rect x="618" y="521" width="201" height="60" rx="6" class="c-mask"/>
+<rect x="618" y="521" width="201" height="60" rx="6" class="c-frontend" stroke-width="1.4"/>
+<text x="718.5" y="546" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">src/ui</text>
+<text x="718.5" y="562" class="t-muted" font-size="8" text-anchor="middle">共享交互组件</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r3_3" data-layer-kind="frontend">
+<rect x="835" y="521" width="201" height="60" rx="6" class="c-mask"/>
+<rect x="835" y="521" width="201" height="60" rx="6" class="c-frontend" stroke-width="1.4"/>
+<text x="935.5" y="546" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">src/styles</text>
+<text x="935.5" y="562" class="t-muted" font-size="8" text-anchor="middle">令牌 · 布局 · 主题</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r3_4" data-layer-kind="frontend">
+<rect x="1052" y="521" width="201" height="60" rx="6" class="c-mask"/>
+<rect x="1052" y="521" width="201" height="60" rx="6" class="c-frontend" stroke-width="1.4"/>
+<text x="1152.5" y="546" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">App.tsx</text>
+<text x="1152.5" y="562" class="t-muted" font-size="8" text-anchor="middle">应用根 · 会话状态</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r3_5" data-layer-kind="external">
+<rect x="1269" y="521" width="201" height="60" rx="6" class="c-mask"/>
+<rect x="1269" y="521" width="201" height="60" rx="6" class="c-external" stroke-width="1.4" stroke-dasharray="4 3"/>
+<text x="1369.5" y="546" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">Web HTTP 层</text>
+<text x="1369.5" y="562" class="t-muted" font-size="8" text-anchor="middle">上一层容器 · 出口</text>
+</g>
+</g>
+<g class="archify-layer" data-archify-layer="" data-layer-target="tauri-react" data-layer-label="Tauri 桌面端" hidden aria-hidden="true">
+<title>Tauri 桌面端 · 内部架构</title>
+<rect width="100%" height="100%" fill="url(#grid)"/>
+<rect x="40" y="42" width="44" height="3.5" rx="1.75" class="c-frontend"/>
+<text x="40" y="62" class="t-muted" font-size="9" font-weight="600" letter-spacing="0.08em">第 2 层 · 容器内部架构</text>
+<text x="40" y="88" class="t-primary" font-size="16" font-weight="700">Tauri 桌面端 · 内部架构</text>
+<text x="40" y="106" class="t-muted" font-size="9">双击空白区域或按 Esc 返回总览 · 滚轮缩放 · 拖动平移 · 导出沿用当前层</text>
+<path d="M 284.5 224 L 284.5 226 Q 284.5 231 289.5 231 L 496.5 231 Q 501.5 231 501.5 226 L 501.5 224" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="369" y="224" width="48" height="14" rx="3" class="c-mask"/><text x="393" y="234" class="t-muted" font-size="8" text-anchor="middle">外壳布局</text></g>
+<path d="M 1369.5 224 L 1369.5 226 Q 1369.5 231 1364.5 231 L 506.5 231 Q 501.5 231 501.5 226 L 501.5 224" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="911.5" y="224" width="48" height="14" rx="3" class="c-mask"/><text x="935.5" y="234" class="t-muted" font-size="8" text-anchor="middle">导航来源</text></g>
+<path d="M 718.5 224 C 718.5 261.8, 827 294.2, 827 332" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="732.5" y="271" width="64" height="14" rx="3" class="c-mask"/><text x="764.5" y="281" class="t-muted" font-size="8" text-anchor="middle">本地业务入口</text></g>
+<path d="M 935.5 224 C 935.5 261.8, 827 294.2, 827 332" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="949.5" y="271" width="64" height="14" rx="3" class="c-mask"/><text x="981.5" y="281" class="t-muted" font-size="8" text-anchor="middle">远程业务入口</text></g>
+<path d="M 827 392 L 827 394 Q 827 399 822 399 L 360 399 Q 355 399 355 394 L 355 392" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="567" y="392" width="48" height="14" rx="3" class="c-mask"/><text x="591" y="402" class="t-muted" font-size="8" text-anchor="middle">任务交互</text></g>
+<path d="M 355 392 L 355 394 Q 355 399 360 399 L 586 399 Q 591 399 591 394 L 591 392" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/><g class="archify-layer-edge-label"><rect x="439" y="392" width="68" height="14" rx="3" class="c-mask"/><text x="473" y="402" class="t-muted" font-size="8" text-anchor="middle">bridge 事件</text></g>
+<path d="M 591 392 C 591 429.8, 669 462.2, 669 500" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/><g class="archify-layer-edge-label"><rect x="605" y="439" width="56" height="14" rx="3" class="c-mask"/><text x="633" y="449" class="t-muted" font-size="8" text-anchor="middle">白名单命令</text></g>
+<rect x="40" y="118" width="1430" height="152" rx="10" class="c-region" stroke-width="1"/>
+<text x="54" y="142" class="t-cloud" font-size="10" font-weight="700">桌面外壳与模式</text>
+<g class="archify-layer-node" data-layer-node="r0_0" data-layer-kind="frontend">
+<rect x="184" y="164" width="201" height="60" rx="6" class="c-mask"/>
+<rect x="184" y="164" width="201" height="60" rx="6" class="c-frontend" stroke-width="1.4"/>
+<text x="284.5" y="189" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">App.tsx</text>
+<text x="284.5" y="205" class="t-muted" font-size="8" text-anchor="middle">桌面应用根</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r0_1" data-layer-kind="frontend">
+<rect x="401" y="164" width="201" height="60" rx="6" class="c-mask"/>
+<rect x="401" y="164" width="201" height="60" rx="6" class="c-frontend" stroke-width="1.4"/>
+<text x="501.5" y="189" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">AppSidebar / AppTopbar</text>
+<text x="501.5" y="205" class="t-muted" font-size="8" text-anchor="middle">桌面导航</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r0_2" data-layer-kind="frontend">
+<rect x="618" y="164" width="201" height="60" rx="6" class="c-mask"/>
+<rect x="618" y="164" width="201" height="60" rx="6" class="c-frontend" stroke-width="1.4"/>
+<text x="718.5" y="189" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">LocalWorkbench</text>
+<text x="718.5" y="205" class="t-muted" font-size="8" text-anchor="middle">本地模式</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r0_3" data-layer-kind="frontend">
+<rect x="835" y="164" width="201" height="60" rx="6" class="c-mask"/>
+<rect x="835" y="164" width="201" height="60" rx="6" class="c-frontend" stroke-width="1.4"/>
+<text x="935.5" y="189" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">RemoteWorkbench</text>
+<text x="935.5" y="205" class="t-muted" font-size="8" text-anchor="middle">Web 远程模式</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r0_4" data-layer-kind="frontend">
+<rect x="1052" y="164" width="201" height="60" rx="6" class="c-mask"/>
+<rect x="1052" y="164" width="201" height="60" rx="6" class="c-frontend" stroke-width="1.4"/>
+<text x="1152.5" y="189" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">ModePicker / ContextPanel</text>
+<text x="1152.5" y="205" class="t-muted" font-size="8" text-anchor="middle">上下文与模式切换</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r0_5" data-layer-kind="frontend">
+<rect x="1269" y="164" width="201" height="60" rx="6" class="c-mask"/>
+<rect x="1269" y="164" width="201" height="60" rx="6" class="c-frontend" stroke-width="1.4"/>
+<text x="1369.5" y="189" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">NAV_ITEMS</text>
+<text x="1369.5" y="205" class="t-muted" font-size="8" text-anchor="middle">单一导航来源</text>
+</g>
+<rect x="40" y="286" width="1430" height="152" rx="10" class="c-region" stroke-width="1"/>
+<text x="54" y="310" class="t-cloud" font-size="10" font-weight="700">任务、桥接与页面</text>
+<g class="archify-layer-node" data-layer-node="r1_0" data-layer-kind="frontend">
+<rect x="245" y="332" width="220" height="60" rx="6" class="c-mask"/>
+<rect x="245" y="332" width="220" height="60" rx="6" class="c-frontend" stroke-width="1.4"/>
+<text x="355" y="357" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">useBridgeTask</text>
+<text x="355" y="373" class="t-muted" font-size="8" text-anchor="middle">桥接任务 · 日志 · 进度</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r1_1" data-layer-kind="backend">
+<rect x="481" y="332" width="220" height="60" rx="6" class="c-mask"/>
+<rect x="481" y="332" width="220" height="60" rx="6" class="c-backend" stroke-width="1.4"/>
+<text x="591" y="357" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">src/lib</text>
+<text x="591" y="373" class="t-muted" font-size="8" text-anchor="middle">Rust 桥接 · 本地文件</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r1_2" data-layer-kind="frontend">
+<rect x="717" y="332" width="220" height="60" rx="6" class="c-mask"/>
+<rect x="717" y="332" width="220" height="60" rx="6" class="c-frontend" stroke-width="1.4"/>
+<text x="827" y="357" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">业务页面</text>
+<text x="827" y="373" class="t-muted" font-size="8" text-anchor="middle">人事 · 业务 · 数据 · 财务 · 工具</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r1_3" data-layer-kind="frontend">
+<rect x="953" y="332" width="220" height="60" rx="6" class="c-mask"/>
+<rect x="953" y="332" width="220" height="60" rx="6" class="c-frontend" stroke-width="1.4"/>
+<text x="1063" y="357" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">src/ui</text>
+<text x="1063" y="373" class="t-muted" font-size="8" text-anchor="middle">与 Web 对齐的共享组件</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r1_4" data-layer-kind="frontend">
+<rect x="1189" y="332" width="220" height="60" rx="6" class="c-mask"/>
+<rect x="1189" y="332" width="220" height="60" rx="6" class="c-frontend" stroke-width="1.4"/>
+<text x="1299" y="357" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">src/styles</text>
+<text x="1299" y="373" class="t-muted" font-size="8" text-anchor="middle">布局 · 主题 · 结果样式</text>
+</g>
+<rect x="40" y="454" width="1430" height="152" rx="10" class="c-security-group" stroke-width="1"/>
+<text x="54" y="478" class="t-security" font-size="10" font-weight="700">宿主边界</text>
+<g class="archify-layer-node" data-layer-node="r2_0" data-layer-kind="external">
+<rect x="519" y="500" width="300" height="60" rx="6" class="c-mask"/>
+<rect x="519" y="500" width="300" height="60" rx="6" class="c-external" stroke-width="1.4" stroke-dasharray="4 3"/>
+<text x="669" y="525" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">Rust 命令层</text>
+<text x="669" y="541" class="t-muted" font-size="8" text-anchor="middle">上一层容器 · 出口</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r2_1" data-layer-kind="external">
+<rect x="835" y="500" width="300" height="60" rx="6" class="c-mask"/>
+<rect x="835" y="500" width="300" height="60" rx="6" class="c-external" stroke-width="1.4" stroke-dasharray="4 3"/>
+<text x="985" y="525" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">FYTCoreBridge.exe</text>
+<text x="985" y="541" class="t-muted" font-size="8" text-anchor="middle">sidecar · 无控制台入口</text>
+</g>
+</g>
+<g class="archify-layer" data-archify-layer="" data-layer-target="rust-layer" data-layer-label="Rust 命令层" hidden aria-hidden="true">
+<title>Rust 命令层 · 内部架构</title>
+<rect width="100%" height="100%" fill="url(#grid)"/>
+<rect x="40" y="42" width="44" height="3.5" rx="1.75" class="c-backend"/>
+<text x="40" y="62" class="t-muted" font-size="9" font-weight="600" letter-spacing="0.08em">第 2 层 · 容器内部架构</text>
+<text x="40" y="88" class="t-primary" font-size="16" font-weight="700">Rust 命令层 · 内部架构</text>
+<text x="40" y="106" class="t-muted" font-size="9">双击空白区域或按 Esc 返回总览 · 滚轮缩放 · 拖动平移 · 导出沿用当前层</text>
+<path d="M 985 500 L 985 446 L 50 446 Q 44 446 44 440 L 44 284 Q 44 278 50 278 L 355 278 L 355 224" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="44" y="271" width="56" height="14" rx="3" class="c-mask"/><text x="72" y="281" class="t-muted" font-size="8" text-anchor="middle">白名单命令</text></g>
+<path d="M 355 224 L 355 226 Q 355 231 360 231 L 586 231 Q 591 231 591 226 L 591 224" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="436" y="224" width="74" height="14" rx="3" class="c-mask"/><text x="473" y="234" class="t-muted" font-size="8" text-anchor="middle">sidecar 配置</text></g>
+<path d="M 355 224 L 355 226 Q 355 231 360 231 L 822 231 Q 827 231 827 226 L 827 224" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="546.5" y="224" width="89" height="14" rx="3" class="c-mask"/><text x="591" y="234" class="t-muted" font-size="8" text-anchor="middle">生成 request_id</text></g>
+<path d="M 591 224 C 591 261.8, 443 294.2, 443 332" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="605" y="271" width="74" height="14" rx="3" class="c-mask"/><text x="642" y="281" class="t-muted" font-size="8" text-anchor="middle">启动 sidecar</text></g>
+<path d="M 443 392 L 443 394 Q 443 399 448 399 L 694 399 Q 699 399 699 394 L 699 392" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/><g class="archify-layer-edge-label"><rect x="550" y="392" width="42" height="14" rx="3" class="c-mask"/><text x="571" y="402" class="t-muted" font-size="8" text-anchor="middle">stdio</text></g>
+<path d="M 699 332 C 699 294.2, 1063 261.8, 1063 224" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="713" y="271" width="68" height="14" rx="3" class="c-mask"/><text x="747" y="281" class="t-muted" font-size="8" text-anchor="middle">stderr 日志</text></g>
+<path d="M 1063 224 L 1063 227 L 50 227 Q 44 227 44 233 L 44 440 Q 44 446 50 446 L 985 446 L 985 500" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="106" y="271" width="64" height="14" rx="3" class="c-mask"/><text x="138" y="281" class="t-muted" font-size="8" text-anchor="middle">进度 / 日志</text></g>
+<path d="M 1299 224 C 1299 261.8, 1211 294.2, 1211 332" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="1313" y="271" width="48" height="14" rx="3" class="c-mask"/><text x="1337" y="281" class="t-muted" font-size="8" text-anchor="middle">取消请求</text></g>
+<path d="M 1211 392 L 1211 394 Q 1211 399 1206 399 L 448 399 Q 443 399 443 394 L 443 392" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="799" y="392" width="56" height="14" rx="3" class="c-mask"/><text x="827" y="402" class="t-muted" font-size="8" text-anchor="middle">终止子进程</text></g>
+<path d="M 699 392 C 699 429.8, 669 462.2, 669 500" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/><g class="archify-layer-edge-label"><rect x="713" y="439" width="63" height="14" rx="3" class="c-mask"/><text x="744.5" y="449" class="t-muted" font-size="8" text-anchor="middle">桥接 stdio</text></g>
+<rect x="40" y="118" width="1430" height="152" rx="10" class="c-region" stroke-width="1"/>
+<text x="54" y="142" class="t-cloud" font-size="10" font-weight="700">命令与白名单</text>
+<g class="archify-layer-node" data-layer-node="r0_0" data-layer-kind="backend">
+<rect x="245" y="164" width="220" height="60" rx="6" class="c-mask"/>
+<rect x="245" y="164" width="220" height="60" rx="6" class="c-backend" stroke-width="1.4"/>
+<text x="355" y="189" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">lib.rs</text>
+<text x="355" y="205" class="t-muted" font-size="8" text-anchor="middle">命令白名单 · sidecar · 取消</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r0_1" data-layer-kind="backend">
+<rect x="481" y="164" width="220" height="60" rx="6" class="c-mask"/>
+<rect x="481" y="164" width="220" height="60" rx="6" class="c-backend" stroke-width="1.4"/>
+<text x="591" y="189" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">tauri.conf.json</text>
+<text x="591" y="205" class="t-muted" font-size="8" text-anchor="middle">窗口 · 资源 · sidecar</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r0_2" data-layer-kind="backend">
+<rect x="717" y="164" width="220" height="60" rx="6" class="c-mask"/>
+<rect x="717" y="164" width="220" height="60" rx="6" class="c-backend" stroke-width="1.4"/>
+<text x="827" y="189" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">request_id 关联</text>
+<text x="827" y="205" class="t-muted" font-size="8" text-anchor="middle">按请求精确取消</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r0_3" data-layer-kind="backend">
+<rect x="953" y="164" width="220" height="60" rx="6" class="c-mask"/>
+<rect x="953" y="164" width="220" height="60" rx="6" class="c-backend" stroke-width="1.4"/>
+<text x="1063" y="189" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">stderr 解析</text>
+<text x="1063" y="205" class="t-muted" font-size="8" text-anchor="middle">日志与进度转发</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r0_4" data-layer-kind="backend">
+<rect x="1189" y="164" width="220" height="60" rx="6" class="c-mask"/>
+<rect x="1189" y="164" width="220" height="60" rx="6" class="c-backend" stroke-width="1.4"/>
+<text x="1299" y="189" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">进程取消</text>
+<text x="1299" y="205" class="t-muted" font-size="8" text-anchor="middle">终止子进程</text>
+</g>
+<rect x="40" y="286" width="1430" height="152" rx="10" class="c-region" stroke-width="1"/>
+<text x="54" y="310" class="t-cloud" font-size="10" font-weight="700">sidecar 生命周期</text>
+<g class="archify-layer-node" data-layer-node="r1_0" data-layer-kind="external">
+<rect x="323" y="332" width="240" height="60" rx="6" class="c-mask"/>
+<rect x="323" y="332" width="240" height="60" rx="6" class="c-external" stroke-width="1.4"/>
+<text x="443" y="357" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">FYTCoreBridge.exe</text>
+<text x="443" y="373" class="t-muted" font-size="8" text-anchor="middle">无控制台入口</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r1_1" data-layer-kind="backend">
+<rect x="579" y="332" width="240" height="60" rx="6" class="c-mask"/>
+<rect x="579" y="332" width="240" height="60" rx="6" class="c-backend" stroke-width="1.4"/>
+<text x="699" y="357" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">stdio 子进程通道</text>
+<text x="699" y="373" class="t-muted" font-size="8" text-anchor="middle">stdin / stdout / stderr</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r1_2" data-layer-kind="backend">
+<rect x="835" y="332" width="240" height="60" rx="6" class="c-mask"/>
+<rect x="835" y="332" width="240" height="60" rx="6" class="c-backend" stroke-width="1.4"/>
+<text x="955" y="357" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">进度事件解析</text>
+<text x="955" y="373" class="t-muted" font-size="8" text-anchor="middle">JSON 事件流</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r1_3" data-layer-kind="backend">
+<rect x="1091" y="332" width="240" height="60" rx="6" class="c-mask"/>
+<rect x="1091" y="332" width="240" height="60" rx="6" class="c-backend" stroke-width="1.4"/>
+<text x="1211" y="357" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">取消信号</text>
+<text x="1211" y="373" class="t-muted" font-size="8" text-anchor="middle">按 request_id 匹配</text>
+</g>
+<rect x="40" y="454" width="1430" height="152" rx="10" class="c-security-group" stroke-width="1"/>
+<text x="54" y="478" class="t-security" font-size="10" font-weight="700">边界</text>
+<g class="archify-layer-node" data-layer-node="r2_0" data-layer-kind="external">
+<rect x="519" y="500" width="300" height="60" rx="6" class="c-mask"/>
+<rect x="519" y="500" width="300" height="60" rx="6" class="c-external" stroke-width="1.4" stroke-dasharray="4 3"/>
+<text x="669" y="525" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">core.tauri_bridge</text>
+<text x="669" y="541" class="t-muted" font-size="8" text-anchor="middle">上一层容器 · 出口</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r2_1" data-layer-kind="external">
+<rect x="835" y="500" width="300" height="60" rx="6" class="c-mask"/>
+<rect x="835" y="500" width="300" height="60" rx="6" class="c-external" stroke-width="1.4" stroke-dasharray="4 3"/>
+<text x="985" y="525" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">Tauri React</text>
+<text x="985" y="541" class="t-muted" font-size="8" text-anchor="middle">上一层容器 · 调用方</text>
+</g>
+</g>
+<g class="archify-layer" data-archify-layer="" data-layer-target="cloudflared" data-layer-label="Cloudflare Tunnel" hidden aria-hidden="true">
+<title>Cloudflare Tunnel · 内部架构</title>
+<rect width="100%" height="100%" fill="url(#grid)"/>
+<rect x="40" y="42" width="44" height="3.5" rx="1.75" class="c-external"/>
+<text x="40" y="62" class="t-muted" font-size="9" font-weight="600" letter-spacing="0.08em">第 2 层 · 容器内部架构</text>
+<text x="40" y="88" class="t-primary" font-size="16" font-weight="700">Cloudflare Tunnel · 内部架构</text>
+<text x="40" y="106" class="t-muted" font-size="9">双击空白区域或按 Esc 返回总览 · 滚轮缩放 · 拖动平移 · 导出沿用当前层</text>
+<path d="M 443 266 L 443 268 Q 443 273 448 273 L 694 273 Q 699 273 699 268 L 699 266" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/><g class="archify-layer-edge-label"><rect x="539.5" y="266" width="63" height="14" rx="3" class="c-mask"/><text x="571" y="276" class="t-muted" font-size="8" text-anchor="middle">HTTPS 访问</text></g>
+<path d="M 699 266 L 699 268 Q 699 273 704 273 L 950 273 Q 955 273 955 268 L 955 266" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/><g class="archify-layer-edge-label"><rect x="800.5" y="266" width="53" height="14" rx="3" class="c-mask"/><text x="827" y="276" class="t-muted" font-size="8" text-anchor="middle">TLS 隧道</text></g>
+<path d="M 1211 266 C 1211 333.2, 443 390.8, 443 458" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="1225" y="355" width="48" height="14" rx="3" class="c-mask"/><text x="1249" y="365" class="t-muted" font-size="8" text-anchor="middle">鉴权配置</text></g>
+<path d="M 699 266 C 699 333.2, 443 390.8, 443 458" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="713" y="355" width="48" height="14" rx="3" class="c-mask"/><text x="737" y="365" class="t-muted" font-size="8" text-anchor="middle">隧道连接</text></g>
+<path d="M 443 518 L 443 520 Q 443 525 448 525 L 950 525 Q 955 525 955 520 L 955 518" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/><g class="archify-layer-edge-label"><rect x="672.5" y="518" width="53" height="14" rx="3" class="c-mask"/><text x="699" y="528" class="t-muted" font-size="8" text-anchor="middle">TCP 转发</text></g>
+<path d="M 955 518 L 955 520 Q 955 525 960 525 L 1206 525 Q 1211 525 1211 520 L 1211 518" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="1054" y="518" width="58" height="14" rx="3" class="c-mask"/><text x="1083" y="528" class="t-muted" font-size="8" text-anchor="middle">回环 HTTP</text></g>
+<rect x="40" y="118" width="1430" height="236" rx="10" class="c-region" stroke-width="1"/>
+<text x="54" y="142" class="t-cloud" font-size="10" font-weight="700">公网与边缘</text>
+<g class="archify-layer-node" data-layer-node="r0_0" data-layer-kind="external">
+<rect x="323" y="206" width="240" height="60" rx="6" class="c-mask"/>
+<rect x="323" y="206" width="240" height="60" rx="6" class="c-external" stroke-width="1.4"/>
+<text x="443" y="231" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">域名 DNS</text>
+<text x="443" y="247" class="t-muted" font-size="8" text-anchor="middle">公开访问入口</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r0_1" data-layer-kind="external">
+<rect x="579" y="206" width="240" height="60" rx="6" class="c-mask"/>
+<rect x="579" y="206" width="240" height="60" rx="6" class="c-external" stroke-width="1.4"/>
+<text x="699" y="231" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">Cloudflare 边缘</text>
+<text x="699" y="247" class="t-muted" font-size="8" text-anchor="middle">TLS 终结 · 转发</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r0_2" data-layer-kind="external">
+<rect x="835" y="206" width="240" height="60" rx="6" class="c-mask"/>
+<rect x="835" y="206" width="240" height="60" rx="6" class="c-external" stroke-width="1.4"/>
+<text x="955" y="231" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">TLS 隧道</text>
+<text x="955" y="247" class="t-muted" font-size="8" text-anchor="middle">加密长连接</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r0_3" data-layer-kind="database">
+<rect x="1091" y="206" width="240" height="60" rx="6" class="c-mask"/>
+<rect x="1091" y="206" width="240" height="60" rx="6" class="c-database" stroke-width="1.4"/>
+<text x="1211" y="231" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">证书与令牌</text>
+<text x="1211" y="247" class="t-muted" font-size="8" text-anchor="middle">不进入应用镜像</text>
+</g>
+<rect x="40" y="370" width="1430" height="236" rx="10" class="c-region" stroke-width="1"/>
+<text x="54" y="394" class="t-cloud" font-size="10" font-weight="700">本机隧道进程</text>
+<g class="archify-layer-node" data-layer-node="r1_0" data-layer-kind="external">
+<rect x="323" y="458" width="240" height="60" rx="6" class="c-mask"/>
+<rect x="323" y="458" width="240" height="60" rx="6" class="c-external" stroke-width="1.4"/>
+<text x="443" y="483" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">cloudflared 进程</text>
+<text x="443" y="499" class="t-muted" font-size="8" text-anchor="middle">守护 · 重连</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r1_1" data-layer-kind="backend">
+<rect x="579" y="458" width="240" height="60" rx="6" class="c-mask"/>
+<rect x="579" y="458" width="240" height="60" rx="6" class="c-backend" stroke-width="1.4"/>
+<text x="699" y="483" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">隧道配置</text>
+<text x="699" y="499" class="t-muted" font-size="8" text-anchor="middle">临时 / 固定 Tunnel</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r1_2" data-layer-kind="backend">
+<rect x="835" y="458" width="240" height="60" rx="6" class="c-mask"/>
+<rect x="835" y="458" width="240" height="60" rx="6" class="c-backend" stroke-width="1.4"/>
+<text x="955" y="483" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">本地转发 127.0.0.1:8787</text>
+<text x="955" y="499" class="t-muted" font-size="8" text-anchor="middle">只转发本机回环</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r1_3" data-layer-kind="external">
+<rect x="1091" y="458" width="240" height="60" rx="6" class="c-mask"/>
+<rect x="1091" y="458" width="240" height="60" rx="6" class="c-external" stroke-width="1.4" stroke-dasharray="4 3"/>
+<text x="1211" y="483" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">Web 服务端 HTTP 层</text>
+<text x="1211" y="499" class="t-muted" font-size="8" text-anchor="middle">上一层容器 · 出口</text>
+</g>
+</g>
+<g class="archify-layer" data-archify-layer="" data-layer-target="http" data-layer-label="Web HTTP 层" hidden aria-hidden="true">
+<title>Web HTTP 层 · 内部架构</title>
+<rect width="100%" height="100%" fill="url(#grid)"/>
+<rect x="40" y="42" width="44" height="3.5" rx="1.75" class="c-backend"/>
+<text x="40" y="62" class="t-muted" font-size="9" font-weight="600" letter-spacing="0.08em">第 2 层 · 容器内部架构</text>
+<text x="40" y="88" class="t-primary" font-size="16" font-weight="700">Web HTTP 层 · 内部架构</text>
+<text x="40" y="106" class="t-muted" font-size="9">双击空白区域或按 Esc 返回总览 · 滚轮缩放 · 拖动平移 · 导出沿用当前层</text>
+<path d="M 551 224 L 551 226 Q 551 231 556 231 L 822 231 Q 827 231 827 226 L 827 224" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="661" y="224" width="56" height="14" rx="3" class="c-mask"/><text x="689" y="234" class="t-muted" font-size="8" text-anchor="middle">鉴权上下文</text></g>
+<path d="M 827 224 C 827 261.8, 443 294.2, 443 332" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="841" y="271" width="64" height="14" rx="3" class="c-mask"/><text x="873" y="281" class="t-muted" font-size="8" text-anchor="middle">会话 / 角色</text></g>
+<path d="M 551 224 L 551 226 Q 551 231 556 231 L 1098 231 Q 1103 231 1103 226 L 1103 224" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="803" y="224" width="48" height="14" rx="3" class="c-mask"/><text x="827" y="234" class="t-muted" font-size="8" text-anchor="middle">路径校验</text></g>
+<path d="M 443 332 C 443 294.2, 1103 261.8, 1103 224" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="457" y="271" width="48" height="14" rx="3" class="c-mask"/><text x="481" y="281" class="t-muted" font-size="8" text-anchor="middle">目录边界</text></g>
+<path d="M 443 392 L 443 394 Q 443 399 448 399 L 694 399 Q 699 399 699 394 L 699 392" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="547" y="392" width="48" height="14" rx="3" class="c-mask"/><text x="571" y="402" class="t-muted" font-size="8" text-anchor="middle">响应调度</text></g>
+<path d="M 699 392 L 699 394 Q 699 399 704 399 L 1206 399 Q 1211 399 1211 394 L 1211 392" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="921" y="392" width="68" height="14" rx="3" class="c-mask"/><text x="955" y="402" class="t-muted" font-size="8" text-anchor="middle">设置 Cookie</text></g>
+<path d="M 955 392 L 955 394 Q 955 399 950 399 L 704 399 Q 699 399 699 394 L 699 392" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="803" y="392" width="48" height="14" rx="3" class="c-mask"/><text x="827" y="402" class="t-muted" font-size="8" text-anchor="middle">文件响应</text></g>
+<path d="M 443 392 C 443 429.8, 669 462.2, 669 500" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/><g class="archify-layer-edge-label"><rect x="457" y="439" width="56" height="14" rx="3" class="c-mask"/><text x="485" y="449" class="t-muted" font-size="8" text-anchor="middle">路由到服务</text></g>
+<path d="M 955 392 C 955 429.8, 985 462.2, 985 500" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/><g class="archify-layer-edge-label"><rect x="969" y="439" width="100" height="14" rx="3" class="c-mask"/><text x="1019" y="449" class="t-muted" font-size="8" text-anchor="middle">托管 web-app/dist</text></g>
+<rect x="40" y="118" width="1430" height="152" rx="10" class="c-region" stroke-width="1"/>
+<text x="54" y="142" class="t-cloud" font-size="10" font-weight="700">请求入口</text>
+<g class="archify-layer-node" data-layer-node="r0_0" data-layer-kind="backend">
+<rect x="421" y="164" width="260" height="60" rx="6" class="c-mask"/>
+<rect x="421" y="164" width="260" height="60" rx="6" class="c-backend" stroke-width="1.4"/>
+<text x="551" y="189" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">handler.py</text>
+<text x="551" y="205" class="t-muted" font-size="8" text-anchor="middle">请求解析 · 鉴权 · 响应调度</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r0_1" data-layer-kind="backend">
+<rect x="697" y="164" width="260" height="60" rx="6" class="c-mask"/>
+<rect x="697" y="164" width="260" height="60" rx="6" class="c-backend" stroke-width="1.4"/>
+<text x="827" y="189" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">context.py</text>
+<text x="827" y="205" class="t-muted" font-size="8" text-anchor="middle">会话 · 用户 · 权限上下文</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r0_2" data-layer-kind="backend">
+<rect x="973" y="164" width="260" height="60" rx="6" class="c-mask"/>
+<rect x="973" y="164" width="260" height="60" rx="6" class="c-backend" stroke-width="1.4"/>
+<text x="1103" y="189" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">path_params.py</text>
+<text x="1103" y="205" class="t-muted" font-size="8" text-anchor="middle">路径参数 · 目录边界校验</text>
+</g>
+<rect x="40" y="286" width="1430" height="152" rx="10" class="c-region" stroke-width="1"/>
+<text x="54" y="310" class="t-cloud" font-size="10" font-weight="700">路由与响应</text>
+<g class="archify-layer-node" data-layer-node="r1_0" data-layer-kind="backend">
+<rect x="323" y="332" width="240" height="60" rx="6" class="c-mask"/>
+<rect x="323" y="332" width="240" height="60" rx="6" class="c-backend" stroke-width="1.4"/>
+<text x="443" y="357" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">routes.py</text>
+<text x="443" y="373" class="t-muted" font-size="8" text-anchor="middle">方法 · 路径 · 端点分发</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r1_1" data-layer-kind="backend">
+<rect x="579" y="332" width="240" height="60" rx="6" class="c-mask"/>
+<rect x="579" y="332" width="240" height="60" rx="6" class="c-backend" stroke-width="1.4"/>
+<text x="699" y="357" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">responses.py</text>
+<text x="699" y="373" class="t-muted" font-size="8" text-anchor="middle">JSON · 文件 · 错误 · 缓存</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r1_2" data-layer-kind="backend">
+<rect x="835" y="332" width="240" height="60" rx="6" class="c-mask"/>
+<rect x="835" y="332" width="240" height="60" rx="6" class="c-backend" stroke-width="1.4"/>
+<text x="955" y="357" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">static_files.py</text>
+<text x="955" y="373" class="t-muted" font-size="8" text-anchor="middle">前端静态资源与入口页</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r1_3" data-layer-kind="database">
+<rect x="1091" y="332" width="240" height="60" rx="6" class="c-mask"/>
+<rect x="1091" y="332" width="240" height="60" rx="6" class="c-database" stroke-width="1.4"/>
+<text x="1211" y="357" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">会话 Cookie</text>
+<text x="1211" y="373" class="t-muted" font-size="8" text-anchor="middle">HttpOnly · SameSite=Strict</text>
+</g>
+<rect x="40" y="454" width="1430" height="152" rx="10" class="c-security-group" stroke-width="1"/>
+<text x="54" y="478" class="t-security" font-size="10" font-weight="700">边界</text>
+<g class="archify-layer-node" data-layer-node="r2_0" data-layer-kind="external">
+<rect x="519" y="500" width="300" height="60" rx="6" class="c-mask"/>
+<rect x="519" y="500" width="300" height="60" rx="6" class="c-external" stroke-width="1.4" stroke-dasharray="4 3"/>
+<text x="669" y="525" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">Web 领域服务</text>
+<text x="669" y="541" class="t-muted" font-size="8" text-anchor="middle">上一层容器 · 出口</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r2_1" data-layer-kind="external">
+<rect x="835" y="500" width="300" height="60" rx="6" class="c-mask"/>
+<rect x="835" y="500" width="300" height="60" rx="6" class="c-external" stroke-width="1.4" stroke-dasharray="4 3"/>
+<text x="985" y="525" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">Web React</text>
+<text x="985" y="541" class="t-muted" font-size="8" text-anchor="middle">上一层容器 · 静态资源出口</text>
+</g>
+</g>
+<g class="archify-layer" data-archify-layer="" data-layer-target="services" data-layer-label="Web 领域服务" hidden aria-hidden="true">
+<title>Web 领域服务 · 内部架构</title>
+<rect width="100%" height="100%" fill="url(#grid)"/>
+<rect x="40" y="42" width="44" height="3.5" rx="1.75" class="c-backend"/>
+<text x="40" y="62" class="t-muted" font-size="9" font-weight="600" letter-spacing="0.08em">第 2 层 · 容器内部架构</text>
+<text x="40" y="88" class="t-primary" font-size="16" font-weight="700">Web 领域服务 · 内部架构</text>
+<text x="40" y="106" class="t-muted" font-size="9">双击空白区域或按 Esc 返回总览 · 滚轮缩放 · 拖动平移 · 导出沿用当前层</text>
+<path d="M 355 203 L 355 205 Q 355 210 360 210 L 586 210 Q 591 210 591 205 L 591 203" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/><g class="archify-layer-edge-label"><rect x="441" y="203" width="64" height="14" rx="3" class="c-mask"/><text x="473" y="213" class="t-muted" font-size="8" text-anchor="middle">登录 / 会话</text></g>
+<path d="M 827 203 C 827 226.1, 284.5 245.9, 284.5 269" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="841" y="229" width="48" height="14" rx="3" class="c-mask"/><text x="865" y="239" class="t-muted" font-size="8" text-anchor="middle">角色授权</text></g>
+<path d="M 591 203 C 591 226.1, 501.5 245.9, 501.5 269" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="605" y="229" width="48" height="14" rx="3" class="c-mask"/><text x="629" y="239" class="t-muted" font-size="8" text-anchor="middle">账号审核</text></g>
+<path d="M 501.5 329 L 501.5 332 L 50 332 Q 44 332 44 338 L 44 482 Q 44 488 50 488 L 551 488 L 551 521" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="44" y="355" width="53" height="14" rx="3" class="c-mask"/><text x="70.5" y="365" class="t-muted" font-size="8" text-anchor="middle">SQL 读写</text></g>
+<path d="M 718.5 329 L 718.5 332 L 50 332 Q 44 332 44 338 L 44 482 Q 44 488 50 488 L 551 488 L 551 521" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="103" y="355" width="56" height="14" rx="3" class="c-mask"/><text x="131" y="365" class="t-muted" font-size="8" text-anchor="middle">问题持久化</text></g>
+<path d="M 935.5 329 L 935.5 332 L 50 332 Q 44 332 44 338 L 44 482 Q 44 488 50 488 L 827 488 L 827 521" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="44" y="481" width="64" height="14" rx="3" class="c-mask"/><text x="76" y="491" class="t-muted" font-size="8" text-anchor="middle">资料 / 上传</text></g>
+<path d="M 1063 203 L 1063 206 L 50 206 Q 44 206 44 212 L 44 482 Q 44 488 50 488 L 827 488 L 827 521" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/><g class="archify-layer-edge-label"><rect x="44" y="229" width="64" height="14" rx="3" class="c-mask"/><text x="76" y="239" class="t-muted" font-size="8" text-anchor="middle">上传 / 下载</text></g>
+<path d="M 1152.5 329 C 1152.5 352.1, 355 371.9, 355 395" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="1166.5" y="355" width="40" height="14" rx="3" class="c-mask"/><text x="1186.5" y="365" class="t-muted" font-size="8" text-anchor="middle">长任务</text></g>
+<path d="M 355 455 C 355 478.1, 1103 497.9, 1103 521" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/><g class="archify-layer-edge-label"><rect x="369" y="481" width="56" height="14" rx="3" class="c-mask"/><text x="397" y="491" class="t-muted" font-size="8" text-anchor="middle">持久化任务</text></g>
+<path d="M 591 455 C 591 478.1, 551 497.9, 551 521" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="605" y="481" width="32" height="14" rx="3" class="c-mask"/><text x="621" y="491" class="t-muted" font-size="8" text-anchor="middle">审计</text></g>
+<path d="M 827 455 C 827 478.1, 551 497.9, 551 521" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="841" y="481" width="32" height="14" rx="3" class="c-mask"/><text x="857" y="491" class="t-muted" font-size="8" text-anchor="middle">备份</text></g>
+<rect x="40" y="118" width="1430" height="110" rx="10" class="c-region" stroke-width="1"/>
+<text x="54" y="142" class="t-cloud" font-size="10" font-weight="700">身份与入口</text>
+<g class="archify-layer-node" data-layer-node="r0_0" data-layer-kind="external">
+<rect x="245" y="143" width="220" height="60" rx="6" class="c-mask"/>
+<rect x="245" y="143" width="220" height="60" rx="6" class="c-external" stroke-width="1.4" stroke-dasharray="4 3"/>
+<text x="355" y="168" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">Web HTTP 层</text>
+<text x="355" y="184" class="t-muted" font-size="8" text-anchor="middle">上一层容器 · 入口</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r0_1" data-layer-kind="backend">
+<rect x="481" y="143" width="220" height="60" rx="6" class="c-mask"/>
+<rect x="481" y="143" width="220" height="60" rx="6" class="c-backend" stroke-width="1.4"/>
+<text x="591" y="168" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">auth</text>
+<text x="591" y="184" class="t-muted" font-size="8" text-anchor="middle">登录 · 注册 · 会话 · 设备</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r0_2" data-layer-kind="backend">
+<rect x="717" y="143" width="220" height="60" rx="6" class="c-mask"/>
+<rect x="717" y="143" width="220" height="60" rx="6" class="c-backend" stroke-width="1.4"/>
+<text x="827" y="168" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">admin_accounts</text>
+<text x="827" y="184" class="t-muted" font-size="8" text-anchor="middle">账号审核 · 角色管理</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r0_3" data-layer-kind="backend">
+<rect x="953" y="143" width="220" height="60" rx="6" class="c-mask"/>
+<rect x="953" y="143" width="220" height="60" rx="6" class="c-backend" stroke-width="1.4"/>
+<text x="1063" y="168" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">uploads</text>
+<text x="1063" y="184" class="t-muted" font-size="8" text-anchor="middle">上传句柄 · 文件流 · 配额</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r0_4" data-layer-kind="backend">
+<rect x="1189" y="143" width="220" height="60" rx="6" class="c-mask"/>
+<rect x="1189" y="143" width="220" height="60" rx="6" class="c-backend" stroke-width="1.4"/>
+<text x="1299" y="168" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">notifications</text>
+<text x="1299" y="184" class="t-muted" font-size="8" text-anchor="middle">公告 · 消息 · 阅读状态</text>
+</g>
+<rect x="40" y="244" width="1430" height="110" rx="10" class="c-region" stroke-width="1"/>
+<text x="54" y="268" class="t-cloud" font-size="10" font-weight="700">业务域服务</text>
+<g class="archify-layer-node" data-layer-node="r1_0" data-layer-kind="backend">
+<rect x="184" y="269" width="201" height="60" rx="6" class="c-mask"/>
+<rect x="184" y="269" width="201" height="60" rx="6" class="c-backend" stroke-width="1.4"/>
+<text x="284.5" y="294" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">library</text>
+<text x="284.5" y="310" class="t-muted" font-size="8" text-anchor="middle">Web 团队数据库</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r1_1" data-layer-kind="backend">
+<rect x="401" y="269" width="201" height="60" rx="6" class="c-mask"/>
+<rect x="401" y="269" width="201" height="60" rx="6" class="c-backend" stroke-width="1.4"/>
+<text x="501.5" y="294" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">master_data</text>
+<text x="501.5" y="310" class="t-muted" font-size="8" text-anchor="middle">主数据 · 冲突治理 · 合并</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r1_2" data-layer-kind="backend">
+<rect x="618" y="269" width="201" height="60" rx="6" class="c-mask"/>
+<rect x="618" y="269" width="201" height="60" rx="6" class="c-backend" stroke-width="1.4"/>
+<text x="718.5" y="294" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">workshop</text>
+<text x="718.5" y="310" class="t-muted" font-size="8" text-anchor="middle">现场问题闭环与导出</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r1_3" data-layer-kind="backend">
+<rect x="835" y="269" width="201" height="60" rx="6" class="c-mask"/>
+<rect x="835" y="269" width="201" height="60" rx="6" class="c-backend" stroke-width="1.4"/>
+<text x="935.5" y="294" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">daily_management</text>
+<text x="935.5" y="310" class="t-muted" font-size="8" text-anchor="middle">日清门面与拆分服务</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r1_4" data-layer-kind="backend">
+<rect x="1052" y="269" width="201" height="60" rx="6" class="c-mask"/>
+<rect x="1052" y="269" width="201" height="60" rx="6" class="c-backend" stroke-width="1.4"/>
+<text x="1152.5" y="294" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">dashboard</text>
+<text x="1152.5" y="310" class="t-muted" font-size="8" text-anchor="middle">工作台聚合</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r1_5" data-layer-kind="backend">
+<rect x="1269" y="269" width="201" height="60" rx="6" class="c-mask"/>
+<rect x="1269" y="269" width="201" height="60" rx="6" class="c-backend" stroke-width="1.4"/>
+<text x="1369.5" y="294" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">reports</text>
+<text x="1369.5" y="310" class="t-muted" font-size="8" text-anchor="middle">报表中心与批次追踪</text>
+</g>
+<rect x="40" y="370" width="1430" height="110" rx="10" class="c-region" stroke-width="1"/>
+<text x="54" y="394" class="t-cloud" font-size="10" font-weight="700">任务与运维</text>
+<g class="archify-layer-node" data-layer-node="r2_0" data-layer-kind="backend">
+<rect x="245" y="395" width="220" height="60" rx="6" class="c-mask"/>
+<rect x="245" y="395" width="220" height="60" rx="6" class="c-backend" stroke-width="1.4"/>
+<text x="355" y="420" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">jobs</text>
+<text x="355" y="436" class="t-muted" font-size="8" text-anchor="middle">任务创建 · 查询 · 取消 · 重试</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r2_1" data-layer-kind="backend">
+<rect x="481" y="395" width="220" height="60" rx="6" class="c-mask"/>
+<rect x="481" y="395" width="220" height="60" rx="6" class="c-backend" stroke-width="1.4"/>
+<text x="591" y="420" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">admin_data</text>
+<text x="591" y="436" class="t-muted" font-size="8" text-anchor="middle">管理数据 · 审计 · 设置</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r2_2" data-layer-kind="backend">
+<rect x="717" y="395" width="220" height="60" rx="6" class="c-mask"/>
+<rect x="717" y="395" width="220" height="60" rx="6" class="c-backend" stroke-width="1.4"/>
+<text x="827" y="420" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">backups</text>
+<text x="827" y="436" class="t-muted" font-size="8" text-anchor="middle">备份 · 校验 · 恢复</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r2_3" data-layer-kind="backend">
+<rect x="953" y="395" width="220" height="60" rx="6" class="c-mask"/>
+<rect x="953" y="395" width="220" height="60" rx="6" class="c-backend" stroke-width="1.4"/>
+<text x="1063" y="420" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">trash</text>
+<text x="1063" y="436" class="t-muted" font-size="8" text-anchor="middle">回收站与保留策略</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r2_4" data-layer-kind="backend">
+<rect x="1189" y="395" width="220" height="60" rx="6" class="c-mask"/>
+<rect x="1189" y="395" width="220" height="60" rx="6" class="c-backend" stroke-width="1.4"/>
+<text x="1299" y="420" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">maintenance</text>
+<text x="1299" y="436" class="t-muted" font-size="8" text-anchor="middle">定期清理 · 周报 · 月报</text>
+</g>
+<rect x="40" y="496" width="1430" height="110" rx="10" class="c-security-group" stroke-width="1"/>
+<text x="54" y="520" class="t-security" font-size="10" font-weight="700">持久化与桥接边界</text>
+<g class="archify-layer-node" data-layer-node="r3_0" data-layer-kind="external">
+<rect x="421" y="521" width="260" height="60" rx="6" class="c-mask"/>
+<rect x="421" y="521" width="260" height="60" rx="6" class="c-external" stroke-width="1.4" stroke-dasharray="4 3"/>
+<text x="551" y="546" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">SQLite</text>
+<text x="551" y="562" class="t-muted" font-size="8" text-anchor="middle">上一层容器 · 数据层</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r3_1" data-layer-kind="external">
+<rect x="697" y="521" width="260" height="60" rx="6" class="c-mask"/>
+<rect x="697" y="521" width="260" height="60" rx="6" class="c-external" stroke-width="1.4" stroke-dasharray="4 3"/>
+<text x="827" y="546" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">用户数据根</text>
+<text x="827" y="562" class="t-muted" font-size="8" text-anchor="middle">上一层容器 · 文件</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r3_2" data-layer-kind="external">
+<rect x="973" y="521" width="260" height="60" rx="6" class="c-mask"/>
+<rect x="973" y="521" width="260" height="60" rx="6" class="c-external" stroke-width="1.4" stroke-dasharray="4 3"/>
+<text x="1103" y="546" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">Web 任务运行器</text>
+<text x="1103" y="562" class="t-muted" font-size="8" text-anchor="middle">上一层容器 · 出口</text>
+</g>
+</g>
+<g class="archify-layer" data-archify-layer="" data-layer-target="task-runner" data-layer-label="Web 任务运行器" hidden aria-hidden="true">
+<title>Web 任务运行器 · 内部架构</title>
+<rect width="100%" height="100%" fill="url(#grid)"/>
+<rect x="40" y="42" width="44" height="3.5" rx="1.75" class="c-backend"/>
+<text x="40" y="62" class="t-muted" font-size="9" font-weight="600" letter-spacing="0.08em">第 2 层 · 容器内部架构</text>
+<text x="40" y="88" class="t-primary" font-size="16" font-weight="700">Web 任务运行器 · 内部架构</text>
+<text x="40" y="106" class="t-muted" font-size="9">双击空白区域或按 Esc 返回总览 · 滚轮缩放 · 拖动平移 · 导出沿用当前层</text>
+<path d="M 443 224 L 443 226 Q 443 231 448 231 L 694 231 Q 699 231 699 226 L 699 224" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/><g class="archify-layer-edge-label"><rect x="523.5" y="224" width="95" height="14" rx="3" class="c-mask"/><text x="571" y="234" class="t-muted" font-size="8" text-anchor="middle">创建 / 查询 / 取消</text></g>
+<path d="M 699 224 L 699 226 Q 699 231 704 231 L 950 231 Q 955 231 955 226 L 955 224" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="799" y="224" width="56" height="14" rx="3" class="c-mask"/><text x="827" y="234" class="t-muted" font-size="8" text-anchor="middle">持久化状态</text></g>
+<path d="M 699 224 L 699 226 Q 699 231 704 231 L 1206 231 Q 1211 231 1211 226 L 1211 224" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="931" y="224" width="48" height="14" rx="3" class="c-mask"/><text x="955" y="234" class="t-muted" font-size="8" text-anchor="middle">重试策略</text></g>
+<path d="M 699 224 C 699 261.8, 551 294.2, 551 332" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/><g class="archify-layer-edge-label"><rect x="713" y="271" width="71" height="14" rx="3" class="c-mask"/><text x="748.5" y="281" class="t-muted" font-size="8" text-anchor="middle">子进程 stdio</text></g>
+<path d="M 699 224 C 699 261.8, 827 294.2, 827 332" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="713" y="271" width="48" height="14" rx="3" class="c-mask"/><text x="737" y="281" class="t-muted" font-size="8" text-anchor="middle">特殊动作</text></g>
+<path d="M 551 392 L 551 394 Q 551 399 556 399 L 1098 399 Q 1103 399 1103 394 L 1103 392" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="791.5" y="392" width="71" height="14" rx="3" class="c-mask"/><text x="827" y="402" class="t-muted" font-size="8" text-anchor="middle">stdio 白名单</text></g>
+<path d="M 551 392 C 551 429.8, 551 462.2, 551 500" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="565" y="439" width="48" height="14" rx="3" class="c-mask"/><text x="589" y="449" class="t-muted" font-size="8" text-anchor="middle">事件转发</text></g>
+<path d="M 551 560 L 551 562 Q 551 567 556 567 L 822 567 Q 827 567 827 562 L 827 560" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="665" y="560" width="48" height="14" rx="3" class="c-mask"/><text x="689" y="570" class="t-muted" font-size="8" text-anchor="middle">结果投影</text></g>
+<path d="M 551 560 L 551 562 Q 551 567 556 567 L 1098 567 Q 1103 567 1103 562 L 1103 560" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="779.5" y="560" width="95" height="14" rx="3" class="c-mask"/><text x="827" y="570" class="t-muted" font-size="8" text-anchor="middle">产物 / 预览 / 下载</text></g>
+<path d="M 955 224 L 955 227 L 50 227 Q 44 227 44 233 L 44 440 Q 44 446 50 446 L 551 446 L 551 500" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="44" y="271" width="48" height="14" rx="3" class="c-mask"/><text x="68" y="281" class="t-muted" font-size="8" text-anchor="middle">完成事件</text></g>
+<rect x="40" y="118" width="1430" height="152" rx="10" class="c-region" stroke-width="1"/>
+<text x="54" y="142" class="t-cloud" font-size="10" font-weight="700">任务状态机</text>
+<g class="archify-layer-node" data-layer-node="r0_0" data-layer-kind="external">
+<rect x="323" y="164" width="240" height="60" rx="6" class="c-mask"/>
+<rect x="323" y="164" width="240" height="60" rx="6" class="c-external" stroke-width="1.4" stroke-dasharray="4 3"/>
+<text x="443" y="189" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">services.jobs</text>
+<text x="443" y="205" class="t-muted" font-size="8" text-anchor="middle">上一层容器 · 入口</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r0_1" data-layer-kind="backend">
+<rect x="579" y="164" width="240" height="60" rx="6" class="c-mask"/>
+<rect x="579" y="164" width="240" height="60" rx="6" class="c-backend" stroke-width="1.4"/>
+<text x="699" y="189" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">runner.py</text>
+<text x="699" y="205" class="t-muted" font-size="8" text-anchor="middle">持久化状态机 · 子进程生命周期</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r0_2" data-layer-kind="database">
+<rect x="835" y="164" width="240" height="60" rx="6" class="c-mask"/>
+<rect x="835" y="164" width="240" height="60" rx="6" class="c-database" stroke-width="1.4"/>
+<text x="955" y="189" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">jobs 状态同步</text>
+<text x="955" y="205" class="t-muted" font-size="8" text-anchor="middle">SQLite 任务表</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r0_3" data-layer-kind="backend">
+<rect x="1091" y="164" width="240" height="60" rx="6" class="c-mask"/>
+<rect x="1091" y="164" width="240" height="60" rx="6" class="c-backend" stroke-width="1.4"/>
+<text x="1211" y="189" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">取消与重试</text>
+<text x="1211" y="205" class="t-muted" font-size="8" text-anchor="middle">任务控制</text>
+</g>
+<rect x="40" y="286" width="1430" height="152" rx="10" class="c-region" stroke-width="1"/>
+<text x="54" y="310" class="t-cloud" font-size="10" font-weight="700">Core 桥接</text>
+<g class="archify-layer-node" data-layer-node="r1_0" data-layer-kind="backend">
+<rect x="421" y="332" width="260" height="60" rx="6" class="c-mask"/>
+<rect x="421" y="332" width="260" height="60" rx="6" class="c-backend" stroke-width="1.4"/>
+<text x="551" y="357" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">bridge.py</text>
+<text x="551" y="373" class="t-muted" font-size="8" text-anchor="middle">子进程调用 · 事件转发</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r1_1" data-layer-kind="backend">
+<rect x="697" y="332" width="260" height="60" rx="6" class="c-mask"/>
+<rect x="697" y="332" width="260" height="60" rx="6" class="c-backend" stroke-width="1.4"/>
+<text x="827" y="357" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">actions.py</text>
+<text x="827" y="373" class="t-muted" font-size="8" text-anchor="middle">Web 特殊动作编排</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r1_2" data-layer-kind="external">
+<rect x="973" y="332" width="260" height="60" rx="6" class="c-mask"/>
+<rect x="973" y="332" width="260" height="60" rx="6" class="c-external" stroke-width="1.4" stroke-dasharray="4 3"/>
+<text x="1103" y="357" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">core.tauri_bridge</text>
+<text x="1103" y="373" class="t-muted" font-size="8" text-anchor="middle">上一层容器 · 出口</text>
+</g>
+<rect x="40" y="454" width="1430" height="152" rx="10" class="c-region" stroke-width="1"/>
+<text x="54" y="478" class="t-cloud" font-size="10" font-weight="700">结果整理</text>
+<g class="archify-layer-node" data-layer-node="r2_0" data-layer-kind="backend">
+<rect x="421" y="500" width="260" height="60" rx="6" class="c-mask"/>
+<rect x="421" y="500" width="260" height="60" rx="6" class="c-backend" stroke-width="1.4"/>
+<text x="551" y="525" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">results.py</text>
+<text x="551" y="541" class="t-muted" font-size="8" text-anchor="middle">结果文件 · 预览 · 投影</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r2_1" data-layer-kind="backend">
+<rect x="697" y="500" width="260" height="60" rx="6" class="c-mask"/>
+<rect x="697" y="500" width="260" height="60" rx="6" class="c-backend" stroke-width="1.4"/>
+<text x="827" y="525" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">business_result 投影</text>
+<text x="827" y="541" class="t-muted" font-size="8" text-anchor="middle">结构化结果 · 可信度</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r2_2" data-layer-kind="external">
+<rect x="973" y="500" width="260" height="60" rx="6" class="c-mask"/>
+<rect x="973" y="500" width="260" height="60" rx="6" class="c-external" stroke-width="1.4" stroke-dasharray="4 3"/>
+<text x="1103" y="525" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">用户数据根</text>
+<text x="1103" y="541" class="t-muted" font-size="8" text-anchor="middle">上一层容器 · 出口</text>
+</g>
+</g>
+<g class="archify-layer" data-archify-layer="" data-layer-target="bridge" data-layer-label="core.tauri_bridge" hidden aria-hidden="true">
+<title>core.tauri_bridge · 内部架构</title>
+<rect width="100%" height="100%" fill="url(#grid)"/>
+<rect x="40" y="42" width="44" height="3.5" rx="1.75" class="c-backend"/>
+<text x="40" y="62" class="t-muted" font-size="9" font-weight="600" letter-spacing="0.08em">第 2 层 · 容器内部架构</text>
+<text x="40" y="88" class="t-primary" font-size="16" font-weight="700">core.tauri_bridge · 内部架构</text>
+<text x="40" y="106" class="t-muted" font-size="9">双击空白区域或按 Esc 返回总览 · 滚轮缩放 · 拖动平移 · 导出沿用当前层</text>
+<path d="M 669 332 C 669 294.2, 443 261.8, 443 224" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="683" y="271" width="84" height="14" rx="3" class="c-mask"/><text x="725" y="281" class="t-muted" font-size="8" text-anchor="middle">sidecar stdio</text></g>
+<path d="M 985 332 C 985 294.2, 443 261.8, 443 224" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="999" y="271" width="71" height="14" rx="3" class="c-mask"/><text x="1034.5" y="281" class="t-muted" font-size="8" text-anchor="middle">子进程 stdio</text></g>
+<path d="M 443 224 L 443 226 Q 443 231 448 231 L 694 231 Q 699 231 699 226 L 699 224" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="547" y="224" width="48" height="14" rx="3" class="c-mask"/><text x="571" y="234" class="t-muted" font-size="8" text-anchor="middle">载荷校验</text></g>
+<path d="M 699 224 L 699 226 Q 699 231 704 231 L 950 231 Q 955 231 955 226 L 955 224" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="799" y="224" width="56" height="14" rx="3" class="c-mask"/><text x="827" y="234" class="t-muted" font-size="8" text-anchor="middle">白名单匹配</text></g>
+<path d="M 699 224 L 699 226 Q 699 231 704 231 L 1206 231 Q 1211 231 1211 226 L 1211 224" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="931" y="224" width="48" height="14" rx="3" class="c-mask"/><text x="955" y="234" class="t-muted" font-size="8" text-anchor="middle">路径安全</text></g>
+<path d="M 955 224 L 955 227 L 50 227 Q 44 227 44 233 L 44 440 Q 44 446 50 446 L 551 446 L 551 500" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="44" y="271" width="68" height="14" rx="3" class="c-mask"/><text x="78" y="281" class="t-muted" font-size="8" text-anchor="middle">request_id</text></g>
+<path d="M 955 224 L 955 227 L 50 227 Q 44 227 44 233 L 44 440 Q 44 446 50 446 L 1103 446 L 1103 500" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/><g class="archify-layer-edge-label"><rect x="118" y="271" width="56" height="14" rx="3" class="c-mask"/><text x="146" y="281" class="t-muted" font-size="8" text-anchor="middle">白名单动作</text></g>
+<path d="M 1211 224 L 1211 227 L 50 227 Q 44 227 44 233 L 44 440 Q 44 446 50 446 L 1103 446 L 1103 500" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="44" y="439" width="48" height="14" rx="3" class="c-mask"/><text x="68" y="449" class="t-muted" font-size="8" text-anchor="middle">校验通过</text></g>
+<path d="M 827 500 C 827 462.2, 669 429.8, 669 392" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="841" y="439" width="64" height="14" rx="3" class="c-mask"/><text x="873" y="449" class="t-muted" font-size="8" text-anchor="middle">日志 / 进度</text></g>
+<path d="M 827 500 C 827 462.2, 985 429.8, 985 392" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="841" y="439" width="64" height="14" rx="3" class="c-mask"/><text x="873" y="449" class="t-muted" font-size="8" text-anchor="middle">日志 / 进度</text></g>
+<rect x="40" y="118" width="1430" height="152" rx="10" class="c-region" stroke-width="1"/>
+<text x="54" y="142" class="t-cloud" font-size="10" font-weight="700">协议与校验</text>
+<g class="archify-layer-node" data-layer-node="r0_0" data-layer-kind="backend">
+<rect x="323" y="164" width="240" height="60" rx="6" class="c-mask"/>
+<rect x="323" y="164" width="240" height="60" rx="6" class="c-backend" stroke-width="1.4"/>
+<text x="443" y="189" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">tauri_bridge.py</text>
+<text x="443" y="205" class="t-muted" font-size="8" text-anchor="middle">JSON stdin/stdout 协议</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r0_1" data-layer-kind="backend">
+<rect x="579" y="164" width="240" height="60" rx="6" class="c-mask"/>
+<rect x="579" y="164" width="240" height="60" rx="6" class="c-backend" stroke-width="1.4"/>
+<text x="699" y="189" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">tauri_bridge_actions.py</text>
+<text x="699" y="205" class="t-muted" font-size="8" text-anchor="middle">载荷校验 · 动作处理器</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r0_2" data-layer-kind="database">
+<rect x="835" y="164" width="240" height="60" rx="6" class="c-mask"/>
+<rect x="835" y="164" width="240" height="60" rx="6" class="c-database" stroke-width="1.4"/>
+<text x="955" y="189" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">_ACTIONS</text>
+<text x="955" y="205" class="t-muted" font-size="8" text-anchor="middle">动作白名单</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r0_3" data-layer-kind="backend">
+<rect x="1091" y="164" width="240" height="60" rx="6" class="c-mask"/>
+<rect x="1091" y="164" width="240" height="60" rx="6" class="c-backend" stroke-width="1.4"/>
+<text x="1211" y="189" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">路径校验</text>
+<text x="1211" y="205" class="t-muted" font-size="8" text-anchor="middle">归属 · 目录穿越</text>
+</g>
+<rect x="40" y="286" width="1430" height="152" rx="10" class="c-region" stroke-width="1"/>
+<text x="54" y="310" class="t-cloud" font-size="10" font-weight="700">调用方（两个入口）</text>
+<g class="archify-layer-node" data-layer-node="r1_0" data-layer-kind="external">
+<rect x="519" y="332" width="300" height="60" rx="6" class="c-mask"/>
+<rect x="519" y="332" width="300" height="60" rx="6" class="c-external" stroke-width="1.4" stroke-dasharray="4 3"/>
+<text x="669" y="357" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">Tauri Rust sidecar</text>
+<text x="669" y="373" class="t-muted" font-size="8" text-anchor="middle">上一层容器 · 入口</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r1_1" data-layer-kind="external">
+<rect x="835" y="332" width="300" height="60" rx="6" class="c-mask"/>
+<rect x="835" y="332" width="300" height="60" rx="6" class="c-external" stroke-width="1.4" stroke-dasharray="4 3"/>
+<text x="985" y="357" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">Web 任务运行器</text>
+<text x="985" y="373" class="t-muted" font-size="8" text-anchor="middle">上一层容器 · 入口</text>
+</g>
+<rect x="40" y="454" width="1430" height="152" rx="10" class="c-region" stroke-width="1"/>
+<text x="54" y="478" class="t-cloud" font-size="10" font-weight="700">输出与执行</text>
+<g class="archify-layer-node" data-layer-node="r2_0" data-layer-kind="backend">
+<rect x="421" y="500" width="260" height="60" rx="6" class="c-mask"/>
+<rect x="421" y="500" width="260" height="60" rx="6" class="c-backend" stroke-width="1.4"/>
+<text x="551" y="525" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">request_id 关联</text>
+<text x="551" y="541" class="t-muted" font-size="8" text-anchor="middle">请求 · 取消 · 日志</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r2_1" data-layer-kind="backend">
+<rect x="697" y="500" width="260" height="60" rx="6" class="c-mask"/>
+<rect x="697" y="500" width="260" height="60" rx="6" class="c-backend" stroke-width="1.4"/>
+<text x="827" y="525" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">stderr 日志 / 进度</text>
+<text x="827" y="541" class="t-muted" font-size="8" text-anchor="middle">逐行事件</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r2_2" data-layer-kind="external">
+<rect x="973" y="500" width="260" height="60" rx="6" class="c-mask"/>
+<rect x="973" y="500" width="260" height="60" rx="6" class="c-external" stroke-width="1.4" stroke-dasharray="4 3"/>
+<text x="1103" y="525" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">core 业务核心</text>
+<text x="1103" y="541" class="t-muted" font-size="8" text-anchor="middle">上一层容器 · 出口</text>
+</g>
+</g>
+<g class="archify-layer" data-archify-layer="" data-layer-target="core" data-layer-label="core/ 业务核心" hidden aria-hidden="true">
+<title>core/ 业务核心 · 内部架构</title>
+<rect width="100%" height="100%" fill="url(#grid)"/>
+<rect x="40" y="42" width="44" height="3.5" rx="1.75" class="c-backend"/>
+<text x="40" y="62" class="t-muted" font-size="9" font-weight="600" letter-spacing="0.08em">第 2 层 · 容器内部架构</text>
+<text x="40" y="88" class="t-primary" font-size="16" font-weight="700">core/ 业务核心 · 内部架构</text>
+<text x="40" y="106" class="t-muted" font-size="9">双击空白区域或按 Esc 返回总览 · 滚轮缩放 · 拖动平移 · 导出沿用当前层</text>
+
+<rect x="40" y="112" width="166" height="494" rx="8" class="c-region" stroke-width="1"/>
+<text x="123" y="130" class="t-cloud" font-size="9.5" font-weight="700" text-anchor="middle">入口与投影</text>
+<g class="archify-layer-node" data-layer-node="c0_0" data-layer-kind="backend">
+<rect x="45" y="150" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="45" y="150" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="123" y="164" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">tauri_bridge</text>
+<text x="123" y="178" class="t-muted" font-size="7.3" text-anchor="middle">桥接入口</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c0_1" data-layer-kind="backend">
+<rect x="45" y="195" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="45" y="195" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="123" y="209" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">business_result_core</text>
+<text x="123" y="223" class="t-muted" font-size="7.3" text-anchor="middle">结果投影入口</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c0_2" data-layer-kind="backend">
+<rect x="45" y="240" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="45" y="240" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="123" y="254" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">business_result_common</text>
+<text x="123" y="268" class="t-muted" font-size="7.3" text-anchor="middle">公共规范化</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c0_3" data-layer-kind="backend">
+<rect x="45" y="285" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="45" y="285" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="123" y="299" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">business_result_daily</text>
+<text x="123" y="313" class="t-muted" font-size="7.3" text-anchor="middle">到料 · 考勤 · 日清</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c0_4" data-layer-kind="backend">
+<rect x="45" y="330" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="45" y="330" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="123" y="344" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">business_result_operations</text>
+<text x="123" y="358" class="t-muted" font-size="7.3" text-anchor="middle">采购 · 运营</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c0_5" data-layer-kind="backend">
+<rect x="45" y="375" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="45" y="375" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="123" y="389" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">business_result_finance</text>
+<text x="123" y="403" class="t-muted" font-size="7.3" text-anchor="middle">财务比对</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c0_6" data-layer-kind="backend">
+<rect x="45" y="420" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="45" y="420" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="123" y="434" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">task_history</text>
+<text x="123" y="448" class="t-muted" font-size="7.3" text-anchor="middle">任务历史</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c0_7" data-layer-kind="backend">
+<rect x="45" y="465" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="45" y="465" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="123" y="479" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">updater</text>
+<text x="123" y="493" class="t-muted" font-size="7.3" text-anchor="middle">更新包校验下载</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c0_8" data-layer-kind="backend">
+<rect x="45" y="510" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="45" y="510" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="123" y="524" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">version</text>
+<text x="123" y="538" class="t-muted" font-size="7.3" text-anchor="middle">版本 · 构建日期</text>
+</g>
+<rect x="220" y="112" width="166" height="494" rx="8" class="c-region" stroke-width="1"/>
+<text x="303" y="130" class="t-cloud" font-size="9.5" font-weight="700" text-anchor="middle">共享基础</text>
+<g class="archify-layer-node" data-layer-node="c1_0" data-layer-kind="backend">
+<rect x="225" y="150" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="225" y="150" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="303" y="164" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">common_core</text>
+<text x="303" y="178" class="t-muted" font-size="7.3" text-anchor="middle">兼容门面</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c1_1" data-layer-kind="backend">
+<rect x="225" y="195" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="225" y="195" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="303" y="209" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">common_parsing</text>
+<text x="303" y="223" class="t-muted" font-size="7.3" text-anchor="middle">值解析 · 规范化</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c1_2" data-layer-kind="backend">
+<rect x="225" y="240" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="225" y="240" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="303" y="254" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">common_workbook</text>
+<text x="303" y="268" class="t-muted" font-size="7.3" text-anchor="middle">Excel 读取 · 安全</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c1_3" data-layer-kind="backend">
+<rect x="225" y="285" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="225" y="285" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="303" y="299" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">header_detect</text>
+<text x="303" y="313" class="t-muted" font-size="7.3" text-anchor="middle">表头与列角色</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c1_4" data-layer-kind="backend">
+<rect x="225" y="330" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="225" y="330" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="303" y="344" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">shape_detect</text>
+<text x="303" y="358" class="t-muted" font-size="7.3" text-anchor="middle">表格形态</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c1_5" data-layer-kind="backend">
+<rect x="225" y="375" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="225" y="375" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="303" y="389" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">paths</text>
+<text x="303" y="403" class="t-muted" font-size="7.3" text-anchor="middle">配置 · 输出目录</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c1_6" data-layer-kind="backend">
+<rect x="225" y="420" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="225" y="420" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="303" y="434" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">settings</text>
+<text x="303" y="448" class="t-muted" font-size="7.3" text-anchor="middle">运行设置</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c1_7" data-layer-kind="backend">
+<rect x="225" y="465" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="225" y="465" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="303" y="479" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">storage_lock</text>
+<text x="303" y="493" class="t-muted" font-size="7.3" text-anchor="middle">锁 · 临时 · 原子替换</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c1_8" data-layer-kind="backend">
+<rect x="225" y="510" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="225" y="510" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="303" y="524" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">incremental_cache</text>
+<text x="303" y="538" class="t-muted" font-size="7.3" text-anchor="middle">指纹与增量缓存</text>
+</g>
+<rect x="400" y="112" width="166" height="494" rx="8" class="c-region" stroke-width="1"/>
+<text x="483" y="130" class="t-cloud" font-size="9.5" font-weight="700" text-anchor="middle">考勤与到料</text>
+<g class="archify-layer-node" data-layer-node="c2_0" data-layer-kind="backend">
+<rect x="405" y="150" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="405" y="150" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="483" y="164" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">attendance_core</text>
+<text x="483" y="178" class="t-muted" font-size="7.3" text-anchor="middle">考勤填报</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c2_1" data-layer-kind="backend">
+<rect x="405" y="195" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="405" y="195" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="483" y="209" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">attendance_archive_core</text>
+<text x="483" y="223" class="t-muted" font-size="7.3" text-anchor="middle">月度归档</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c2_2" data-layer-kind="backend">
+<rect x="405" y="240" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="405" y="240" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="483" y="254" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">attendance_source</text>
+<text x="483" y="268" class="t-muted" font-size="7.3" text-anchor="middle">来源识别 · 合并</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c2_3" data-layer-kind="backend">
+<rect x="405" y="285" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="405" y="285" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="483" y="299" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">arrival_core</text>
+<text x="483" y="313" class="t-muted" font-size="7.3" text-anchor="middle">到料识别 · 报告</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c2_4" data-layer-kind="backend">
+<rect x="405" y="330" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="405" y="330" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="483" y="344" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">delivery_core</text>
+<text x="483" y="358" class="t-muted" font-size="7.3" text-anchor="middle">送货计划</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c2_5" data-layer-kind="backend">
+<rect x="405" y="375" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="405" y="375" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="483" y="389" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">shipping_review_core</text>
+<text x="483" y="403" class="t-muted" font-size="7.3" text-anchor="middle">发运评审</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c2_6" data-layer-kind="backend">
+<rect x="405" y="420" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="405" y="420" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="483" y="434" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">supplier_batch_core</text>
+<text x="483" y="448" class="t-muted" font-size="7.3" text-anchor="middle">供应商批次</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c2_7" data-layer-kind="backend">
+<rect x="405" y="465" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="405" y="465" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="483" y="479" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">daily_safety_check_core</text>
+<text x="483" y="493" class="t-muted" font-size="7.3" text-anchor="middle">安全检查日报</text>
+</g>
+<rect x="580" y="112" width="166" height="494" rx="8" class="c-region" stroke-width="1"/>
+<text x="663" y="130" class="t-cloud" font-size="9.5" font-weight="700" text-anchor="middle">采购与汇总</text>
+<g class="archify-layer-node" data-layer-node="c3_0" data-layer-kind="backend">
+<rect x="585" y="150" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="585" y="150" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="663" y="164" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">purchase_core</text>
+<text x="663" y="178" class="t-muted" font-size="7.3" text-anchor="middle">采购对账</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c3_1" data-layer-kind="backend">
+<rect x="585" y="195" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="585" y="195" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="663" y="209" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">purchase_plan_core</text>
+<text x="663" y="223" class="t-muted" font-size="7.3" text-anchor="middle">采购计划导入</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c3_2" data-layer-kind="backend">
+<rect x="585" y="240" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="585" y="240" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="663" y="254" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">purchase_reporting</text>
+<text x="663" y="268" class="t-muted" font-size="7.3" text-anchor="middle">采购报告</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c3_3" data-layer-kind="backend">
+<rect x="585" y="285" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="585" y="285" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="663" y="299" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">pivot_core</text>
+<text x="663" y="313" class="t-muted" font-size="7.3" text-anchor="middle">汇总主流程</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c3_4" data-layer-kind="backend">
+<rect x="585" y="330" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="585" y="330" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="663" y="344" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">pivot_analysis</text>
+<text x="663" y="358" class="t-muted" font-size="7.3" text-anchor="middle">透视结构识别</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c3_5" data-layer-kind="backend">
+<rect x="585" y="375" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="585" y="375" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="663" y="389" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">pivot_clustering</text>
+<text x="663" y="403" class="t-muted" font-size="7.3" text-anchor="middle">归并与聚合</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c3_6" data-layer-kind="backend">
+<rect x="585" y="420" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="585" y="420" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="663" y="434" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">pivot_reporting</text>
+<text x="663" y="448" class="t-muted" font-size="7.3" text-anchor="middle">可信度报告</text>
+</g>
+<rect x="760" y="112" width="166" height="494" rx="8" class="c-region" stroke-width="1"/>
+<text x="843" y="130" class="t-cloud" font-size="9.5" font-weight="700" text-anchor="middle">工时对账</text>
+<g class="archify-layer-node" data-layer-node="c4_0" data-layer-kind="backend">
+<rect x="765" y="150" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="765" y="150" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="843" y="164" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">reconcile_core</text>
+<text x="843" y="178" class="t-muted" font-size="7.3" text-anchor="middle">对账主流程</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c4_1" data-layer-kind="backend">
+<rect x="765" y="195" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="765" y="195" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="843" y="209" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">reconcile_sources</text>
+<text x="843" y="223" class="t-muted" font-size="7.3" text-anchor="middle">来源读取 · 识别</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c4_2" data-layer-kind="backend">
+<rect x="765" y="240" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="765" y="240" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="843" y="254" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">reconcile_zong</text>
+<text x="843" y="268" class="t-muted" font-size="7.3" text-anchor="middle">总表填写</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c4_3" data-layer-kind="backend">
+<rect x="765" y="285" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="765" y="285" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="843" y="299" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">reconcile_reporting</text>
+<text x="843" y="313" class="t-muted" font-size="7.3" text-anchor="middle">报告与可信度</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c4_4" data-layer-kind="backend">
+<rect x="765" y="330" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="765" y="330" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="843" y="344" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">reconcile_statement_core</text>
+<text x="843" y="358" class="t-muted" font-size="7.3" text-anchor="middle">对账单制作</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c4_5" data-layer-kind="backend">
+<rect x="765" y="375" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="765" y="375" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="843" y="389" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">invoice_core</text>
+<text x="843" y="403" class="t-muted" font-size="7.3" text-anchor="middle">发票统计</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c4_6" data-layer-kind="backend">
+<rect x="765" y="420" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="765" y="420" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="843" y="434" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">invoice_match_core</text>
+<text x="843" y="448" class="t-muted" font-size="7.3" text-anchor="middle">票货匹配</text>
+</g>
+<rect x="940" y="112" width="166" height="494" rx="8" class="c-region" stroke-width="1"/>
+<text x="1023" y="130" class="t-cloud" font-size="9.5" font-weight="700" text-anchor="middle">日清与现场问题</text>
+<g class="archify-layer-node" data-layer-node="c5_0" data-layer-kind="backend">
+<rect x="945" y="150" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="945" y="150" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="1023" y="164" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">daily_report_core</text>
+<text x="1023" y="178" class="t-muted" font-size="7.3" text-anchor="middle">日清兼容门面</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c5_1" data-layer-kind="backend">
+<rect x="945" y="195" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="945" y="195" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="1023" y="209" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">daily_report_snapshot</text>
+<text x="1023" y="223" class="t-muted" font-size="7.3" text-anchor="middle">快照总装</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c5_2" data-layer-kind="backend">
+<rect x="945" y="240" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="945" y="240" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="1023" y="254" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">daily_report_arrival</text>
+<text x="1023" y="268" class="t-muted" font-size="7.3" text-anchor="middle">到料投影</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c5_3" data-layer-kind="backend">
+<rect x="945" y="285" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="945" y="285" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="1023" y="299" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">daily_report_attendance</text>
+<text x="1023" y="313" class="t-muted" font-size="7.3" text-anchor="middle">考勤投影</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c5_4" data-layer-kind="backend">
+<rect x="945" y="330" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="945" y="330" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="1023" y="344" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">daily_report_workshop</text>
+<text x="1023" y="358" class="t-muted" font-size="7.3" text-anchor="middle">现场问题投影</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c5_5" data-layer-kind="backend">
+<rect x="945" y="375" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="945" y="375" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="1023" y="389" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">daily_report_production</text>
+<text x="1023" y="403" class="t-muted" font-size="7.3" text-anchor="middle">生产与订单</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c5_6" data-layer-kind="backend">
+<rect x="945" y="420" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="945" y="420" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="1023" y="434" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">daily_report_values</text>
+<text x="1023" y="448" class="t-muted" font-size="7.3" text-anchor="middle">值规范化</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c5_7" data-layer-kind="backend">
+<rect x="945" y="465" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="945" y="465" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="1023" y="479" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">daily_report_excel</text>
+<text x="1023" y="493" class="t-muted" font-size="7.3" text-anchor="middle">Excel 输出</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c5_8" data-layer-kind="backend">
+<rect x="945" y="510" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="945" y="510" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="1023" y="524" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">daily_production_plan_core</text>
+<text x="1023" y="538" class="t-muted" font-size="7.3" text-anchor="middle">生产计划识别</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c5_9" data-layer-kind="backend">
+<rect x="945" y="555" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="945" y="555" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="1023" y="569" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">workshop_issue_core</text>
+<text x="1023" y="583" class="t-muted" font-size="7.3" text-anchor="middle">五类模板 · 导出</text>
+</g>
+<rect x="1120" y="112" width="166" height="494" rx="8" class="c-region" stroke-width="1"/>
+<text x="1203" y="130" class="t-cloud" font-size="9.5" font-weight="700" text-anchor="middle">主数据与文件库</text>
+<g class="archify-layer-node" data-layer-node="c6_0" data-layer-kind="database">
+<rect x="1125" y="150" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="1125" y="150" width="156" height="36" rx="5" class="c-database" stroke-width="1.2"/>
+<text x="1203" y="164" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">material_catalog</text>
+<text x="1203" y="178" class="t-muted" font-size="7.3" text-anchor="middle">正式主数据库</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c6_1" data-layer-kind="backend">
+<rect x="1125" y="195" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="1125" y="195" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="1203" y="209" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">master_data_import_core</text>
+<text x="1203" y="223" class="t-muted" font-size="7.3" text-anchor="middle">学习 · 冲突治理</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c6_2" data-layer-kind="backend">
+<rect x="1125" y="240" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="1125" y="240" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="1203" y="254" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">mapping_store</text>
+<text x="1203" y="268" class="t-muted" font-size="7.3" text-anchor="middle">字段映射记录</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c6_3" data-layer-kind="backend">
+<rect x="1125" y="285" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="1125" y="285" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="1203" y="299" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">template_store</text>
+<text x="1203" y="313" class="t-muted" font-size="7.3" text-anchor="middle">模板族 · 迁移</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c6_4" data-layer-kind="backend">
+<rect x="1125" y="330" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="1125" y="330" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="1203" y="344" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">library</text>
+<text x="1203" y="358" class="t-muted" font-size="7.3" text-anchor="middle">文件库门面</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c6_5" data-layer-kind="backend">
+<rect x="1125" y="375" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="1125" y="375" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="1203" y="389" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">library_classification</text>
+<text x="1203" y="403" class="t-muted" font-size="7.3" text-anchor="middle">分类评分器</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c6_6" data-layer-kind="backend">
+<rect x="1125" y="420" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="1125" y="420" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="1203" y="434" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">library_scan</text>
+<text x="1203" y="448" class="t-muted" font-size="7.3" text-anchor="middle">有限扫描</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c6_7" data-layer-kind="backend">
+<rect x="1125" y="465" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="1125" y="465" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="1203" y="479" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">library_storage</text>
+<text x="1203" y="493" class="t-muted" font-size="7.3" text-anchor="middle">归档 · 回滚事务</text>
+</g>
+<rect x="1300" y="112" width="166" height="494" rx="8" class="c-region" stroke-width="1"/>
+<text x="1383" y="130" class="t-cloud" font-size="9.5" font-weight="700" text-anchor="middle">报表与文件工具</text>
+<g class="archify-layer-node" data-layer-node="c7_0" data-layer-kind="backend">
+<rect x="1305" y="150" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="1305" y="150" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="1383" y="164" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">report_center_core</text>
+<text x="1383" y="178" class="t-muted" font-size="7.3" text-anchor="middle">报表中心汇总</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c7_1" data-layer-kind="backend">
+<rect x="1305" y="195" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="1305" y="195" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="1383" y="209" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">compare_core</text>
+<text x="1383" y="223" class="t-muted" font-size="7.3" text-anchor="middle">表格比对</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c7_2" data-layer-kind="backend">
+<rect x="1305" y="240" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="1305" y="240" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="1383" y="254" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">currency_core</text>
+<text x="1383" y="268" class="t-muted" font-size="7.3" text-anchor="middle">金额大写</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c7_3" data-layer-kind="backend">
+<rect x="1305" y="285" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="1305" y="285" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="1383" y="299" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">excel_tools_core</text>
+<text x="1383" y="313" class="t-muted" font-size="7.3" text-anchor="middle">Excel / CSV 工具</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c7_4" data-layer-kind="backend">
+<rect x="1305" y="330" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="1305" y="330" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="1383" y="344" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">pdf_core</text>
+<text x="1383" y="358" class="t-muted" font-size="7.3" text-anchor="middle">PDF 工具</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c7_5" data-layer-kind="backend">
+<rect x="1305" y="375" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="1305" y="375" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="1383" y="389" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">rename_core</text>
+<text x="1383" y="403" class="t-muted" font-size="7.3" text-anchor="middle">批量重命名</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c7_6" data-layer-kind="backend">
+<rect x="1305" y="420" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="1305" y="420" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="1383" y="434" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">text_core</text>
+<text x="1383" y="448" class="t-muted" font-size="7.3" text-anchor="middle">文本工具</text>
+</g>
+<g class="archify-layer-node" data-layer-node="c7_7" data-layer-kind="backend">
+<rect x="1305" y="465" width="156" height="36" rx="5" class="c-mask"/>
+<rect x="1305" y="465" width="156" height="36" rx="5" class="c-backend" stroke-width="1.2"/>
+<text x="1383" y="479" class="t-primary" font-size="8.8" font-weight="600" text-anchor="middle">preview_core</text>
+<text x="1383" y="493" class="t-muted" font-size="7.3" text-anchor="middle">轻量预览</text>
+</g>
+</g>
+<g class="archify-layer" data-archify-layer="" data-layer-target="sqlite" data-layer-label="SQLite" hidden aria-hidden="true">
+<title>SQLite · 内部架构</title>
+<rect width="100%" height="100%" fill="url(#grid)"/>
+<rect x="40" y="42" width="44" height="3.5" rx="1.75" class="c-database"/>
+<text x="40" y="62" class="t-muted" font-size="9" font-weight="600" letter-spacing="0.08em">第 2 层 · 容器内部架构</text>
+<text x="40" y="88" class="t-primary" font-size="16" font-weight="700">SQLite · 内部架构</text>
+<text x="40" y="106" class="t-muted" font-size="9">双击空白区域或按 Esc 返回总览 · 滚轮缩放 · 拖动平移 · 导出沿用当前层</text>
+<path d="M 443 224 L 443 226 Q 443 231 448 231 L 694 231 Q 699 231 699 226 L 699 224" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="539.5" y="224" width="63" height="14" rx="3" class="c-mask"/><text x="571" y="234" class="t-muted" font-size="8" text-anchor="middle">DDL / 查询</text></g>
+<path d="M 955 224 L 955 226 Q 955 231 950 231 L 704 231 Q 699 231 699 226 L 699 224" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="803" y="224" width="48" height="14" rx="3" class="c-mask"/><text x="827" y="234" class="t-muted" font-size="8" text-anchor="middle">字段升级</text></g>
+<path d="M 1211 224 L 1211 226 Q 1211 231 1206 231 L 448 231 Q 443 231 443 226 L 443 224" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="799" y="224" width="56" height="14" rx="3" class="c-mask"/><text x="827" y="234" class="t-muted" font-size="8" text-anchor="middle">初始化事务</text></g>
+<path d="M 284.5 332 C 284.5 294.2, 443 261.8, 443 224" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="298.5" y="271" width="32" height="14" rx="3" class="c-mask"/><text x="314.5" y="281" class="t-muted" font-size="8" text-anchor="middle">SQL</text></g>
+<path d="M 501.5 332 C 501.5 294.2, 443 261.8, 443 224" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="515.5" y="271" width="32" height="14" rx="3" class="c-mask"/><text x="531.5" y="281" class="t-muted" font-size="8" text-anchor="middle">SQL</text></g>
+<path d="M 1152.5 332 C 1152.5 294.2, 443 261.8, 443 224" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="1166.5" y="271" width="32" height="14" rx="3" class="c-mask"/><text x="1182.5" y="281" class="t-muted" font-size="8" text-anchor="middle">SQL</text></g>
+<path d="M 443 224 L 443 227 L 50 227 Q 44 227 44 233 L 44 440 Q 44 446 50 446 L 669 446 L 669 500" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/><g class="archify-layer-edge-label"><rect x="44" y="271" width="32" height="14" rx="3" class="c-mask"/><text x="60" y="281" class="t-muted" font-size="8" text-anchor="middle">读写</text></g>
+<path d="M 985 500 C 985 462.2, 501.5 429.8, 501.5 392" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/><g class="archify-layer-edge-label"><rect x="999" y="439" width="48" height="14" rx="3" class="c-mask"/><text x="1023" y="449" class="t-muted" font-size="8" text-anchor="middle">任务状态</text></g>
+<rect x="40" y="118" width="1430" height="152" rx="10" class="c-region" stroke-width="1"/>
+<text x="54" y="142" class="t-cloud" font-size="10" font-weight="700">连接与演进</text>
+<g class="archify-layer-node" data-layer-node="r0_0" data-layer-kind="database">
+<rect x="323" y="164" width="240" height="60" rx="6" class="c-mask"/>
+<rect x="323" y="164" width="240" height="60" rx="6" class="c-database" stroke-width="1.4"/>
+<text x="443" y="189" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">connection.py</text>
+<text x="443" y="205" class="t-muted" font-size="8" text-anchor="middle">连接 · 事务 · 线程边界</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r0_1" data-layer-kind="database">
+<rect x="579" y="164" width="240" height="60" rx="6" class="c-mask"/>
+<rect x="579" y="164" width="240" height="60" rx="6" class="c-database" stroke-width="1.4"/>
+<text x="699" y="189" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">schema.py</text>
+<text x="699" y="205" class="t-muted" font-size="8" text-anchor="middle">完整表结构 · 索引 · 约束</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r0_2" data-layer-kind="database">
+<rect x="835" y="164" width="240" height="60" rx="6" class="c-mask"/>
+<rect x="835" y="164" width="240" height="60" rx="6" class="c-database" stroke-width="1.4"/>
+<text x="955" y="189" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">migrations.py</text>
+<text x="955" y="205" class="t-muted" font-size="8" text-anchor="middle">幂等字段升级</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r0_3" data-layer-kind="database">
+<rect x="1091" y="164" width="240" height="60" rx="6" class="c-mask"/>
+<rect x="1091" y="164" width="240" height="60" rx="6" class="c-database" stroke-width="1.4"/>
+<text x="1211" y="189" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">initializer.py</text>
+<text x="1211" y="205" class="t-muted" font-size="8" text-anchor="middle">建库 · 默认数据</text>
+</g>
+<rect x="40" y="286" width="1430" height="152" rx="10" class="c-region" stroke-width="1"/>
+<text x="54" y="310" class="t-cloud" font-size="10" font-weight="700">数据域</text>
+<g class="archify-layer-node" data-layer-node="r1_0" data-layer-kind="database">
+<rect x="184" y="332" width="201" height="60" rx="6" class="c-mask"/>
+<rect x="184" y="332" width="201" height="60" rx="6" class="c-database" stroke-width="1.4"/>
+<text x="284.5" y="357" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">账号与会话</text>
+<text x="284.5" y="373" class="t-muted" font-size="8" text-anchor="middle">审核 · 设备 · 撤销</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r1_1" data-layer-kind="database">
+<rect x="401" y="332" width="201" height="60" rx="6" class="c-mask"/>
+<rect x="401" y="332" width="201" height="60" rx="6" class="c-database" stroke-width="1.4"/>
+<text x="501.5" y="357" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">任务与审计</text>
+<text x="501.5" y="373" class="t-muted" font-size="8" text-anchor="middle">持久化任务 · 操作记录</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r1_2" data-layer-kind="database">
+<rect x="618" y="332" width="201" height="60" rx="6" class="c-mask"/>
+<rect x="618" y="332" width="201" height="60" rx="6" class="c-database" stroke-width="1.4"/>
+<text x="718.5" y="357" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">日清资料</text>
+<text x="718.5" y="373" class="t-muted" font-size="8" text-anchor="middle">事项 · 人员 · 到料 · 安全</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r1_3" data-layer-kind="database">
+<rect x="835" y="332" width="201" height="60" rx="6" class="c-mask"/>
+<rect x="835" y="332" width="201" height="60" rx="6" class="c-database" stroke-width="1.4"/>
+<text x="935.5" y="357" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">现场问题</text>
+<text x="935.5" y="373" class="t-muted" font-size="8" text-anchor="middle">草稿 · 发布 · 闭环</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r1_4" data-layer-kind="database">
+<rect x="1052" y="332" width="201" height="60" rx="6" class="c-mask"/>
+<rect x="1052" y="332" width="201" height="60" rx="6" class="c-database" stroke-width="1.4"/>
+<text x="1152.5" y="357" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">文件库与回收站</text>
+<text x="1152.5" y="373" class="t-muted" font-size="8" text-anchor="middle">团队数据库 · 保留策略</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r1_5" data-layer-kind="database">
+<rect x="1269" y="332" width="201" height="60" rx="6" class="c-mask"/>
+<rect x="1269" y="332" width="201" height="60" rx="6" class="c-database" stroke-width="1.4"/>
+<text x="1369.5" y="357" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">公告与消息</text>
+<text x="1369.5" y="373" class="t-muted" font-size="8" text-anchor="middle">定向消息 · 阅读状态</text>
+</g>
+<rect x="40" y="454" width="1430" height="152" rx="10" class="c-security-group" stroke-width="1"/>
+<text x="54" y="478" class="t-security" font-size="10" font-weight="700">边界</text>
+<g class="archify-layer-node" data-layer-node="r2_0" data-layer-kind="external">
+<rect x="519" y="500" width="300" height="60" rx="6" class="c-mask"/>
+<rect x="519" y="500" width="300" height="60" rx="6" class="c-external" stroke-width="1.4" stroke-dasharray="4 3"/>
+<text x="669" y="525" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">Web 领域服务</text>
+<text x="669" y="541" class="t-muted" font-size="8" text-anchor="middle">上一层容器 · SQL 读写</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r2_1" data-layer-kind="external">
+<rect x="835" y="500" width="300" height="60" rx="6" class="c-mask"/>
+<rect x="835" y="500" width="300" height="60" rx="6" class="c-external" stroke-width="1.4" stroke-dasharray="4 3"/>
+<text x="985" y="525" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">Web 任务运行器</text>
+<text x="985" y="541" class="t-muted" font-size="8" text-anchor="middle">上一层容器 · 任务状态</text>
+</g>
+</g>
+<g class="archify-layer" data-archify-layer="" data-layer-target="data-root" data-layer-label="用户数据根" hidden aria-hidden="true">
+<title>用户数据根 · 内部架构</title>
+<rect width="100%" height="100%" fill="url(#grid)"/>
+<rect x="40" y="42" width="44" height="3.5" rx="1.75" class="c-database"/>
+<text x="40" y="62" class="t-muted" font-size="9" font-weight="600" letter-spacing="0.08em">第 2 层 · 容器内部架构</text>
+<text x="40" y="88" class="t-primary" font-size="16" font-weight="700">用户数据根 · 内部架构</text>
+<text x="40" y="106" class="t-muted" font-size="9">双击空白区域或按 Esc 返回总览 · 滚轮缩放 · 拖动平移 · 导出沿用当前层</text>
+<path d="M 443 224 L 443 226 Q 443 231 448 231 L 694 231 Q 699 231 699 226 L 699 224" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="547" y="224" width="48" height="14" rx="3" class="c-mask"/><text x="571" y="234" class="t-muted" font-size="8" text-anchor="middle">隔离边界</text></g>
+<path d="M 699 224 C 699 261.8, 284.5 294.2, 284.5 332" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="713" y="271" width="48" height="14" rx="3" class="c-mask"/><text x="737" y="281" class="t-muted" font-size="8" text-anchor="middle">用户目录</text></g>
+<path d="M 955 224 C 955 261.8, 1369.5 294.2, 1369.5 332" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="969" y="271" width="48" height="14" rx="3" class="c-mask"/><text x="993" y="281" class="t-muted" font-size="8" text-anchor="middle">账号配置</text></g>
+<path d="M 1211 224 C 1211 261.8, 284.5 294.2, 284.5 332" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="1225" y="271" width="48" height="14" rx="3" class="c-mask"/><text x="1249" y="281" class="t-muted" font-size="8" text-anchor="middle">配额控制</text></g>
+<path d="M 551 500 C 551 462.2, 284.5 429.8, 284.5 392" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/><g class="archify-layer-edge-label"><rect x="565" y="439" width="64" height="14" rx="3" class="c-mask"/><text x="597" y="449" class="t-muted" font-size="8" text-anchor="middle">上传 / 下载</text></g>
+<path d="M 827 500 C 827 462.2, 718.5 429.8, 718.5 392" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="841" y="439" width="80" height="14" rx="3" class="c-mask"/><text x="881" y="449" class="t-muted" font-size="8" text-anchor="middle">运行目录 / 历史</text></g>
+<path d="M 1103 500 C 1103 462.2, 718.5 429.8, 718.5 392" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/><g class="archify-layer-edge-label"><rect x="1117" y="439" width="48" height="14" rx="3" class="c-mask"/><text x="1141" y="449" class="t-muted" font-size="8" text-anchor="middle">产物写入</text></g>
+<rect x="40" y="118" width="1430" height="152" rx="10" class="c-region" stroke-width="1"/>
+<text x="54" y="142" class="t-cloud" font-size="10" font-weight="700">隔离机制</text>
+<g class="archify-layer-node" data-layer-node="r0_0" data-layer-kind="database">
+<rect x="323" y="164" width="240" height="60" rx="6" class="c-mask"/>
+<rect x="323" y="164" width="240" height="60" rx="6" class="c-database" stroke-width="1.4"/>
+<text x="443" y="189" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">FYT_WEB_DATA</text>
+<text x="443" y="205" class="t-muted" font-size="8" text-anchor="middle">数据根目录</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r0_1" data-layer-kind="database">
+<rect x="579" y="164" width="240" height="60" rx="6" class="c-mask"/>
+<rect x="579" y="164" width="240" height="60" rx="6" class="c-database" stroke-width="1.4"/>
+<text x="699" y="189" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">按用户 ID 隔离</text>
+<text x="699" y="205" class="t-muted" font-size="8" text-anchor="middle">上传 · 缓存 · 输出 · 历史</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r0_2" data-layer-kind="database">
+<rect x="835" y="164" width="240" height="60" rx="6" class="c-mask"/>
+<rect x="835" y="164" width="240" height="60" rx="6" class="c-database" stroke-width="1.4"/>
+<text x="955" y="189" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">FYT_CONFIG_PATH</text>
+<text x="955" y="205" class="t-muted" font-size="8" text-anchor="middle">账号隔离运行目录</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r0_3" data-layer-kind="backend">
+<rect x="1091" y="164" width="240" height="60" rx="6" class="c-mask"/>
+<rect x="1091" y="164" width="240" height="60" rx="6" class="c-backend" stroke-width="1.4"/>
+<text x="1211" y="189" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">上传句柄 / 配额</text>
+<text x="1211" y="205" class="t-muted" font-size="8" text-anchor="middle">流式写入 · 限额</text>
+</g>
+<rect x="40" y="286" width="1430" height="152" rx="10" class="c-region" stroke-width="1"/>
+<text x="54" y="310" class="t-cloud" font-size="10" font-weight="700">内容域</text>
+<g class="archify-layer-node" data-layer-node="r1_0" data-layer-kind="database">
+<rect x="184" y="332" width="201" height="60" rx="6" class="c-mask"/>
+<rect x="184" y="332" width="201" height="60" rx="6" class="c-database" stroke-width="1.4"/>
+<text x="284.5" y="357" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">上传文件</text>
+<text x="284.5" y="373" class="t-muted" font-size="8" text-anchor="middle">业务表格 · 资料</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r1_1" data-layer-kind="database">
+<rect x="401" y="332" width="201" height="60" rx="6" class="c-mask"/>
+<rect x="401" y="332" width="201" height="60" rx="6" class="c-database" stroke-width="1.4"/>
+<text x="501.5" y="357" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">缓存文件</text>
+<text x="501.5" y="373" class="t-muted" font-size="8" text-anchor="middle">增量指纹缓存</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r1_2" data-layer-kind="database">
+<rect x="618" y="332" width="201" height="60" rx="6" class="c-mask"/>
+<rect x="618" y="332" width="201" height="60" rx="6" class="c-database" stroke-width="1.4"/>
+<text x="718.5" y="357" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">任务输出</text>
+<text x="718.5" y="373" class="t-muted" font-size="8" text-anchor="middle">正式下载文件</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r1_3" data-layer-kind="database">
+<rect x="835" y="332" width="201" height="60" rx="6" class="c-mask"/>
+<rect x="835" y="332" width="201" height="60" rx="6" class="c-database" stroke-width="1.4"/>
+<text x="935.5" y="357" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">任务历史</text>
+<text x="935.5" y="373" class="t-muted" font-size="8" text-anchor="middle">结构化预览</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r1_4" data-layer-kind="database">
+<rect x="1052" y="332" width="201" height="60" rx="6" class="c-mask"/>
+<rect x="1052" y="332" width="201" height="60" rx="6" class="c-database" stroke-width="1.4"/>
+<text x="1152.5" y="357" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">回收站</text>
+<text x="1152.5" y="373" class="t-muted" font-size="8" text-anchor="middle">删除与保留</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r1_5" data-layer-kind="database">
+<rect x="1269" y="332" width="201" height="60" rx="6" class="c-mask"/>
+<rect x="1269" y="332" width="201" height="60" rx="6" class="c-database" stroke-width="1.4"/>
+<text x="1369.5" y="357" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">配置与临时目录</text>
+<text x="1369.5" y="373" class="t-muted" font-size="8" text-anchor="middle">账号级配置</text>
+</g>
+<rect x="40" y="454" width="1430" height="152" rx="10" class="c-security-group" stroke-width="1"/>
+<text x="54" y="478" class="t-security" font-size="10" font-weight="700">边界</text>
+<g class="archify-layer-node" data-layer-node="r2_0" data-layer-kind="external">
+<rect x="421" y="500" width="260" height="60" rx="6" class="c-mask"/>
+<rect x="421" y="500" width="260" height="60" rx="6" class="c-external" stroke-width="1.4" stroke-dasharray="4 3"/>
+<text x="551" y="525" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">Web 领域服务</text>
+<text x="551" y="541" class="t-muted" font-size="8" text-anchor="middle">上一层容器 · 上传下载</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r2_1" data-layer-kind="external">
+<rect x="697" y="500" width="260" height="60" rx="6" class="c-mask"/>
+<rect x="697" y="500" width="260" height="60" rx="6" class="c-external" stroke-width="1.4" stroke-dasharray="4 3"/>
+<text x="827" y="525" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">Web 任务运行器</text>
+<text x="827" y="541" class="t-muted" font-size="8" text-anchor="middle">上一层容器 · 运行目录</text>
+</g>
+<g class="archify-layer-node" data-layer-node="r2_2" data-layer-kind="external">
+<rect x="973" y="500" width="260" height="60" rx="6" class="c-mask"/>
+<rect x="973" y="500" width="260" height="60" rx="6" class="c-external" stroke-width="1.4" stroke-dasharray="4 3"/>
+<text x="1103" y="525" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">core 任务</text>
+<text x="1103" y="541" class="t-muted" font-size="8" text-anchor="middle">上一层容器 · 产物写入</text>
+</g>
+</g>
       </svg>
       <p class="intent-trace-status no-print" id="intent-trace-status" role="status" aria-live="polite" aria-atomic="true"></p>
       <div class="share-chapter-cue no-print" id="share-chapter-cue" hidden role="status" aria-live="polite">
@@ -5797,6 +7377,29 @@
         var autoTheme = opts.autoTheme === true;
         var svg = document.querySelector('.diagram-container svg');
         var clone = svg.cloneNode(true);
+        /* 层级钻取：导出时只保留当前可见层，并清理运行时钻取提示 */
+        Array.prototype.forEach.call(clone.querySelectorAll('[data-archify-drill-badge]'), function (el) { el.remove(); });
+        Array.prototype.forEach.call(clone.querySelectorAll('[data-drill-target]'), function (el) { el.removeAttribute('data-drill-target'); });
+        (function () {
+          var layerHost = document.querySelector('.diagram-container');
+          var layerState = layerHost ? (layerHost.getAttribute('data-layer') || 'overview') : 'overview';
+          var layerGroups = Array.prototype.slice.call(clone.querySelectorAll(':scope > [data-archify-layer]'));
+          if (layerState === 'overview') {
+            layerGroups.forEach(function (el) { el.remove(); });
+          } else {
+            var target = layerState.indexOf('detail-') === 0 ? layerState.slice('detail-'.length) : null;
+            layerGroups.forEach(function (el) {
+              if (el.getAttribute('data-layer-target') !== target) el.remove();
+            });
+            if (target) {
+              Array.prototype.slice.call(clone.children).forEach(function (child) {
+                var tag = String(child.tagName || '').toLowerCase();
+                if (tag === 'defs' || tag === 'title' || tag === 'desc') return;
+                if (!child.hasAttribute('data-archify-layer')) child.remove();
+              });
+            }
+          }
+        })();
 
         // View transforms and neighborhood focus are HTML exploration state,
         // never part of a downloaded full-diagram artifact.
@@ -13754,6 +15357,133 @@
         Archify.presentation.exit();
       }
     });
+  </script>
+
+  <script>
+
+    /* ============================================================
+       Layer drill-down — 双击总览容器进入第二层内部架构
+       ============================================================ */
+    (function () {
+      var container = document.querySelector('.diagram-container');
+      var svg = container && container.querySelector('svg');
+      if (!container || !svg) return;
+      var NS = 'http://www.w3.org/2000/svg';
+      var bar = document.getElementById('archify-layer-bar');
+      var backBtn = document.getElementById('archify-layer-back');
+      var crumb = document.getElementById('archify-layer-current');
+      var hint = document.getElementById('archify-overview-hint');
+      var svgTitle = document.getElementById('archify-diagram-title');
+      var svgDesc = document.getElementById('archify-diagram-description');
+      var baseDocTitle = document.title;
+      var baseSvgTitle = svgTitle ? svgTitle.textContent : '';
+      var baseSvgDesc = svgDesc ? svgDesc.textContent : '';
+      var LABELS = { 'browser': '用户浏览器', 'web-react': 'Web React', 'tauri-react': 'Tauri 桌面端', 'rust-layer': 'Rust 命令层', 'cloudflared': 'Cloudflare Tunnel', 'http': 'Web HTTP 层', 'services': 'Web 领域服务', 'task-runner': 'Web 任务运行器', 'bridge': 'core.tauri_bridge', 'core': 'core/ 业务核心', 'sqlite': 'SQLite', 'data-root': '用户数据根' };
+      var EXPLORE_BUTTONS = ['btn-route-probe', 'btn-overview-map', 'btn-semantic-lens', 'btn-node-finder'];
+
+      function layerState() { return container.getAttribute('data-layer') || 'overview'; }
+      function isDetail() { return layerState().indexOf('detail-') === 0; }
+      function setExploreDisabled(disabled) {
+        EXPLORE_BUTTONS.forEach(function (id) {
+          var btn = document.getElementById(id);
+          if (btn) btn.disabled = disabled;
+        });
+      }
+      function resetCamera() {
+        if (Archify.view && typeof Archify.view.reset === 'function') Archify.view.reset({ automatic: true });
+      }
+      function closePanels() {
+        try { if (Archify.focus && typeof Archify.focus.clear === 'function') Archify.focus.clear({ updateUrl: false, preserveView: true }); } catch (_) {}
+        try { if (Archify.intentTrace && typeof Archify.intentTrace.clear === 'function') Archify.intentTrace.clear({ announce: false }); } catch (_) {}
+        try { if (Archify.radar && typeof Archify.radar.close === 'function') Archify.radar.close(); } catch (_) {}
+        try { if (Archify.presentation && typeof Archify.presentation.exit === 'function') Archify.presentation.exit(); } catch (_) {}
+        try { if (Archify.finder && typeof Archify.finder.close === 'function') Archify.finder.close(); } catch (_) {}
+        try { if (Archify.routeProbe && typeof Archify.routeProbe.clear === 'function') Archify.routeProbe.clear({ updateUrl: false, restoreFocus: false }); } catch (_) {}
+        try { if (Archify.semanticLens && typeof Archify.semanticLens.close === 'function') Archify.semanticLens.close(); } catch (_) {}
+      }
+      function enter(id) {
+        if (!LABELS[id] || layerState() === 'detail-' + id) return;
+        closePanels();
+        container.setAttribute('data-layer', 'detail-' + id);
+        if (bar) bar.hidden = false;
+        if (crumb) crumb.textContent = LABELS[id] + ' · 内部架构';
+        if (hint) hint.hidden = true;
+        document.title = LABELS[id] + ' · 内部架构';
+        if (svgTitle) svgTitle.textContent = LABELS[id] + ' · 内部架构';
+        if (svgDesc) svgDesc.textContent = '第二层：' + LABELS[id] + ' 容器内部架构';
+        setExploreDisabled(true);
+        resetCamera();
+      }
+      function exit() {
+        if (!isDetail()) return;
+        container.setAttribute('data-layer', 'overview');
+        if (bar) bar.hidden = true;
+        if (crumb) crumb.textContent = '';
+        if (hint) hint.hidden = false;
+        document.title = baseDocTitle;
+        if (svgTitle) svgTitle.textContent = baseSvgTitle;
+        if (svgDesc) svgDesc.textContent = baseSvgDesc;
+        setExploreDisabled(false);
+        resetCamera();
+      }
+
+      Object.keys(LABELS).forEach(function (id) {
+        var node = svg.querySelector('[data-node-id="' + id + '"]');
+        if (!node) return;
+        node.setAttribute('data-drill-target', id);
+        try {
+          var bbox = node.getBBox();
+          var bw = 52, bh = 13;
+          var badge = document.createElementNS(NS, 'g');
+          badge.setAttribute('class', 'archify-drill-badge');
+          badge.setAttribute('data-archify-drill-badge', '');
+          badge.setAttribute('aria-hidden', 'true');
+          badge.setAttribute('transform', 'translate(' + (bbox.x + bbox.width - bw - 4) + ' ' + (bbox.y + bbox.height - bh - 4) + ')');
+          var badgeRect = document.createElementNS(NS, 'rect');
+          badgeRect.setAttribute('width', bw);
+          badgeRect.setAttribute('height', bh);
+          badgeRect.setAttribute('rx', 3);
+          var badgeText = document.createElementNS(NS, 'text');
+          badgeText.setAttribute('x', bw / 2);
+          badgeText.setAttribute('y', 9.5);
+          badgeText.setAttribute('text-anchor', 'middle');
+          badgeText.textContent = '双击展开';
+          badge.appendChild(badgeRect);
+          badge.appendChild(badgeText);
+          node.appendChild(badge);
+        } catch (_) {}
+      });
+
+      svg.addEventListener('dblclick', function (event) {
+        var node = event.target.closest('[data-drill-target]');
+        if (node) {
+          event.preventDefault();
+          event.stopPropagation();
+          enter(node.getAttribute('data-drill-target'));
+          return;
+        }
+        if (isDetail()) {
+          event.preventDefault();
+          exit();
+        }
+      });
+      svg.addEventListener('keydown', function (event) {
+        if (event.key !== 'Enter' || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
+        var node = event.target.closest('[data-drill-target]');
+        if (node && !isDetail()) {
+          event.preventDefault();
+          enter(node.getAttribute('data-drill-target'));
+        }
+      });
+      if (backBtn) backBtn.addEventListener('click', function () { exit(); });
+      document.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape' && isDetail()) {
+          event.preventDefault();
+          exit();
+        }
+      });
+    })();
+
   </script>
 </body>
 </html>
