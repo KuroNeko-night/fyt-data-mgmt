@@ -24,8 +24,8 @@ import "./workflows.css";
 type FieldKind = "text" | "select" | "checkbox" | "textarea" | "month";
 /** 单个可调参数：键名与界面标签一致，`choices` 使用“值、文案”二元组。 */
 type OptionField = { key: string; label: string; kind: FieldKind; value: string | boolean; choices?: Array<[string, string]>; placeholder?: string; optional?: boolean };
-/** 一个文件上传组：描述界面文案，`accept` 限定文件类型，`optional` 不参与启动校验。 */
-type FileGroup = { key: string; label: string; description: string; multiple?: boolean; optional?: boolean; accept: string };
+/** 一个文件上传组：描述界面文案，`accept` 限定文件类型，`directory` 表示选择整个文件夹。 */
+type FileGroup = { key: string; label: string; description: string; multiple?: boolean; directory?: boolean; optional?: boolean; accept: string };
 /** 单个业务模块的前端规格：执行动作、可选的复核动作、文件组和参数定义。 */
 type FeatureSpec = { action: string; reviewAction?: string; reviewOnly?: boolean; files: FileGroup[]; options: OptionField[]; runLabel: string; reviewLabel?: string };
 
@@ -110,7 +110,7 @@ const SPECS: Record<string, FeatureSpec> = {
     { key: "paths", label: "采购清单文件", description: "上传各供应商的采购清单明细（可多选），扫描后勾选批次生成对账单。", multiple: true, accept: ".xlsx,.xlsm" },
   ], options: [] },
   invoice: { action: "web.invoice", reviewAction: "web.invoice.review", reviewLabel: "逐张确认后生成", runLabel: "生成发票台账", files: [
-    { key: "paths", label: "PDF 发票", description: "可一次上传同一月份的多张 PDF 发票。", multiple: true, accept: ".pdf" },
+    { key: "paths", label: "发票资料文件夹", description: "选择包含同一月份 PDF 发票的文件夹，系统会递归扫描其中全部 PDF 并识别增值税专用发票。", directory: true, accept: ".pdf" },
   ], options: [{ key: "month", label: "统计月份", kind: "month", value: "" }] },
   invoice_match: { action: "invoice_match.run", runLabel: "开始票货匹配", files: [
     { key: "invoice_paths", label: "发票台账", description: "发票统计生成的月度台账，读取销售方与价税合计。", multiple: true, accept: ".xlsx,.xlsm" },
@@ -183,19 +183,49 @@ function jobStatusKey(job: WebJob): StatusKey {
   return "interrupted";
 }
 
+/** 浏览器目录选择给出的 File 额外带相对路径，用于显示和去重。 */
+type DirectoryFile = File & { webkitRelativePath?: string };
+
 /**
- * 受控文件输入组件，支持选择器和浏览器拖放。
- * 多选文件按“文件名＋大小”去重，保留当前文件在前、新文件在后的稳定顺序。
+ * 受控文件输入组件，支持文件/文件夹选择器和浏览器拖放。
+ * 多选文件按稳定键去重，保留当前文件在前、新文件在后的顺序。
  */
 function FileField({ config, files, onChange }: { config: FileGroup; files: File[]; onChange: (files: File[]) => void }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [dragging, setDragging] = useState(false);
-  /** 合并新文件并遵守当前上传组的单选或多选约束。 */
-  function accept(next: File[]) { onChange(config.multiple ? Array.from(new Map([...files, ...next].map((file) => [`${file.name}-${file.size}`, file])).values()) : next.slice(0, 1)); }  // 按名称与大小去重并保持已有文件在前
+
+  useEffect(() => {
+    // React 类型没有 webkitdirectory，目录选择属性需要直接写到原生节点。
+    const input = inputRef.current;
+    if (!input) return;
+    if (config.directory) {
+      input.setAttribute("webkitdirectory", "");
+      input.setAttribute("directory", "");
+    } else {
+      input.removeAttribute("webkitdirectory");
+      input.removeAttribute("directory");
+    }
+  }, [config.directory]);
+
+  function fileKey(file: File) {
+    const relative = (file as DirectoryFile).webkitRelativePath;
+    return relative ? `${relative}-${file.size}` : `${file.name}-${file.size}`;  // 文件夹内同名文件用相对路径区分
+  }
+
+  function relativePath(file: File) {
+    return (file as DirectoryFile).webkitRelativePath || file.name;
+  }
+
+  /** 合并新文件：文件夹模式保留全部内容，普通模式遵守单选或多选约束。 */
+  function accept(next: File[]) {
+    const merged = config.directory ? next : config.multiple ? [...files, ...next] : next.slice(0, 1);
+    onChange(Array.from(new Map(merged.map((file) => [fileKey(file), file])).values()));
+  }
+
   return <section className="fyt-flow-file-field" data-dragging={dragging ? "true" : undefined} data-has-files={files.length ? "true" : undefined} onDragOver={(event) => { event.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={(event) => { event.preventDefault(); setDragging(false); accept(Array.from(event.dataTransfer.files)); }}>
-    <div className="fyt-flow-file-heading"><div><strong className="fyt-flow-file-title">{config.label}{config.optional ? <span className="fyt-flow-optional">可选</span> : null}</strong><p>{config.description}</p></div><Button variant="secondary" size="sm" type="button" onClick={() => inputRef.current?.click()}><Icon name="plus" size={15} />选择文件</Button></div>
-    <input ref={inputRef} className="fyt-flow-file-input" type="file" accept={config.accept === "*" ? undefined : config.accept} multiple={config.multiple} onChange={(event) => { accept(Array.from(event.target.files || [])); event.currentTarget.value = ""; }} />
-    {files.length ? <div className="fyt-flow-file-list">{files.map((file, index) => <div className="fyt-flow-file-row" key={`${file.name}-${file.size}-${index}`}><Icon name="file" size={16} /><span><strong title={file.name}>{file.name}</strong><small>{formatSize(file.size)}</small></span><IconButton className="fyt-flow-file-remove" size="sm" label={`移除 ${file.name}`} onClick={() => onChange(files.filter((_, itemIndex) => itemIndex !== index))}><Icon name="x" size={15} /></IconButton></div>)}</div> : <div className="fyt-flow-dropzone"><Icon name="plus" size={17} /><span>拖放到此处，或选择本机文件</span></div>}
+    <div className="fyt-flow-file-heading"><div><strong className="fyt-flow-file-title">{config.label}{config.optional ? <span className="fyt-flow-optional">可选</span> : null}</strong><p>{config.description}</p></div><Button variant="secondary" size="sm" type="button" onClick={() => inputRef.current?.click()}><Icon name="plus" size={15} />选择{config.directory ? "文件夹" : "文件"}</Button></div>
+    <input ref={inputRef} className="fyt-flow-file-input" type="file" accept={config.accept === "*" ? undefined : config.accept} multiple={config.directory ? undefined : config.multiple} onChange={(event) => { accept(Array.from(event.target.files || [])); event.currentTarget.value = ""; }} />
+    {files.length ? <div className="fyt-flow-file-list">{files.map((file, index) => <div className="fyt-flow-file-row" key={`${fileKey(file)}-${index}`}><Icon name="file" size={16} /><span><strong title={relativePath(file)}>{file.name}</strong><small>{config.directory && (file as DirectoryFile).webkitRelativePath ? `${relativePath(file)} · ${formatSize(file.size)}` : formatSize(file.size)}</small></span><IconButton className="fyt-flow-file-remove" size="sm" label={`移除 ${file.name}`} onClick={() => onChange(files.filter((_, itemIndex) => itemIndex !== index))}><Icon name="x" size={15} /></IconButton></div>)}</div> : <div className="fyt-flow-dropzone"><Icon name="plus" size={17} /><span>{config.directory ? "拖放文件夹到此处，或选择本机文件夹" : "拖放到此处，或选择本机文件"}</span></div>}
   </section>;
 }
 
