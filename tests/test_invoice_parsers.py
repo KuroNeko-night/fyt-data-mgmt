@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 """invoice_core 纯解析函数单元测试（税率/金额/销售方/号码，无需 PDF）。"""
+import os
+import tempfile
 import unittest
 
 from core import invoice_core as ic
@@ -107,6 +109,24 @@ class TestFilterMonth(unittest.TestCase):
     def test_no_filter_when_empty(self):
         items = [ic.Invoice(date="2026-06-01"), ic.Invoice(date="2026-05-30")]
         self.assertEqual(len(ic.filter_month(items, "")), 2)  # 空月份不过滤
+
+
+class TestGenerateSuspectSummary(unittest.TestCase):
+    """验证最终生成结果携带不含绝对路径的漏识别明细。"""
+
+    def test_suspect_summary_uses_basename(self):
+        with tempfile.TemporaryDirectory(prefix="fyt_invoice_summary_") as tmp:
+            result = ic.ScanResult([], [(os.path.join(tmp, "漏识别发票.pdf"), "解析失败")])
+            output = ic.generate(
+                result,
+                [{"num": "12345678", "date": "2026-08-19", "seller": "供应商甲",
+                  "item": "", "amount": 100.0, "tax": 13.0, "total": 113.0,
+                  "rate": 0.13, "note": ""}],
+                "2026-08",
+                out_dir=os.path.join(tmp, "输出"),
+            )
+            self.assertEqual(output["suspects"], 1)
+            self.assertEqual(output["suspect_summary"], [{"file": "漏识别发票.pdf", "reason": "解析失败"}])  # 只回传文件名和原因
 
 
 if __name__ == "__main__":

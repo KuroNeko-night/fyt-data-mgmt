@@ -628,5 +628,11 @@ def generate(result, rows, ym, out_dir=None, log=None, progress=None):
     prog.stage("review")
     review = export_review_folder(result, out_dir, log=log)
     prog.done()
+    # 只给前端文件名和原因，绝对路径仍保留在 Core/任务结果内部，不进入展示投影。
+    suspect_summary = [
+        {"file": os.path.basename(path), "reason": reason}
+        for path, reason in result.suspects
+    ]
     return {"xlsx": xlsx, "review_dir": review, "out_dir": out_dir,
-            "count": len(rows), "suspects": len(result.suspects)}
+            "count": len(rows), "suspects": len(result.suspects),
+            "suspect_summary": suspect_summary}

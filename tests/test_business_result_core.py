@@ -189,6 +189,23 @@ class BusinessResultCoreTests(unittest.TestCase):
         self.assertEqual(section["rows"][0], {"supplier": "供应商甲", "status": "无票采购"})  # 单边采购
         self.assertEqual(section["rows"][1], {"supplier": "供应商乙", "status": "有发票无采购"})  # 单边发票
 
+    def test_invoice_projection_lists_missed_files_for_manual_review(self):
+        """发票统计结果应把漏识别文件与原因整理成前端可复查的明细。"""
+
+        presentation = business_result_core.present("invoice.generate", {
+            "count": 3,
+            "suspects": 2,
+            "suspect_summary": [
+                {"file": r"C:\upload\扫描件A.pdf", "reason": "第1页无文本层(疑似扫描件),请人工核对"},
+                {"file": r"C:\upload\扫描件B.pdf", "reason": "解析失败"},
+            ],
+        })
+        section = presentation["sections"][0]
+        self.assertEqual(section["title"], "漏识别与跳过明细")
+        self.assertEqual(section["rows"][0]["file"], "扫描件A.pdf")  # 只显示文件名，不暴露绝对路径
+        self.assertEqual(section["rows"][1]["reason"], "解析失败")
+        self.assertEqual(presentation["notices"][0]["title"], "人工补录入口")  # 提示可重新处理并补录
+
     def test_compare_quality_does_not_penalize_real_business_differences(self):
         """真实表间差异属于业务结果，不能被误算成解析可信度下降。"""
 

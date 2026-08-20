@@ -35,26 +35,45 @@ def _present_invoice(value: object, limit: int) -> dict[str, object] | None:
     suspects = _integer(result.get("suspects"))
     total = count + suspects
     score = round(100 - _ratio(suspects, max(total, 1)) * 50)  # 存疑项最多扣一半分，已人工确认金额不在此评分。
+    suspect_rows = [
+        {"file": _basename(_mapping(item).get("file")), "reason": _text(_mapping(item).get("reason"))}
+        for item in _sequence(result.get("suspect_summary"))
+    ]
+    suspect_rows = [row for row in suspect_rows if row["file"] or row["reason"]]
+    sections = [
+        _section(
+            "suspects",
+            "漏识别与跳过明细",
+            [("file", "文件"), ("reason", "原因")],
+            suspect_rows,
+            description="这些 PDF 未被自动纳入增值税专用发票统计，可重新处理后逐项人工补录。",
+            limit=limit,
+        )
+    ] if suspect_rows else []
     return {
         "kind": "invoice",
         "title": "发票统计结果",
-        "summary": f"已确认并汇总 {count} 张发票，另有 {suspects} 项识别存疑。",
+        "summary": f"已确认并汇总 {count} 张发票，另有 {suspects} 项漏识别或跳过内容。",
         "metrics": [
             _metric("count", "已汇总发票", count, tone="success"),
-            _metric("suspects", "识别存疑", suspects, tone="danger" if suspects else "success"),
+            _metric("suspects", "漏识别/跳过", suspects, tone="danger" if suspects else "success"),
         ],
         "quality": _quality(
             score,
             "评分反映发票识别覆盖；金额、税额与费用项目仍以人工复核后的值为准。",
             [_quality_check(
                 "success" if suspects == 0 else "warning",
-                "识别存疑项",
-                f"有 {suspects} 项未能稳定识别，已保留在复核资料中。" if suspects else "本次没有遗留识别存疑项。",
+                "识别覆盖",
+                f"有 {suspects} 项未能自动纳入统计，明细见“漏识别与跳过明细”，可重新处理并人工补录。" if suspects else "本次没有遗留漏识别或跳过内容。",
             )],
         ),
         "parameters": [],
-        "sections": [],
-        "notices": [],
+        "sections": sections,
+        "notices": [{
+            "tone": "info",
+            "title": "人工补录入口",
+            "message": "重新运行发票统计后，在“发票逐张复核”中点击“加入统计”，补全发票号码、销售方和金额即可纳入台账。",
+        }] if suspects else [],
     }
 
 

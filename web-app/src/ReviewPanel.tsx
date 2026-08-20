@@ -108,24 +108,72 @@ function PivotReview({ plan, onConfirm, busy }: { plan: PivotPlan; onConfirm: (c
 
 /** 发票分析计划中的单张识别结果；`item_seed` 与 `note_seed` 是可编辑字段的识别种子。 */
 type InvoiceItem = { num?: string; date?: string; seller?: string; item_seed?: string; amount?: number; tax?: number; total?: number; rate?: number | string; note_seed?: string; special?: boolean };
-/** 发票复核界面中的可编辑行，额外包含勾选状态。 */
-type InvoiceRow = { selected: boolean; num: string; date: string; seller: string; item: string; amount?: number; tax?: number; total?: number; rate?: number | string; note: string; special: boolean };
+/** 发票复核界面中的可编辑行，额外包含勾选状态与人工补录标记。 */
+type InvoiceRow = { selected: boolean; num: string; date: string; seller: string; item: string; amount?: number; tax?: number; total?: number; rate?: number | string; note: string; special: boolean; manual?: boolean };
+/** 扫描阶段没有识别成发票、但需要人工复查的文件与原因。 */
+type InvoiceSuspect = { file: string; reason: string };
+
+/** 把桥接返回的 `[路径, 原因]` 存疑记录转为只含文件名和原因的前端结构。 */
+function invoiceSuspects(raw: unknown): InvoiceSuspect[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((item, index) => {
+    const pair = Array.isArray(item) ? item : [];
+    const path = typeof pair[0] === "string" ? pair[0] : "";
+    const reason = typeof pair[1] === "string" ? pair[1] : "";
+    return { file: path.split(/[\\/]/).filter(Boolean).pop() || `未命名文件 ${index + 1}`, reason: reason || "需人工核对" };  // 只展示文件名，不暴露上传绝对路径
+  });
+}
 
 /** 按月份和发票类型筛选识别结果，允许逐张修正可编辑字段后生成台账。 */
-function InvoiceReview({ plan, onConfirm, busy }: { plan: { invoices?: InvoiceItem[]; suggested_month?: string }; onConfirm: (choices: Record<string, unknown>) => void; busy?: boolean }) {
+function InvoiceReview({ plan, onConfirm, busy }: { plan: { invoices?: InvoiceItem[]; suggested_month?: string; suspects?: unknown }; onConfirm: (choices: Record<string, unknown>) => void; busy?: boolean }) {
   const [month, setMonth] = useState(plan.suggested_month || "");
   const [includeNormal, setIncludeNormal] = useState(false);
   const [rows, setRows] = useState<InvoiceRow[]>(() => (plan.invoices || []).map((item) => ({ selected: Boolean(item.special), num: item.num || "", date: item.date || "", seller: item.seller || "", item: item.item_seed || "", amount: item.amount, tax: item.tax, total: item.total, rate: item.rate, note: item.note_seed || "", special: Boolean(item.special) })));
+  const suspects = useMemo(() => invoiceSuspects(plan.suspects), [plan.suspects]);
+  const [addedSuspects, setAddedSuspects] = useState<Set<string>>(new Set());
+  const [addNotice, setAddNotice] = useState("");
   // 过滤可能遍历整月发票，仅在记录、月份或类型开关变化时重算。
   const visible = useMemo(() => rows.filter((row) => (includeNormal || row.special) && (!month || row.date.startsWith(month))), [rows, includeNormal, month]);  // 只在记录、月份或类型开关变化时重算筛选
+  const normalRows = useMemo(() => rows.filter((row) => !row.special && (!month || row.date.startsWith(month))), [rows, month]);
+  const suspectStats = useMemo(() => {
+    const stats = new Map<string, number>();
+    suspects.forEach((item) => stats.set(item.reason, (stats.get(item.reason) || 0) + 1));
+    return [...stats.entries()].map(([reason, count]) => ({ reason, count })).sort((a, b) => b.count - a.count);
+  }, [suspects]);
+  const chartItems = [...(normalRows.length ? [{ reason: "程序判定为普通发票", count: normalRows.length }] : []), ...suspectStats];
+  const maxSuspectCount = Math.max(...chartItems.map((item) => item.count), 1);  // 全空时保留安全分母
   /** 以不可变数组更新原始行索引，保留筛选前后的编辑状态。 */
   function patch(index: number, value: Partial<InvoiceRow>) { setRows((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, ...value } : row)); }
   /** 只提交当前筛选范围内被勾选的行，并移除界面专用状态字段。 */
-  function choices() { return { month, include_normal: includeNormal, rows: visible.filter((row) => row.selected).map(({ selected: _selected, special: _special, ...row }) => row) }; }  // 只提交当前筛选范围内勾选的行并移除界面专用字段
-  return <ReviewShell kind="invoice" result={plan} onConfirm={() => onConfirm(choices())} busy={busy} title="发票逐张复核" description="号码、日期和金额保持识别原值；销售方、费用项目、税率和备注可调整。" actionLabel="生成发票台账">
+  function choices() { return { month, include_normal: includeNormal, rows: visible.filter((row) => row.selected).map(({ selected: _selected, special: _special, manual: _manual, ...row }) => row) }; }  // 只提交当前筛选范围内勾选的行并移除界面专用字段
+  const selectedRows = visible.filter((row) => row.selected);
+  const manualIncomplete = selectedRows.some((row) => row.manual && (!row.num.trim() || !row.date || !row.seller.trim() || row.amount == null || row.tax == null || row.total == null));  // 人工补录行必须补全业务字段后才能生成
+  /** 把人工确认为应纳入统计的普通发票勾选并打开普通发票显示。 */
+  function includeNormalRow(index: number) {
+    setIncludeNormal(true);
+    patch(index, { selected: true });
+  }
+
+  /** 把人工确认漏掉的发票加入下方可编辑复核表，字段补全后会随本次提交进入台账。 */
+  function addSuspect(item: InvoiceSuspect, index: number) {
+    const key = `${index}:${item.file}:${item.reason}`;
+    if (addedSuspects.has(key)) return;
+    setAddedSuspects((current) => { const next = new Set(current); next.add(key); return next; });
+    setRows((current) => [...current, { selected: true, num: "", date: month ? `${month}-01` : "", seller: "", item: "", amount: undefined, tax: undefined, total: undefined, rate: "", note: "", special: true, manual: true }]);
+    setAddNotice(`已将“${item.file}”加入下方复核表，请补全发票号码、销售方和金额后提交。`);
+  }
+  return <ReviewShell kind="invoice" result={plan} onConfirm={() => onConfirm(choices())} busy={busy} confirmDisabled={!selectedRows.length || manualIncomplete} title="发票逐张复核" description="号码、日期和金额保持识别原值；销售方、费用项目、税率和备注可调整。" actionLabel="生成发票台账">
     <div className="fyt-review-toolbar"><FormField label="统计月份" htmlFor="review-invoice-month"><input id="review-invoice-month" type="month" value={month} onChange={(event) => setMonth(event.target.value)} /></FormField><label className="fyt-review-check" htmlFor="review-include-normal"><input id="review-include-normal" type="checkbox" checked={includeNormal} onChange={(event) => setIncludeNormal(event.target.checked)} />同时包含普通发票</label><span>当前显示 {visible.length} 张</span></div>
-    <div className="fyt-review-table-wrap"><table className="fyt-review-table fyt-review-invoice-table"><thead><tr><th>保留</th><th>发票号码</th><th>日期</th><th>销售方</th><th>费用项目</th><th>不含税</th><th>税额</th><th>合计</th><th>税率</th><th>备注</th></tr></thead><tbody>{visible.map((row) => { const index = rows.indexOf(row); return <tr key={`${row.num}-${row.date}`}><td><input type="checkbox" checked={row.selected} onChange={(event) => patch(index, { selected: event.target.checked })} /></td><td>{row.num}</td><td>{row.date}</td><td><input value={row.seller} onChange={(event) => patch(index, { seller: event.target.value })} /></td><td><input value={row.item} onChange={(event) => patch(index, { item: event.target.value })} /></td><td>{row.amount ?? ""}</td><td>{row.tax ?? ""}</td><td>{row.total ?? ""}</td><td><input value={String(row.rate ?? "")} onChange={(event) => patch(index, { rate: event.target.value })} /></td><td><input value={row.note} onChange={(event) => patch(index, { note: event.target.value })} /></td></tr>; })}</tbody></table></div>
+    <div className="fyt-review-table-wrap"><table className="fyt-review-table fyt-review-invoice-table"><thead><tr><th>保留</th><th>发票号码</th><th>日期</th><th>销售方</th><th>费用项目</th><th>不含税</th><th>税额</th><th>合计</th><th>税率</th><th>备注</th></tr></thead><tbody>{visible.map((row) => { const index = rows.indexOf(row); return <tr key={`invoice-row-${index}`}><td><input type="checkbox" checked={row.selected} onChange={(event) => patch(index, { selected: event.target.checked })} /></td><td>{row.num || <input value={row.num} aria-label="发票号码" onChange={(event) => patch(index, { num: event.target.value })} placeholder="人工补录" />}</td><td>{row.date || <input type="date" value={row.date} aria-label="开票日期" onChange={(event) => patch(index, { date: event.target.value })} />}</td><td><input value={row.seller} onChange={(event) => patch(index, { seller: event.target.value })} /></td><td><input value={row.item} onChange={(event) => patch(index, { item: event.target.value })} /></td><td>{row.amount ?? <input type="number" step="0.01" value={row.amount ?? ""} aria-label="不含税金额" onChange={(event) => patch(index, { amount: event.target.value ? Number(event.target.value) : undefined })} />}</td><td>{row.tax ?? <input type="number" step="0.01" value={row.tax ?? ""} aria-label="税额" onChange={(event) => patch(index, { tax: event.target.value ? Number(event.target.value) : undefined })} />}</td><td>{row.total ?? <input type="number" step="0.01" value={row.total ?? ""} aria-label="价税合计" onChange={(event) => patch(index, { total: event.target.value ? Number(event.target.value) : undefined })} />}</td><td><input value={String(row.rate ?? "")} onChange={(event) => patch(index, { rate: event.target.value })} /></td><td><input value={row.note} onChange={(event) => patch(index, { note: event.target.value })} /></td></tr>; })}</tbody></table></div>
     {!visible.length ? <p className="fyt-review-empty">当前月份或发票类型筛选后没有记录。</p> : null}
+    <div className="fyt-review-block"><div className="fyt-review-block-title"><span>漏识别与跳过内容</span><span>{normalRows.length + suspects.length} 项</span></div><p className="fyt-review-readonly">程序判定为普通发票、以及未自动识别为发票的 PDF 都会列在这里。人工确认应纳入统计时，可点击“纳入统计”或“加入统计”，再补全下方复核表的字段。</p>
+      {normalRows.length || suspects.length ? <>
+        <div className="fyt-invoice-suspect-chart" aria-label="漏识别与跳过分布">{chartItems.map((item) => <div key={item.reason}><span title={item.reason}>{item.reason}</span><i><b style={{ width: `${Math.round(item.count / maxSuspectCount * 100)}%` }} /></i><strong>{item.count}</strong></div>)}</div>
+        {normalRows.length ? <div className="fyt-invoice-suspect-group"><div className="fyt-review-block-title">程序判定为普通发票 <span>{normalRows.length} 张</span></div><div className="fyt-invoice-suspect-list">{normalRows.map((row) => { const index = rows.indexOf(row); return <article key={`normal-row-${index}`}><div><strong title={row.num}>{row.num || "发票号码未识别"}</strong><small>{[row.seller || "销售方未识别", row.date || "日期未识别", row.total != null ? `合计 ${row.total}` : "金额未识别"].join(" · ")}</small></div><Button variant="secondary" size="sm" type="button" disabled={row.selected} onClick={() => includeNormalRow(index)}>{row.selected ? "已纳入" : "纳入统计"}</Button></article>; })}</div></div> : null}
+        {suspects.length ? <div className="fyt-invoice-suspect-group"><div className="fyt-review-block-title">未识别文件 <span>{suspects.length} 项</span></div><div className="fyt-invoice-suspect-list">{suspects.map((item, index) => { const key = `${index}:${item.file}:${item.reason}`; const added = addedSuspects.has(key); return <article key={key}><div><strong title={item.file}>{item.file}</strong><small>{item.reason}</small></div><Button variant="secondary" size="sm" type="button" disabled={added} onClick={() => addSuspect(item, index)}>{added ? "已加入" : "加入统计"}</Button></article>; })}</div></div> : null}
+        {addNotice ? <p className="fyt-invoice-suspect-notice" role="status"><Icon name="check" size={14} />{addNotice}</p> : null}
+      </> : <p className="fyt-review-empty">没有漏识别或跳过内容。</p>}
+    </div>
   </ReviewShell>;
 }
 
