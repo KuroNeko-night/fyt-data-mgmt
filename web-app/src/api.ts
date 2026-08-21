@@ -163,6 +163,7 @@ export function deleteUser(id: number) { return request<{ message: string }>(`/a
 export function deleteAdminJob(id: string) { return request<{ message: string }>(`/api/admin/jobs/${id}`, { method: "DELETE" }); }
 export function assignJob(jobId: string, assigneeId: number | null) { return request<{ message: string }>(`/api/jobs/${jobId}/assign`, { method: "POST", body: JSON.stringify({ assignee_id: assigneeId }) }); }
 export function deleteAdminUpload(handle: string) { return request<{ message: string }>(`/api/admin/uploads/${encodeURIComponent(handle)}`, { method: "DELETE" }); }
+export function deleteAdminUploadGroup(groupId: string) { return request<{ message: string }>(`/api/admin/uploads/group/${encodeURIComponent(groupId)}`, { method: "DELETE" }); }
 
 // 公告、定向消息和用户通知接口。
 export function adminAnnouncements() { return request<{ announcements: Announcement[] }>("/api/admin/announcements"); }

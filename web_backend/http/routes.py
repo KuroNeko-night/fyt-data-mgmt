@@ -202,6 +202,7 @@ def delete_routes(handler) -> tuple[dict[str, Callable[[], None]], tuple[Pattern
             ("/api/admin/daily-production-plans/", "", "", handler.delete_daily_production_plan),
             ("/api/admin/daily-source-uploads/", "", "", handler.delete_daily_source),
             ("/api/admin/jobs/", "", "", handler.delete_job),
+            ("/api/admin/uploads/group/", "", "", handler.delete_upload_group),
             ("/api/admin/uploads/", "", "", handler.delete_upload),
             ("/api/admin/announcements/", "", "", handler.delete_announcement),
             ("/api/templates/", "", "", handler.delete_template),

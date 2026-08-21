@@ -245,6 +245,67 @@ class WebServerFileTests(WebServerTestBase):
         self.assertEqual(status, 200)
         self.assertEqual(self.call("/api/admin/trash", token=self.admin)[1]["trash"], [])
 
+    def test_upload_group_trash_removes_whole_batch(self):
+        """同一次上传的多个文件可以通过批次号一键移入回收站并恢复。"""
+
+        group = "batch-delete-group"
+        uploaded = []
+        for index, name in enumerate(("发票A.pdf", "发票B.pdf"), start=1):
+            query = urllib.parse.urlencode({"name": name, "group": group})
+            status, item = self.call(
+                f"/api/files/upload?{query}", token=self.admin, raw=b"pdf-%d" % index,
+            )
+            self.assertEqual(status, 201)
+            uploaded.append(item)
+        status, payload = self.call(
+            f"/api/admin/uploads/group/{group}", token=self.admin, method="DELETE",
+        )
+        self.assertEqual(status, 200)
+        self.assertIn("2 个文件", payload["message"])
+        data = self.call("/api/admin/data", token=self.admin)[1]
+        self.assertEqual(set(row["handle"] for row in data["uploads"]) & {item["handle"] for item in uploaded}, set())
+        trash = self.call("/api/admin/trash", token=self.admin)[1]["trash"]
+        self.assertEqual({item["kind"] for item in trash}, {"upload"})
+        self.assertEqual(len(trash), 2)
+        for item in trash:
+            self.assertEqual(self.call(
+                f"/api/admin/trash/{item['id']}/restore", {}, token=self.admin,
+            )[0], 200)
+        data = self.call("/api/admin/data", token=self.admin)[1]
+        self.assertTrue({item["handle"] for item in uploaded} <= {row["handle"] for row in data["uploads"]})
+
+    def test_upload_group_delete_cleans_stale_records(self):
+        """批次删除遇到指向旧数据根的失效索引时，应清理记录而不是整批失败。"""
+
+        group = "batch-stale-group"
+        query = urllib.parse.urlencode({"name": "现有文件.pdf", "group": group})
+        status, uploaded = self.call(
+            f"/api/files/upload?{query}", token=self.admin, raw=b"pdf",
+        )
+        self.assertEqual(status, 201)
+        stale_handle = "upload:stale-group-record"
+        with web_server.DB_LOCK, web_server.db() as connection:
+            connection.execute(
+                "INSERT INTO uploads(handle, user_id, group_id, name, path, size, created_at) "
+                "VALUES (?, 1, ?, '旧文件.pdf', ?, 5, ?)",
+                (
+                    stale_handle,
+                    group,
+                    str(web_server.DATA_ROOT / "旧数据根" / "users" / "1" / "uploads" / group / "旧文件.pdf"),
+                    web_server.now_iso(),
+                ),
+            )
+        status, payload = self.call(
+            f"/api/admin/uploads/group/{group}", token=self.admin, method="DELETE",
+        )
+        self.assertEqual(status, 200)
+        self.assertIn("已失效", payload["message"])
+        data = self.call("/api/admin/data", token=self.admin)[1]
+        self.assertNotIn(stale_handle, {row["handle"] for row in data["uploads"]})
+        self.assertNotIn(uploaded["handle"], {row["handle"] for row in data["uploads"]})
+        trash = self.call("/api/admin/trash", token=self.admin)[1]["trash"]
+        self.assertEqual(len(trash), 1)  # 只有真实文件进入回收站，失效索引直接清理
+
     def test_job_trash_restores_record_and_result_file(self):
         """任务软删除与恢复必须成对处理数据库记录和所属结果文件。"""
 

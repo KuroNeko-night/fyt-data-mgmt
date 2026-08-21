@@ -449,6 +449,7 @@ _DELEGATE_GROUPS: tuple[
         ("admin_audit", admin_data_service.admin_audit),
         ("delete_job", admin_data_service.delete_job),
         ("delete_upload", admin_data_service.delete_upload),
+        ("delete_upload_group", admin_data_service.delete_upload_group),
     )),
     ("回收站", "trash_dependencies", (
         ("list_trash", trash_service.list_trash),

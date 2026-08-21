@@ -177,14 +177,21 @@ def delete_job(handler: Any, path: str, deps: AdminDataDependencies) -> None:
     handler.send_json({"message": "任务及结果文件已移入回收站"})
 
 
+def _upload_target(deps: AdminDataDependencies, row: Any) -> tuple[Path, bool]:
+    """解析上传路径并判断是否仍位于账号上传根目录且文件存在。"""
+    target = Path(row["path"]).resolve()
+    upload_root = (deps.data_root / "users" / str(row["user_id"]) / "uploads").resolve()
+    valid = target != upload_root and upload_root in target.parents and target.is_file()
+    return target, valid
+
+
 def _stage_upload_for_trash(
     deps: AdminDataDependencies,
     row: Any,
 ) -> tuple[Path, str, str, Path, int]:
     """校验上传路径归属并把文件移动到回收站载荷位置。"""
-    target = Path(row["path"]).resolve()
-    upload_root = (deps.data_root / "users" / str(row["user_id"]) / "uploads").resolve()
-    if target == upload_root or upload_root not in target.parents:
+    target, valid = _upload_target(deps, row)
+    if not valid:
         raise ApiError(HTTPStatus.BAD_REQUEST, "上传资料路径无效")
     trash_id = uuid.uuid4().hex
     relative = target.relative_to(deps.data_root.resolve()).as_posix()
@@ -219,6 +226,16 @@ def delete_upload(handler: Any, path: str, deps: AdminDataDependencies) -> None:
             ).fetchone()
         if row is None:
             raise ApiError(HTTPStatus.NOT_FOUND, "上传资料不存在")
+        if not _upload_target(deps, row)[1]:
+            # 历史数据根迁移或文件被手工清理后只清理失效索引，不把空记录塞进回收站。
+            with deps.db_lock, deps.db() as connection:
+                connection.execute("DELETE FROM uploads WHERE handle = ?", (handle,))
+                connection.execute(
+                    "INSERT INTO audit_log(actor_id, action, created_at) VALUES (?, ?, ?)",
+                    (actor["id"], f"trash_upload:{handle}:stale", deps.now_iso()),
+                )
+            handler.send_json({"message": "上传资料记录已清理（原文件已不存在）"})
+            return
         target, trash_id, relative, payload, size = _stage_upload_for_trash(deps, row)
         try:
             with deps.db_lock, deps.db() as connection:
@@ -248,3 +265,82 @@ def delete_upload(handler: Any, path: str, deps: AdminDataDependencies) -> None:
             _restore_upload_payload(payload, target)
             raise
     handler.send_json({"message": "上传资料已移入回收站"})
+
+
+def delete_upload_group(handler: Any, path: str, deps: AdminDataDependencies) -> None:
+    """把同一上传批次（一次任务）的全部临时文件移动到可恢复回收站。
+
+    批量删除复用单文件回收的路径校验和可补偿事务；任一文件移动或数据库写入失败都会把
+    已经暂移的文件恢复原位，保证不会留下只有部分文件被删除的半批次状态。
+    """
+    actor = handler.require_user(admin=True)
+    group_id = path_id(path, "/api/admin/uploads/group/")
+    with deps.db_lock, deps.db() as connection:
+        rows = connection.execute(
+            "SELECT * FROM uploads WHERE group_id = ? ORDER BY handle",
+            (group_id,),
+        ).fetchall()
+    if not rows:
+        raise ApiError(HTTPStatus.NOT_FOUND, "上传批次不存在")
+
+    staged: list[tuple[Path, str, str, Path, int]] = []
+    valid_rows: list[Any] = []
+    stale_rows: list[Any] = []
+    # 历史记录可能仍指向旧数据根或文件已被手工清理；这些索引无法移动，只删除记录本身。
+    for row in rows:
+        if _upload_target(deps, row)[1]:
+            valid_rows.append(row)
+        else:
+            stale_rows.append(row)
+
+    def restore_staged() -> None:
+        """按逆序恢复已经暂移的回收站载荷。"""
+        for target, _trash_id, _relative, payload, _size in reversed(staged):
+            _restore_upload_payload(payload, target)
+
+    with deps.storage_lock:  # 批量移动与删除期间保持存储锁，避免并发请求看到半批次状态。
+        try:
+            for row in valid_rows:
+                staged.append(_stage_upload_for_trash(deps, row))
+        except Exception:
+            restore_staged()
+            raise
+        try:
+            with deps.db_lock, deps.db() as connection:
+                for row, (target, trash_id, relative, _payload, size) in zip(valid_rows, staged):
+                    changed = connection.execute(
+                        "DELETE FROM uploads WHERE handle = ? AND group_id = ?",
+                        (row["handle"], group_id),
+                    ).rowcount
+                    if not changed:
+                        raise RuntimeError("上传资料记录已发生变化")
+                    connection.execute(
+                        "INSERT INTO trash_items(id, kind, label, record_json, original_path, "
+                        "size, deleted_by, deleted_at) VALUES (?, 'upload', ?, ?, ?, ?, ?, ?)",
+                        (
+                            trash_id,
+                            row["name"],
+                            json.dumps(dict(row), ensure_ascii=False),
+                            relative,
+                            size,
+                            actor["id"],
+                            deps.now_iso(),
+                        ),
+                    )
+                for row in stale_rows:  # 失效索引不进入回收站，避免恢复出指向不存在文件的历史记录。
+                    connection.execute(
+                        "DELETE FROM uploads WHERE handle = ? AND group_id = ?",
+                        (row["handle"], group_id),
+                    )
+                audit_handle = f"upload_group:{group_id}"
+                connection.execute(
+                    "INSERT INTO audit_log(actor_id, action, created_at) VALUES (?, ?, ?)",
+                    (actor["id"], f"trash_upload:{audit_handle}", deps.now_iso()),
+                )
+        except Exception:
+            restore_staged()
+            raise
+    message = f"已将本批上传的 {len(valid_rows)} 个文件移入回收站"
+    if stale_rows:
+        message += f"，并清理 {len(stale_rows)} 条已失效的上传记录"
+    handler.send_json({"message": message})

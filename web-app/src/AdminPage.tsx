@@ -19,6 +19,7 @@ import {
   deleteAdminJob,
   deleteAdminTrash,
   deleteAdminUpload,
+  deleteAdminUploadGroup,
   deleteAnnouncement,
   deleteUser,
   downloadAdminBackup,
@@ -200,6 +201,26 @@ export function AdminPage({ currentUserId, onChanged }: { currentUserId: number;
 
   useEffect(() => { void load(); }, [load]);
 
+  /** 把上传文件按 group_id 归并成单次任务的批次，用于一键删除整批临时上传。 */
+  const uploadGroups = useMemo(() => {
+    const groups = new Map<string, AdminData["uploads"]>();
+    (data?.uploads || []).forEach((file) => {
+      const items = groups.get(file.group_id) || [];
+      items.push(file);
+      groups.set(file.group_id, items);
+    });
+    return [...groups.entries()].map(([groupId, items]) => {
+      const sorted = [...items].sort((a, b) => a.created_at.localeCompare(b.created_at));
+      return {
+        groupId,
+        items: sorted,
+        size: sorted.reduce((total, file) => total + file.size, 0),
+        createdAt: sorted[0]?.created_at || "",
+        displayName: sorted[0]?.display_name || "",
+      };
+    }).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }, [data?.uploads]);
+
   /**
    * 管理写操作的统一执行器：设置互斥状态、提取提示、刷新管理数据并通知应用壳更新。
    * 返回布尔值让需要清空表单的调用方只在服务端真正成功后执行收尾。
@@ -379,7 +400,7 @@ export function AdminPage({ currentUserId, onChanged }: { currentUserId: number;
     {tab === "data" && data ? <section className="fyt-admin-section">
       <div className="fyt-admin-summary-grid"><div><span>结果文件</span><strong>{summary?.job_files || 0}</strong></div><div><span>结果占用</span><strong>{sizeLabel(summary?.job_bytes || 0)}</strong></div><div><span>上传占用</span><strong>{sizeLabel(summary?.upload_bytes || 0)}</strong></div><div><span>可管理记录</span><strong>{(summary?.jobs || 0) + (summary?.uploads || 0)}</strong></div></div>
       <div className="fyt-admin-card"><div className="fyt-admin-card-head"><div><h3>任务与结果文件</h3><p>移除后可在回收站恢复任务记录和结果文件。</p></div></div><div className="fyt-admin-table compact"><div className="fyt-admin-table-head"><span>任务</span><span>所属账号</span><span>状态</span><span>文件</span><span>操作</span></div>{data.jobs.map((job) => <div className="fyt-admin-table-row" key={job.id}><div><strong>{job.title}</strong><small>{new Date(job.created_at).toLocaleString("zh-CN")}</small></div><span>{job.display_name}</span><span className={`fyt-status fyt-status-${job.status}`}>{jobStatusLabel(job.status)}</span><span>{job.file_count} 个 · {sizeLabel(job.file_size)}</span><div className="fyt-row-actions"><select className="fyt-admin-assign" value={job.assignee_id ?? ""} disabled={Boolean(busy)} title="指派给谁处理" onChange={(event) => void run(`assign-${job.id}`, () => assignJob(job.id, event.target.value ? Number(event.target.value) : null))}><option value="">未指派</option>{data.users.filter((user) => user.status === "approved").map((user) => <option key={user.id} value={user.id}>{user.display_name}</option>)}</select><button className="fyt-action-danger" disabled={Boolean(busy)} onClick={() => confirmRun("确定将这条任务及结果文件移入回收站吗？", `job-${job.id}`, () => deleteAdminJob(job.id))}>移入回收站</button></div></div>)}{!data.jobs.length ? <div className="fyt-empty-row">暂无任务记录</div> : null}</div></div>
-      <div className="fyt-admin-card"><div className="fyt-admin-card-head"><div><h3>上传资料</h3><p>移除后可在回收站恢复到原上传位置。</p></div></div><div className="fyt-admin-table compact"><div className="fyt-admin-table-head"><span>文件</span><span>所属账号</span><span>大小</span><span>上传时间</span><span>操作</span></div>{data.uploads.map((file) => <div className="fyt-admin-table-row" key={file.handle}><div><strong>{file.name}</strong><small>上传文件</small></div><span>{file.display_name}</span><span>{sizeLabel(file.size)}</span><span>{new Date(file.created_at).toLocaleString("zh-CN")}</span><div className="fyt-row-actions"><button className="fyt-action-danger" disabled={Boolean(busy)} onClick={() => confirmRun(`确定将“${file.name}”移入回收站吗？`, `upload-${file.handle}`, () => deleteAdminUpload(file.handle))}>移入回收站</button></div></div>)}{!data.uploads.length ? <div className="fyt-empty-row">暂无上传资料</div> : null}</div></div>
+      <div className="fyt-admin-card"><div className="fyt-admin-card-head"><div><h3>上传资料</h3><p>按一次任务/上传批次归组，可整批移入回收站，也可以删除单个文件。</p></div></div><div className="fyt-admin-table compact">{uploadGroups.map((group) => <div className="fyt-admin-upload-group" key={group.groupId}><div className="fyt-admin-table-row fyt-admin-upload-group-head"><div><strong>本批 {group.items.length} 个文件</strong><small>{group.items.slice(0, 3).map((file) => file.name).join("、")}{group.items.length > 3 ? ` 等 ${group.items.length} 个` : ""}</small></div><span>{group.displayName}</span><span>{sizeLabel(group.size)}</span><span>{new Date(group.createdAt).toLocaleString("zh-CN")}</span><div className="fyt-row-actions"><button className="fyt-action-danger" disabled={Boolean(busy)} onClick={() => confirmRun(`确定将本次上传的 ${group.items.length} 个文件全部移入回收站吗？`, `upload-group-${group.groupId}`, () => deleteAdminUploadGroup(group.groupId))}>删除本批上传</button></div></div>{group.items.map((file) => <div className="fyt-admin-table-row fyt-admin-upload-file-row" key={file.handle}><div><strong>{file.name}</strong><small>上传文件</small></div><span>{file.display_name}</span><span>{sizeLabel(file.size)}</span><span>{new Date(file.created_at).toLocaleString("zh-CN")}</span><div className="fyt-row-actions"><button className="fyt-action-danger" disabled={Boolean(busy)} onClick={() => confirmRun(`确定将“${file.name}”移入回收站吗？`, `upload-${file.handle}`, () => deleteAdminUpload(file.handle))}>删除单个文件</button></div></div>)}</div>)}{!uploadGroups.length ? <div className="fyt-empty-row">暂无上传资料</div> : null}</div></div>
     </section> : null}
 
     {tab === "safety" ? <section className="fyt-admin-section fyt-safety-section">

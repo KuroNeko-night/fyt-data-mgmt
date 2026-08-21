@@ -311,6 +311,9 @@
 .fyt-admin-card-head h3 { margin: 0; color: var(--fyt-text); font-size: var(--fyt-type-card); }
 .fyt-admin-card-head p { margin: 5px 0 0; color: var(--fyt-text-secondary); font-size: var(--fyt-type-caption); line-height: 1.6; }
 .fyt-admin-table.compact { border: 0; }
+.fyt-admin-upload-group + .fyt-admin-upload-group { border-top: 1px solid var(--fyt-border-strong); }
+.fyt-admin-upload-group-head { min-height: 60px; background: var(--fyt-primary-soft); }
+.fyt-admin-upload-file-row { min-height: 60px; }
 .fyt-admin-form { display: grid; gap: var(--fyt-space-4); }
 .fyt-admin-form label { display: grid; gap: var(--fyt-space-2); color: var(--fyt-text-secondary); font-size: var(--fyt-type-caption); font-weight: 700; }
 .fyt-admin-form .fyt-action-primary { width: max-content; }
