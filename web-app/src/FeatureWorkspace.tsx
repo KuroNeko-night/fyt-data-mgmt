@@ -5,7 +5,7 @@
  * 创建持久化任务、轮询状态、呈现结构化结果和承接人工复核。所有表格算法仍在
  * `core/`，上传句柄、任务和结果文件的用户隔离由服务端执行。
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import { cancelJob, createJob, createTemplate, downloadJobFile, getJob, listTemplates, listJobs, preflightJob, previewJobFile, scanArrival, scanReconcile, submitJobReview, uploadFile, type ArrivalScanRow, type Feature, type JobTemplate, type PreviewData, type ReconcileScanFile, type WebJob } from "./api";
 import { Icon } from "./icons";
 import { ReviewPanel } from "./ReviewPanel";
@@ -195,6 +195,74 @@ function jobStatusKey(job: WebJob): StatusKey {
 /** 浏览器目录选择给出的 File 额外带相对路径，用于显示和去重。 */
 type DirectoryFile = File & { webkitRelativePath?: string };
 
+/** 拖放文件夹时 WebKit 目录条目；浏览器标准类型不完整，这里只声明读取所需的最小接口。 */
+type WebkitFileEntry = {
+  isFile: true;
+  isDirectory: false;
+  name: string;
+  fullPath: string;
+  file: (success: (file: File) => void, error?: (error: DOMException) => void) => void;
+};
+
+type WebkitDirectoryEntry = {
+  isFile: false;
+  isDirectory: true;
+  name: string;
+  fullPath: string;
+  createReader: () => { readEntries: (success: (entries: WebkitEntry[]) => void, error?: (error: DOMException) => void) => void };
+};
+
+type WebkitEntry = WebkitFileEntry | WebkitDirectoryEntry;
+
+function readFileEntry(entry: WebkitFileEntry): Promise<File> {
+  return new Promise((resolve, reject) => entry.file(resolve, reject));
+}
+
+function readEntryBatch(entry: WebkitDirectoryEntry): Promise<WebkitEntry[]> {
+  return new Promise((resolve, reject) => entry.createReader().readEntries(resolve, reject));
+}
+
+/** 拖放目录得到的 File 不一定带相对路径，这里按 entry.fullPath 补齐，保证同名文件不互相覆盖。 */
+function withRelativePath(file: File, fullPath: string): DirectoryFile {
+  try {
+    Object.defineProperty(file, "webkitRelativePath", { value: fullPath, configurable: true });
+  } catch {
+    // File 对象不可扩展时保留浏览器原始行为，仍可用名称和大小去重。
+  }
+  return file as DirectoryFile;
+}
+
+/** 递归展开拖入的目录条目，得到真实文件对象；拖放目录时 DataTransfer.files 可能只给一个 0 字节占位项。 */
+async function filesFromEntry(entry: WebkitEntry | null | undefined): Promise<File[]> {
+  if (!entry) return [];
+  if (entry.isFile) {
+    const file = await readFileEntry(entry);
+    return file.size > 0 ? [withRelativePath(file, entry.fullPath)] : [];  // 目录占位项为 0 字节，不能进入上传列表。
+  }
+  if (entry.isDirectory) {
+    const files: File[] = [];
+    let batch = await readEntryBatch(entry);
+    while (batch.length) {
+      for (const child of batch) files.push(...await filesFromEntry(child));
+      batch = await readEntryBatch(entry);
+    }
+    return files;
+  }
+  return [];
+}
+
+/** 从拖放事件读取文件；目录模式优先通过 WebKit entry 递归读取真实文件。 */
+async function filesFromDataTransfer(dataTransfer: DataTransfer, directory: boolean): Promise<File[]> {
+  const items = Array.from(dataTransfer.items || []);
+  if (!directory) return Array.from(dataTransfer.files || []);
+  const entries = items.map((item) => (item as DataTransferItem & { webkitGetAsEntry?: () => unknown }).webkitGetAsEntry?.());
+  if (entries.some(Boolean)) {
+    const groups = await Promise.all(entries.map((entry) => filesFromEntry(entry as WebkitEntry | null | undefined)));
+    return groups.flat();
+  }
+  return Array.from(dataTransfer.files || []).filter((file) => file.size > 0);  // 不支持 entry API 时退回普通文件列表并过滤目录占位项
+}
+
 /**
  * 受控文件输入组件，支持文件/文件夹选择器和浏览器拖放。
  * 多选文件按稳定键去重，保留当前文件在前、新文件在后的顺序。
@@ -202,6 +270,8 @@ type DirectoryFile = File & { webkitRelativePath?: string };
 function FileField({ config, files, onChange }: { config: FileGroup; files: File[]; onChange: (files: File[]) => void }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [readingDrop, setReadingDrop] = useState(false);
+  const [dropError, setDropError] = useState("");
 
   useEffect(() => {
     // React 类型没有 webkitdirectory，目录选择属性需要直接写到原生节点。
@@ -227,14 +297,32 @@ function FileField({ config, files, onChange }: { config: FileGroup; files: File
 
   /** 合并新文件：文件夹模式保留全部内容，普通模式遵守单选或多选约束。 */
   function accept(next: File[]) {
+    setDropError("");
     const merged = config.directory ? next : config.multiple ? [...files, ...next] : next.slice(0, 1);
     onChange(Array.from(new Map(merged.map((file) => [fileKey(file), file])).values()));
   }
 
-  return <section className="fyt-flow-file-field" data-dragging={dragging ? "true" : undefined} data-has-files={files.length ? "true" : undefined} onDragOver={(event) => { event.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={(event) => { event.preventDefault(); setDragging(false); accept(Array.from(event.dataTransfer.files)); }}>
+  /** 处理浏览器拖放；目录模式需要递归读取 entry，不能直接使用只有占位项的 FileList。 */
+  function handleDrop(event: DragEvent<HTMLElement>) {
+    event.preventDefault();
+    setDragging(false);
+    setDropError("");
+    if (!config.directory) {
+      accept(Array.from(event.dataTransfer.files));
+      return;
+    }
+    setReadingDrop(true);
+    void filesFromDataTransfer(event.dataTransfer, true).then((next) => {
+      if (next.length) accept(next);
+      else setDropError("没有从拖放的文件夹中读取到文件，请改用“选择文件夹”。");
+    }).catch(() => setDropError("读取拖放文件夹失败，请改用“选择文件夹”。")).finally(() => setReadingDrop(false));
+  }
+
+  return <section className="fyt-flow-file-field" data-dragging={dragging ? "true" : undefined} data-has-files={files.length ? "true" : undefined} onDragOver={(event) => { event.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={handleDrop}>
     <div className="fyt-flow-file-heading"><div><strong className="fyt-flow-file-title">{config.label}{config.optional ? <span className="fyt-flow-optional">可选</span> : null}</strong><p>{config.description}</p></div><Button variant="secondary" size="sm" type="button" onClick={() => inputRef.current?.click()}><Icon name="plus" size={15} />选择{config.directory ? "文件夹" : "文件"}</Button></div>
     <input ref={inputRef} className="fyt-flow-file-input" type="file" accept={config.accept === "*" ? undefined : config.accept} multiple={config.directory ? undefined : config.multiple} onChange={(event) => { accept(Array.from(event.target.files || [])); event.currentTarget.value = ""; }} />
-    {files.length ? <div className="fyt-flow-file-list">{files.map((file, index) => <div className="fyt-flow-file-row" key={`${fileKey(file)}-${index}`}><Icon name="file" size={16} /><span><strong title={relativePath(file)}>{file.name}</strong><small>{config.directory && (file as DirectoryFile).webkitRelativePath ? `${relativePath(file)} · ${formatSize(file.size)}` : formatSize(file.size)}</small></span><IconButton className="fyt-flow-file-remove" size="sm" label={`移除 ${file.name}`} onClick={() => onChange(files.filter((_, itemIndex) => itemIndex !== index))}><Icon name="x" size={15} /></IconButton></div>)}</div> : <div className="fyt-flow-dropzone"><Icon name="plus" size={17} /><span>{config.directory ? "拖放文件夹到此处，或选择本机文件夹" : "拖放到此处，或选择本机文件"}</span></div>}
+    {files.length ? <div className="fyt-flow-file-list">{files.map((file, index) => <div className="fyt-flow-file-row" key={`${fileKey(file)}-${index}`}><Icon name="file" size={16} /><span><strong title={relativePath(file)}>{file.name}</strong><small>{config.directory && (file as DirectoryFile).webkitRelativePath ? `${relativePath(file)} · ${formatSize(file.size)}` : formatSize(file.size)}</small></span><IconButton className="fyt-flow-file-remove" size="sm" label={`移除 ${file.name}`} onClick={() => onChange(files.filter((_, itemIndex) => itemIndex !== index))}><Icon name="x" size={15} /></IconButton></div>)}</div> : <div className="fyt-flow-dropzone"><Icon name="plus" size={17} /><span>{readingDrop ? "正在读取文件夹内容…" : config.directory ? "拖放文件夹到此处，或选择本机文件夹" : "拖放到此处，或选择本机文件"}</span></div>}
+    {dropError ? <p className="fyt-flow-drop-error" role="alert">{dropError}</p> : null}
   </section>;
 }
 

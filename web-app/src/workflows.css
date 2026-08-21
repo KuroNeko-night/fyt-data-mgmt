@@ -46,6 +46,7 @@
 .fyt-flow-file-heading p { margin: var(--fyt-space-2) 0 0; color: var(--fyt-text-secondary); font-size: var(--fyt-type-caption); line-height: var(--fyt-type-line-caption); }
 .fyt-flow-dropzone { display: flex; min-height: 72px; align-items: center; justify-content: center; gap: var(--fyt-space-2); margin-top: var(--fyt-space-4); padding: var(--fyt-space-4); border: 1px dashed var(--fyt-border-strong); border-radius: var(--fyt-radius-control); color: var(--fyt-text-muted); background: var(--fyt-surface-subtle); font-size: var(--fyt-type-caption); text-align: center; }
 .fyt-flow-dropzone svg { color: var(--fyt-primary-strong); }
+.fyt-flow-drop-error { margin: var(--fyt-space-2) 0 0; color: var(--fyt-danger); font-size: var(--fyt-type-caption); line-height: var(--fyt-type-line-caption); }
 .fyt-flow-file-list { display: grid; gap: var(--fyt-space-2); margin-top: var(--fyt-space-4); }
 .fyt-flow-file-row { display: flex; min-width: 0; align-items: center; gap: var(--fyt-space-3); padding: var(--fyt-space-3); border: 1px solid var(--fyt-border); border-radius: var(--fyt-radius-control); background: var(--fyt-surface-subtle); }
 .fyt-flow-file-row > span { display: grid; min-width: 0; flex: 1; gap: 3px; }
