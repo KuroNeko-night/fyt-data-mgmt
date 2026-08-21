@@ -14,8 +14,19 @@ if (-not (Test-Path -LiteralPath $python)) {
   throw "尚未安装现代环境，请先运行 scripts\setup-modern.ps1"
 }
 $script = Join-Path $ProjectRoot "web_control_gui.py"
+$logDir = Join-Path $ProjectRoot "web-data\logs"
+New-Item -ItemType Directory -Path $logDir -Force | Out-Null  # 诊断日志目录与运行数据一起创建，不依赖 GUI 先成功启动。
+$stdoutLog = Join-Path $logDir "gui-launcher.stdout.log"
+$stderrLog = Join-Path $logDir "gui-launcher.stderr.log"
+$launcherLog = Join-Path $logDir "gui-launcher.log"
 $process = Start-Process -FilePath $python `
   -ArgumentList ('"{0}"' -f $script) `
   -WorkingDirectory $ProjectRoot `
+  -WindowStyle Normal `
+  -RedirectStandardOutput $stdoutLog `
+  -RedirectStandardError $stderrLog `
   -PassThru
+try {
+  Add-Content -Path $launcherLog -Value ("{0} python={1} pid={2} cwd={3}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $python, $process.Id, $ProjectRoot)
+} catch { }
 if ($NoExit) { $process.WaitForExit(); exit $process.ExitCode }  # 显式等待只影响调用脚本，不改变 GUI 生命周期。

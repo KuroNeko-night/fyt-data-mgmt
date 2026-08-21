@@ -557,7 +557,17 @@ class WebControlWindow(tk.Tk):
         self._discover_existing_processes()
         self.protocol("WM_DELETE_WINDOW", self.closeEvent)
         self.after(600, self._poll_runtime)  # 定时器同时泵送日志、进程状态和隧道连接状态。
+        self.after(150, self._ensure_visible)  # 兼容右键“使用 PowerShell 运行”等启动方式可能继承的隐藏窗口状态。
         self._refresh_ui()
+
+    def _ensure_visible(self) -> None:
+        """取消可能的窗口隐藏/最小化状态并把控制台带到前台。"""
+        try:
+            self.deiconify()
+            self.lift()
+            self.focus_force()
+        except tk.TclError:
+            pass
 
     def windowTitle(self) -> str:
         """兼容旧测试和调用方的窗口标题读取接口。"""
@@ -1398,19 +1408,47 @@ def _stop_managed_processes() -> int:
     return 1 if failed else 0
 
 
+def _report_startup_failure(exc: BaseException) -> None:
+    """把 pythonw 启动异常写入日志并用系统消息框提示，避免无控制台进程静默退出。"""
+    import traceback
+
+    log_path: Path | None = None
+    try:
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        log_path = LOG_DIR / "gui-startup-error.log"
+        log_path.write_text(traceback.format_exc(), encoding="utf-8")
+    except Exception:
+        log_path = None
+    message = "Web 服务控制台启动失败：%s\n详细日志：%s" % (
+        exc,
+        log_path or "无法写入日志",
+    )
+    try:
+        if sys.platform.startswith("win"):
+            ctypes.windll.user32.MessageBoxW(0, message, "峰运通 Web 服务控制台", 0x10)
+        else:
+            print(message, file=sys.stderr)
+    except Exception:
+        print(message, file=sys.stderr)
+
+
 def main() -> int:
     """解析轻量命令参数并启动 Web 服务控制台。
 
     ``--stop`` 不创建窗口，适合部署脚本；``--start`` 在窗口事件循环建立后异步启动服务，
     避免构造函数内弹出首次密码对话框导致窗口尚未完成绘制。
     """
-    if "--stop" in sys.argv[1:]:
-        return _stop_managed_processes()
-    window = WebControlWindow()
-    if "--start" in sys.argv[1:]:
-        window.after(250, window.start_service)
-    window.mainloop()
-    return 0
+    try:
+        if "--stop" in sys.argv[1:]:
+            return _stop_managed_processes()
+        window = WebControlWindow()
+        if "--start" in sys.argv[1:]:
+            window.after(250, window.start_service)
+        window.mainloop()
+        return 0
+    except Exception:
+        _report_startup_failure(sys.exc_info()[1] or sys.exc_info()[0])
+        return 1
 
 
 if __name__ == "__main__":
