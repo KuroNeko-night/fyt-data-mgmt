@@ -243,6 +243,11 @@
 .fyt-review-table input { min-width: 120px; }
 .fyt-review-table input[type="checkbox"] { width: 18px; min-width: 18px; height: 18px; accent-color: var(--fyt-primary); }
 .fyt-review-table.fyt-review-invoice-table { min-width: 1080px; }
+/* 发票复核勾选框使用显式边框与对勾，避免原生控件在部分主题下与背景同色。 */
+.fyt-review-table.fyt-review-invoice-table input[type="checkbox"] { position: relative; appearance: none; -webkit-appearance: none; border: 2px solid var(--fyt-border-strong); border-radius: var(--fyt-radius-control); background: var(--fyt-surface); cursor: pointer; }
+.fyt-review-table.fyt-review-invoice-table input[type="checkbox"]:checked { border-color: var(--fyt-primary); background: var(--fyt-primary); }
+.fyt-review-table.fyt-review-invoice-table input[type="checkbox"]:checked::after { position: absolute; top: 2px; left: 6px; width: 5px; height: 9px; border: solid var(--fyt-text-on-inverse); border-width: 0 2px 2px 0; content: ""; transform: rotate(45deg); }
+.fyt-review-table.fyt-review-invoice-table input[type="checkbox"]:focus-visible { outline: 2px solid var(--fyt-focus); outline-offset: 2px; }
 /* 到料复核表横向保留批次、自动统计与人工值，窄屏由单一外层容器滚动。 */
 .fyt-review-table.fyt-arrival-review-table { min-width: 980px; }
 .fyt-arrival-review-table td > strong, .fyt-arrival-review-table td > small { display: block; }

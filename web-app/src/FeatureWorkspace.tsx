@@ -232,10 +232,23 @@ function withRelativePath(file: File, fullPath: string): DirectoryFile {
   return file as DirectoryFile;
 }
 
-/** 递归展开拖入的目录条目，得到真实文件对象；拖放目录时 DataTransfer.files 可能只给一个 0 字节占位项。 */
-async function filesFromEntry(entry: WebkitEntry | null | undefined): Promise<File[]> {
+/** 从 `accept` 规范解析小写扩展名列表；`*` 表示不限制。 */
+function acceptedExtensions(accept: string) {
+  if (!accept || accept === "*") return [];
+  return accept.split(",").map((item) => item.trim().toLowerCase()).filter(Boolean);
+}
+
+function fileMatchesExtensions(name: string, extensions: string[]) {
+  if (!extensions.length) return true;
+  const lower = name.toLowerCase();
+  return extensions.some((extension) => lower.endsWith(extension));
+}
+
+/** 递归展开拖入的目录条目，只保留允许扩展名中的真实文件。 */
+async function filesFromEntry(entry: WebkitEntry | null | undefined, extensions: string[]): Promise<File[]> {
   if (!entry) return [];
   if (entry.isFile) {
+    if (!fileMatchesExtensions(entry.name, extensions)) return [];
     const file = await readFileEntry(entry);
     return file.size > 0 ? [withRelativePath(file, entry.fullPath)] : [];  // 目录占位项为 0 字节，不能进入上传列表。
   }
@@ -243,7 +256,7 @@ async function filesFromEntry(entry: WebkitEntry | null | undefined): Promise<Fi
     const files: File[] = [];
     let batch = await readEntryBatch(entry);
     while (batch.length) {
-      for (const child of batch) files.push(...await filesFromEntry(child));
+      for (const child of batch) files.push(...await filesFromEntry(child, extensions));
       batch = await readEntryBatch(entry);
     }
     return files;
@@ -251,16 +264,16 @@ async function filesFromEntry(entry: WebkitEntry | null | undefined): Promise<Fi
   return [];
 }
 
-/** 从拖放事件读取文件；目录模式优先通过 WebKit entry 递归读取真实文件。 */
-async function filesFromDataTransfer(dataTransfer: DataTransfer, directory: boolean): Promise<File[]> {
+/** 从拖放事件读取文件；目录模式优先通过 WebKit entry 递归读取真实文件并过滤扩展名。 */
+async function filesFromDataTransfer(dataTransfer: DataTransfer, directory: boolean, extensions: string[]): Promise<File[]> {
   const items = Array.from(dataTransfer.items || []);
   if (!directory) return Array.from(dataTransfer.files || []);
   const entries = items.map((item) => (item as DataTransferItem & { webkitGetAsEntry?: () => unknown }).webkitGetAsEntry?.());
   if (entries.some(Boolean)) {
-    const groups = await Promise.all(entries.map((entry) => filesFromEntry(entry as WebkitEntry | null | undefined)));
+    const groups = await Promise.all(entries.map((entry) => filesFromEntry(entry as WebkitEntry | null | undefined, extensions)));
     return groups.flat();
   }
-  return Array.from(dataTransfer.files || []).filter((file) => file.size > 0);  // 不支持 entry API 时退回普通文件列表并过滤目录占位项
+  return Array.from(dataTransfer.files || []).filter((file) => file.size > 0 && fileMatchesExtensions(file.name, extensions));  // 不支持 entry API 时退回普通文件列表并过滤目录占位项
 }
 
 /**
@@ -295,10 +308,17 @@ function FileField({ config, files, onChange }: { config: FileGroup; files: File
     return (file as DirectoryFile).webkitRelativePath || file.name;
   }
 
-  /** 合并新文件：文件夹模式保留全部内容，普通模式遵守单选或多选约束。 */
+  const allowedExtensions = config.directory ? acceptedExtensions(config.accept) : [];
+
+  /** 合并新文件：文件夹模式只保留允许扩展名，普通模式遵守单选或多选约束。 */
   function accept(next: File[]) {
     setDropError("");
-    const merged = config.directory ? next : config.multiple ? [...files, ...next] : next.slice(0, 1);
+    const candidates = config.directory ? next.filter((file) => fileMatchesExtensions(file.name, allowedExtensions)) : next;
+    if (config.directory && next.length && !candidates.length) {
+      setDropError("文件夹中没有符合要求的 PDF 文件，请检查后重试。");
+      return;
+    }
+    const merged = config.directory ? candidates : config.multiple ? [...files, ...next] : next.slice(0, 1);
     onChange(Array.from(new Map(merged.map((file) => [fileKey(file), file])).values()));
   }
 
@@ -312,9 +332,9 @@ function FileField({ config, files, onChange }: { config: FileGroup; files: File
       return;
     }
     setReadingDrop(true);
-    void filesFromDataTransfer(event.dataTransfer, true).then((next) => {
+    void filesFromDataTransfer(event.dataTransfer, true, allowedExtensions).then((next) => {
       if (next.length) accept(next);
-      else setDropError("没有从拖放的文件夹中读取到文件，请改用“选择文件夹”。");
+      else setDropError("没有从拖放的文件夹中读取到 PDF 文件，请改用“选择文件夹”。");
     }).catch(() => setDropError("读取拖放文件夹失败，请改用“选择文件夹”。")).finally(() => setReadingDrop(false));
   }
 
