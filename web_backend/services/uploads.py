@@ -125,6 +125,8 @@ def upload_file(handler: Any, deps: UploadDependencies) -> None:
     if not group_id.replace("-", "").isalnum() or len(group_id) > 64:
         raise ApiError(HTTPStatus.BAD_REQUEST, "上传批次编号无效")
     length = _request_length(handler, deps.max_upload_bytes)
+    # 请求头和长度校验已完成，随后的流式上传允许更长的套接字空闲窗口，避免慢速网络读文件时被全局短超时中断。
+    handler.connection.settimeout(300)
 
     handle = f"upload:{uuid.uuid4().hex}"  # 前端只持有不透明句柄，不接触服务器绝对路径。
     folder = deps.data_root / "users" / str(user["id"]) / "uploads" / group_id

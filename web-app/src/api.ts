@@ -670,7 +670,7 @@ export function uploadFile(file: File, group: string, onProgress?: (progress: nu
     xhr.withCredentials = true;
     xhr.timeout = 180_000; // 大文件上传同样需要超时兜底，避免网络挂起时 Promise 永不落定。
     xhr.upload.onprogress = (event) => { if (event.lengthComputable) onProgress?.(Math.round(event.loaded / event.total * 100)); };
-    xhr.onerror = () => reject(new Error(`上传 ${file.name} 失败，请检查网络连接`));
+    xhr.onerror = () => reject(new Error(`上传 ${file.name} 失败：网络连接中断，请检查网络或确认单个文件未超过 200 MB`));
     xhr.ontimeout = () => reject(new Error(`上传 ${file.name} 超时，请检查网络后重试`));
     xhr.onabort = () => reject(new Error(`上传 ${file.name} 已取消`));
     xhr.onload = () => {

@@ -30,6 +30,15 @@ type FileGroup = { key: string; label: string; description: string; multiple?: b
 type FeatureSpec = { action: string; reviewAction?: string; reviewOnly?: boolean; files: FileGroup[]; options: OptionField[]; runLabel: string; reviewLabel?: string };
 
 const WORKFLOW_STEPS = ["准备文件", "检查设置", "运行并查看结果"];
+/** 与服务端 `MAX_UPLOAD_BYTES` 保持一致的单个业务文件上限。 */
+const MAX_FILE_BYTES = 200 * 1024 * 1024;
+
+/** 上传前给出明确的大小/空文件提示，避免服务端提前断开时前端只显示笼统的网络错误。 */
+function uploadableError(file: File) {
+  if (!file.size) return `文件「${file.name}」为空，无法上传，请检查文件夹内容。`;
+  if (file.size > MAX_FILE_BYTES) return `文件「${file.name}」超过单文件 200 MB 限制，请移出或压缩后重试。`;
+  return "";
+}
 
 /** 根据输入、运行和完成边界展示固定三步流程，不参与任务状态计算。 */
 function WorkflowSteps({ step, done }: { step: number; done: number }) {
@@ -376,6 +385,8 @@ export function FeatureWorkspace({ feature, onBack, onCompleted, initialJobId, b
         handles[config.key] = [];
         // 当前采用顺序上传，整体进度可稳定按“已完成文件＋当前文件比例”累计。
         for (const file of files[config.key] || []) {
+          const invalid = uploadableError(file);
+          if (invalid) throw new Error(invalid);
           const uploaded = await uploadFile(file, group, (progress) => setUploadProgress(Math.max(0, Math.min(100, Math.round(((completedFiles + progress / 100) / Math.max(totalFiles, 1)) * 100)))));
           handles[config.key].push(uploaded.handle);
           completedFiles += 1;
@@ -414,7 +425,11 @@ export function FeatureWorkspace({ feature, onBack, onCompleted, initialJobId, b
     try {
       const group = typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `${Date.now()}`;
       const handles: string[] = [];
-      for (const file of files.paths || []) handles.push((await uploadFile(file, group)).handle);
+      for (const file of files.paths || []) {
+        const invalid = uploadableError(file);
+        if (invalid) throw new Error(invalid);
+        handles.push((await uploadFile(file, group)).handle);
+      }
       const data = await scanReconcile(handles);
       setReconcileHandles(handles);
       setScanResult(data.files);
@@ -429,7 +444,11 @@ export function FeatureWorkspace({ feature, onBack, onCompleted, initialJobId, b
     try {
       const group = typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `${Date.now()}`;
       const handles: string[] = [];
-      for (const file of files.paths || []) handles.push((await uploadFile(file, group)).handle);
+      for (const file of files.paths || []) {
+        const invalid = uploadableError(file);
+        if (invalid) throw new Error(invalid);
+        handles.push((await uploadFile(file, group)).handle);
+      }
       setArrivalRows((await scanArrival(handles)).rows);
     } catch (reason) {
       setArrivalScanError(reason instanceof Error ? reason.message : "到料计划识别失败");
@@ -568,12 +587,12 @@ export function FeatureWorkspace({ feature, onBack, onCompleted, initialJobId, b
       {job?.files.length ? <div className="fyt-flow-result-files"><strong>结果文件</strong>{job.files.map((file) => <div className="fyt-flow-result-file" key={file.url}><Button variant="ghost" size="sm" type="button" onClick={() => void download(file)}><Icon name="download" size={15} /><span><strong title={file.name}>{file.name}</strong><small>{formatSize(file.size)}</small></span></Button>{/\.(csv|xlsx?|xlsm|txt|json)$/i.test(file.name) ? <IconButton className="fyt-flow-preview-button" label={`在线预览 ${file.name}`} onClick={() => setPreviewFile(file)}><Icon name="search" size={15} /></IconButton> : null}</div>)}</div> : null}
       {downloadError ? <Notice tone="error">{downloadError}</Notice> : null}
       {job?.logs.length && job.status === "failed" ? <details className="fyt-flow-log"><summary>查看处理提示</summary><pre>{job.logs.join("\n")}</pre></details> : null}
-      {job?.review_pending && job.result ? <ReviewPanel key={job.id} kind={feature.key as "reconcile" | "pivot" | "invoice" | "compare" | "supplier_batch"} result={job.result} onConfirm={(choices) => void confirmReview(choices)} busy={reviewBusy} /> : null}
       {job?.status === "completed" && !job.review_pending && !job.presentation ? <ResultValue job={job} /> : null}
       {job?.versions?.length ? <section className="fyt-flow-versions"><div className="fyt-flow-versions-head"><strong>结果版本</strong><span>每次成功处理都会保留历史结果</span></div>{job.versions.map((version) => <div className="fyt-flow-version" key={version.version}><div><strong>第 {version.version} 版</strong><small>{new Date(version.created_at).toLocaleString("zh-CN")}</small></div><div>{version.files.map((file) => <Button variant="ghost" size="sm" type="button" key={file.url} onClick={() => void downloadVersion(file)} title={`下载第 ${version.version} 版 ${file.name}`}><Icon name="download" size={14} />{file.name}</Button>)}</div></div>)}</section> : null}
       {previewFile ? <PreviewPanel file={previewFile} onClose={() => setPreviewFile(null)} /> : null}
       <div className="fyt-flow-actions">{job && ["queued", "running"].includes(job.status) ? <Button variant="danger" type="button" onClick={() => void cancelCurrentJob()}>取消任务</Button> : null}{spec.reviewAction && !job?.review_pending ? <Button variant={spec.reviewOnly ? "primary" : "secondary"} type="button" disabled={!canRun || uploading || Boolean(job && ["queued", "running"].includes(job.status))} loading={uploading} onClick={() => void startReview()}><Icon name="check" size={15} />{uploading ? `上传中 ${uploadedCount}/${totalFiles}` : spec.reviewLabel}</Button> : null}{!spec.reviewOnly ? <Button variant="primary" type="button" disabled={!canRun || uploading || Boolean(job && ["queued", "running"].includes(job.status)) || Boolean(job?.review_pending)} loading={uploading} onClick={() => void run()}>{uploading ? (isArrival ? "正在提交" : `上传中 ${uploadedCount}/${totalFiles}`) : spec.runLabel}<Icon name="arrow" size={16} /></Button> : null}</div>
     </aside></div>
+    {job?.review_pending && job.result ? <div className="fyt-flow-result-stage fyt-flow-review-stage"><ReviewPanel key={job.id} kind={feature.key as "reconcile" | "pivot" | "invoice" | "compare" | "supplier_batch"} result={job.result} onConfirm={(choices) => void confirmReview(choices)} busy={reviewBusy} /></div> : null}
     {job?.status === "completed" && !job.review_pending && job.presentation ? <div className="fyt-flow-result-stage"><BusinessResultView presentation={job.presentation} /></div> : null}
     <section className="fyt-flow-history"><div className="fyt-flow-section-head"><div><span className="fyt-eyebrow">最近处理</span><h2>本功能任务记录</h2></div></div>{historyLoading ? <div className="fyt-empty-state"><h3>正在加载任务记录</h3></div> : history.length ? <div className="fyt-flow-history-list">{history.map((item) => <Button variant="ghost" className="fyt-flow-history-item" type="button" key={item.id} disabled={restoring} onClick={() => void restoreJob(item.id)}><StatusBadge status={jobStatusKey(item)} /><span><strong title={item.title}>{item.title}</strong><small>{new Date(item.created_at).toLocaleString("zh-CN")}</small></span><Icon name="arrow" size={15} /></Button>)}</div> : <div className="fyt-empty-state"><h3>当前功能还没有任务记录</h3><p>提交一次处理后，历史任务会显示在这里。</p></div>}</section>
   </div>;
