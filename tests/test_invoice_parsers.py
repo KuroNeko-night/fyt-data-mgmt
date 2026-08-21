@@ -127,6 +127,7 @@ class TestGenerateSuspectSummary(unittest.TestCase):
             )
             self.assertEqual(output["suspects"], 1)
             self.assertEqual(output["suspect_summary"], [{"file": "漏识别发票.pdf", "reason": "解析失败"}])  # 只回传文件名和原因
+            self.assertEqual(os.listdir(output["review_dir"]), ["漏识别清单.txt"])  # 复核目录只保留清单，不复制原始 PDF
 
 
 if __name__ == "__main__":

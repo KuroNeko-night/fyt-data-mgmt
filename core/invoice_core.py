@@ -3,7 +3,7 @@
 
 递归扫描资料文件夹里的 PDF，识别“增值税专用发票”，按开票月份筛选，
 抽取字段汇总。可靠字段全自动；费用项目/备注给“PDF 原始种子”供人工精修。
-另把所有专用发票原始 PDF 复制到复核文件夹（宽松判定，含存疑清单），供人工二次核对。
+最终只输出月度台账和漏识别清单，不把已经上传的原始 PDF 再复制进输出目录。
 PDF 自动抽取只提供候选数据，存疑文件、费用项目和备注仍保留人工复核入口；任何扫描件、
 字段残缺或金额关系异常都不能静默丢弃。桌面端和 Web 结果展示复用本模块输出，不自行
 编写第二套发票号码、税率或金额解析逻辑。
@@ -412,70 +412,42 @@ def filter_month(items, ym):
 
 
 def export_review_folder(result, out_dir, log=None):
-    """把全部专用发票原始 PDF 按月份复制到复核目录，并写入存疑清单。
+    """在输出目录写入漏识别/存疑清单，不复制已经上传的原始 PDF。
 
-    复核目录不只包含目标统计月份，而是包含扫描结果中的所有专票，使用户能检查目标月
-    是否漏收、其他月份是否正确排除。未知日期进入“未知月份”；同名 PDF 递增编号保留，
-    不覆盖不同来源文件。单个复制失败记录日志但不阻断其他发票和存疑清单生成。
+    台账输出只保留两张交付物：按月生成的汇总表和一份人工核对清单；原始 PDF 仍由用户
+    保留在输入文件夹中，不进入输出目录，避免任务结果里重复列出上传文件。
     """
-    import shutil
-
     def _lg(m):
-        """转发复核文件复制日志；未提供回调时保持静默。"""
+        """转发复核清单生成日志；未提供回调时保持静默。"""
         if log:
             log(m)
     review = os.path.join(out_dir, "专用发票复核")
     specials = [i for i in result.invoices if i.special]
-    n = 0
-    for inv in specials:
-        # 只取年月建立目录；无日期时保留明确的“未知月份”人工处理入口。
-        ym = (inv.date or "未知月份")[:7] or "未知月份"
-        sub = os.path.join(review, ym.replace("-", "年") + "月" if "-" in ym else ym)
-        if not os.path.isdir(sub):
-            os.makedirs(sub)
-        dst = _unique_path(os.path.join(sub, os.path.basename(inv.path)))
-        try:
-            shutil.copy2(inv.path, dst)
-            n += 1
-        except Exception as e:
-            # 单个源文件可能被删除或占用，不影响其余复核材料继续导出。
-            _lg("  复制失败：%s —— %s" % (os.path.basename(inv.path), e))
     _write_suspects(review, result.suspects, specials)
-    _lg("已导出专用发票 %d 张到复核文件夹，存疑 %d 个。"
-        % (n, len(result.suspects)))
+    _lg("已写入漏识别清单，统计专用发票 %d 张，存疑 %d 项。"
+        % (len(specials), len(result.suspects)))
     return review
-
-
-def _unique_path(path):
-    """为复核 PDF 生成未占用路径，同名时在扩展名前递增追加序号。"""
-    if not os.path.exists(path):
-        return path
-    base, ext = os.path.splitext(path)
-    i = 2
-    while os.path.exists("%s (%d)%s" % (base, i, ext)):
-        i += 1
-    return "%s (%d)%s" % (base, i, ext)
 
 
 def _write_suspects(review, suspects, specials):
     """
-    写入 UTF-8 存疑清单，列出文件名、原因和原始绝对路径，并附已导出专票数量。
+    写入 UTF-8 漏识别清单，列出文件名、原因和原始绝对路径，并附统计专票数量。
 
-    绝对路径只存在于本机复核文本，不进入客户界面；它帮助管理员直接找到未复制或
-    未统计的原始文件。没有存疑项时仍写明确结论，避免用户误以为清单生成失败。
+    绝对路径只存在于本机复核文本，不进入客户界面；它帮助管理员直接找到未纳入统计的
+    原始文件。没有存疑项时仍写明确结论，避免用户误以为清单生成失败。
     """
     if not os.path.isdir(review):
         os.makedirs(review)
-    path = os.path.join(review, "存疑清单.txt")
-    lines = ["增值税专用发票复核 —— 存疑清单",
+    path = os.path.join(review, "漏识别清单.txt")
+    lines = ["增值税专用发票统计 —— 漏识别清单",
              "（下列文件程序未纳入统计，请人工确认是否有被漏掉的专用发票）", ""]
     if suspects:
         for p, reason in suspects:
             lines.append("· %s\n    原因：%s\n    路径：%s" %
                          (os.path.basename(p), reason, p))
     else:
-        lines.append("（无存疑文件）")
-    lines += ["", "本次已导出专用发票 %d 张。" % len(specials)]
+        lines.append("（无漏识别或跳过文件）")
+    lines += ["", "本次统计专用发票 %d 张。" % len(specials)]
     with open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
 
@@ -593,21 +565,21 @@ def _write_total(ws, r, rows, box, center, song, Font):
 # 统一出口（与其余功能一致：generate(...) -> dict，输出目录经 paths 统一解析）
 # ---------------------------------------------------------------------------
 def generate(result, rows, ym, out_dir=None, log=None, progress=None):
-    """生成最终汇总表和专用发票复核目录，并返回路径及数量统计。
+    """生成月度台账和漏识别清单，并返回路径及数量统计。
 
-    result : scan() 的 ScanResult（用于导出复核文件夹与存疑清单）
+    result : scan() 的 ScanResult（用于生成漏识别清单）
     rows   : 复核对话框最终确认的行 dict 列表（已含人工精修的费用项目/备注）
     ym     : 目标月份 'YYYY-MM'，决定 sheet 名与汇总表文件名
     out_dir: 不传则经 settings + paths 统一解析到 <文档>/…/输出/增值税发票统计/<时间戳>/
     ``rows`` 必须是人工复核后的最终字典列表，``result`` 则保留扫描所得原始 PDF 路径和
-    存疑信息，两者职责不同。输出目录未指定时走统一设置；汇总文件使用唯一名称防覆盖，
-    复核目录按月份继续累积同名避让文件。进度分为汇总表和 PDF 复核两个等权阶段。
+    存疑信息，两者职责不同。输出目录未指定时走统一设置；汇总文件使用唯一名称防覆盖。
+    输出只包含汇总表和漏识别清单，不复制已上传的原始 PDF。进度分为台账和清单两个阶段。
     """
     def _lg(msg):
         """统一转发最终生成阶段日志。"""
         if log:
             log(msg)
-    # 汇总表与复核文件夹各占一半，后者包含多文件复制但内部当前没有更细粒度回调。
+    # 台账写入与漏识别清单生成各占一半，清单阶段只写文本文件因此通常很快完成。
     prog = _common.Progress(progress, stages=[("xlsx", 50), ("review", 50)])
     if out_dir is None:
         # 正式入口始终遵循 settings/paths 输出策略，不在发票模块维护第二套目录规则。
