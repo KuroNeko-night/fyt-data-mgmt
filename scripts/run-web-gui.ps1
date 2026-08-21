@@ -1,9 +1,10 @@
-﻿param(
+param(
   [switch]$NoExit
 )
 
-# 无命令窗口启动 Tkinter 服务控制台。-NoExit 仅供脚本调用方等待 GUI 退出并取得退出码，
-# 默认立即返回，让用户可以关闭当前 PowerShell 窗口而不影响控制台进程。
+# 用 pythonw 启动 Tkinter 服务控制台：pythonw 本身没有控制台窗口，因此不能再加
+# `-WindowStyle Hidden`，否则会把 GUI 主窗口也一起隐藏。-NoExit 仅供脚本调用方等待
+# GUI 退出并取得退出码，默认立即返回，让用户可以关闭当前 PowerShell 窗口而不影响控制台进程。
 $ErrorActionPreference = "Stop"
 $env:PYTHONIOENCODING = "utf-8"
 $ProjectRoot = Split-Path $PSScriptRoot -Parent  # 脚本位于 scripts/，仓库根目录在上一级。
@@ -16,6 +17,5 @@ $script = Join-Path $ProjectRoot "web_control_gui.py"
 $process = Start-Process -FilePath $python `
   -ArgumentList ('"{0}"' -f $script) `
   -WorkingDirectory $ProjectRoot `
-  -WindowStyle Hidden `
   -PassThru
 if ($NoExit) { $process.WaitForExit(); exit $process.ExitCode }  # 显式等待只影响调用脚本，不改变 GUI 生命周期。
